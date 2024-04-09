@@ -119,4 +119,4 @@ for xx in range(counter-1):
         ans=train_num[xx+1]
             
 print("Answer:"+str(ans))
-print("score="+str(maxsum))
+print("score="+'{:.3f}'.format(maxsum/(len(quiz2)*3.0)))
