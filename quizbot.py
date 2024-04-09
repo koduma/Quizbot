@@ -51,8 +51,8 @@ for l in range(len(meta)):
         else:
             NoAns[x]+=1
     now.append(n)       
-    for c in range(now[l]-1,counter-1):
-        tmp5 = title+","+str(train_num[c+1])
+    for c in talk:
+        tmp5 = title+","+str(c)
         #print(str("c="+str(c)))
         #print("AAAAAAAAAAAAAAAAAAAAAAAAA"+tmp5+"====="+str(train_num[c+1]))
         if tmp5 in datakun:
