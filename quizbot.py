@@ -100,7 +100,7 @@ for xx in range(counter-1):
         tmp2=str(train_num[xx+1])+","+str(xxx)
         if tmp2 in datakun:
             sum+=datakun[tmp2]
-            if NoAns[xxx] > 10:
+            if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
                 sum -= datakun[tmp2]
             #if str(train_num[xx+1])=="Algorithm":
                 #print(str(tmp2)+",score="+str(sum))    
