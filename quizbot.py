@@ -71,7 +71,7 @@ for l in range(len(meta)):
     for c in range(now[l]-1,counter-1):
         for c2 in range(c+1,counter-1):
             tmp = str(train_num[c+1])+","+str(train_num[c2+1])
-            #print("BBBBBBBBBBBBBBBBBBBBBB"+tmp)
+            #print(tmp)
             if tmp in datakun:
                 datakun[tmp]+=1
             else:
@@ -95,6 +95,7 @@ print("Quiz:"+quiz)
 sumsum=0
 maxsum=0
 ans=""
+dic2 = dict()
     
 for xx in range(counter-1):
     sum=0
@@ -104,27 +105,27 @@ for xx in range(counter-1):
             sum+=datakun[tmp2]
             if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
                 sum -= datakun[tmp2]
-            #if str(train_num[xx+1])=="DavidHume":
+            #if str(train_num[xx+1])=="Perception":
                 #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-            #if str(train_num[xx+1])=="Empiricism":
+            #if str(train_num[xx+1])=="Recursion":
                 #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
             #if str(train_num[xx+1])=="Thought":
                 #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
             #if str(train_num[xx+1])=="Game":
-                #print(str(tmp2)+",score="+str(sum)+",NoAns="+str(NoAns[xxx]))
+                #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
             #if str(train_num[xx+1])=="Recursion":
                 #print(str(tmp2)+",score="+str(sum))
             #if str(train_num[xx+1])=="BeamStackSearch":
                 #print(str(tmp2)+",score="+str(sum))
             #if str(train_num[xx+1])=="BeamSearch":
                 #print(str(tmp2)+",score="+str(sum))
-    if sum > 5:
-        print("sum="+str(sum)+","+train_num[xx+1])
+    dic2[sum]=str(train_num[xx+1])
     sumsum+=sum    
     if sum>maxsum:
         maxsum=sum
         ans=train_num[xx+1]
-            
+                                
 print("Answer:"+str(ans))
-print("score="+'{:.3f}'.format(maxsum/sumsum))
-print(counter)
+print("score:"+'{:.3f}'.format(maxsum/(sumsum)))
+print("words:"+str(counter))
+print(sorted(dic2.items(), key=lambda x: x[0], reverse=True)[:5])
