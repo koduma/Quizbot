@@ -1,4 +1,6 @@
 import os
+import matplotlib.pyplot as plt
+import Levenshtein
 #import nltk
 
 #nltk.download('all')
@@ -99,15 +101,21 @@ dic2 = dict()
     
 for xx in range(counter-1):
     sum=0
+    #look = False
     for xxx in quiz2:
         tmp2=str(train_num[xx+1])+","+str(xxx)
+        #dist = Levenshtein.distance(train_num[xx+1], xxx)
+        #if dist < 3:
+            #look = True
+            #continue
         if tmp2 in datakun:
             sum+=datakun[tmp2]
             if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
                 sum -= datakun[tmp2]
-            #if str(train_num[xx+1])=="Perception":
-                #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-            #if str(train_num[xx+1])=="Recursion":
+            #else:    
+                #if str(train_num[xx+1])=="Perception":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+            #if str(train_num[xx+1])=="Empiricism":
                 #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
             #if str(train_num[xx+1])=="Thought":
                 #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
@@ -119,7 +127,9 @@ for xx in range(counter-1):
                 #print(str(tmp2)+",score="+str(sum))
             #if str(train_num[xx+1])=="BeamSearch":
                 #print(str(tmp2)+",score="+str(sum))
-    dic2[sum]=str(train_num[xx+1])
+    #if look == True:
+        #sum=0
+    dic2[str(train_num[xx+1])]=sum
     sumsum+=sum    
     if sum>maxsum:
         maxsum=sum
@@ -128,4 +138,9 @@ for xx in range(counter-1):
 print("Answer:"+str(ans))
 print("score:"+'{:.3f}'.format(maxsum/(sumsum)))
 print("words:"+str(counter))
-print(sorted(dic2.items(), key=lambda x: x[0], reverse=True)[:5])
+g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
+print(g)
+x_all, y_all = zip(*g)
+plt.figure(figsize= (10,6))
+plt.bar(x_all, y_all)
+plt.show()
