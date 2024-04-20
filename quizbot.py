@@ -1,6 +1,8 @@
 import os
 import matplotlib.pyplot as plt
 
+import psutil
+
 strr=""
 meta=""
 
@@ -129,6 +131,8 @@ for loop in range(PROBLEM):
     print("Answer:"+str(ans))
     print("Score:"+'{:.3f}'.format(maxsum/(sumsum)))
     print("Words:"+str(counter))
+    mem = psutil.virtual_memory() 
+    print("Mem:"+str(mem.percent))
     plt.figure(figsize= (10,6))
     plt.bar(x_all, y_all)
     plt.show()
