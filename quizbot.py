@@ -129,18 +129,23 @@ for xx in range(counter-1):
                 #print(str(tmp2)+",score="+str(sum))
     #if look == True:
         #sum=0
-    dic2[str(train_num[xx+1])]=sum
-    sumsum+=sum    
+    dic2[str(train_num[xx+1])]=sum    
     if sum>maxsum:
         maxsum=sum
         ans=train_num[xx+1]
-                                
-print("Answer:"+str(ans))
-print("score:"+'{:.3f}'.format(maxsum/(sumsum)))
-print("words:"+str(counter))
+
+
 g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
 print(g)
 x_all, y_all = zip(*g)
+
+score=0
+for i in range(5):
+    sumsum+=y_all[i]
+
+print("Answer:"+str(ans))
+print("score:"+'{:.3f}'.format(maxsum/(sumsum)))
+print("words:"+str(counter))
 plt.figure(figsize= (10,6))
 plt.bar(x_all, y_all)
 plt.show()
