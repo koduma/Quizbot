@@ -139,13 +139,12 @@ g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
 print(g)
 x_all, y_all = zip(*g)
 
-score=0
 for i in range(5):
     sumsum+=y_all[i]
 
 print("Answer:"+str(ans))
-print("score:"+'{:.3f}'.format(maxsum/(sumsum)))
-print("words:"+str(counter))
+print("Score:"+'{:.3f}'.format(maxsum/(sumsum)))
+print("Words:"+str(counter))
 plt.figure(figsize= (10,6))
 plt.bar(x_all, y_all)
 plt.show()
