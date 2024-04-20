@@ -1,6 +1,5 @@
 import os
 import matplotlib.pyplot as plt
-
 import psutil
 
 strr=""
@@ -133,6 +132,7 @@ for loop in range(PROBLEM):
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
+    print("Num:"+str(len(meta)))
     plt.figure(figsize= (10,6))
     plt.bar(x_all, y_all)
     plt.show()
