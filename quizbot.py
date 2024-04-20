@@ -1,9 +1,5 @@
 import os
 import matplotlib.pyplot as plt
-import Levenshtein
-#import nltk
-
-#nltk.download('all')
 
 strr=""
 meta=""
@@ -21,6 +17,8 @@ meta=meta.split()
 
 counter=1
 now=[1]
+
+PROBLEM = 1
 
 for l in range(len(meta)):
 
@@ -84,67 +82,53 @@ for l in range(len(meta)):
             else:
                 datakun[tmp3]=1
 
-quiz=""
+for loop in range(PROBLEM):
+    quiz=""
+    with open('./quiz.txt') as f:
+        for line in f:
+            quiz=quiz+line            
+    quiz2 = quiz.split()
+    print("Quiz:"+quiz)
+    sumsum=0
+    maxsum=0
+    ans=""
+    dic2 = dict()
     
-with open('./quiz.txt') as f:
-    for line in f:
-        quiz=quiz+line
-            
-quiz2 = quiz.split()
-    
-print("Quiz:"+quiz)
-
-sumsum=0
-maxsum=0
-ans=""
-dic2 = dict()
-    
-for xx in range(counter-1):
-    sum=0
-    #look = False
-    for xxx in quiz2:
-        tmp2=str(train_num[xx+1])+","+str(xxx)
-        #dist = Levenshtein.distance(train_num[xx+1], xxx)
-        #if dist < 3:
-            #look = True
-            #continue
-        if tmp2 in datakun:
-            sum+=datakun[tmp2]
-            if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
-                sum -= datakun[tmp2]
-            #else:    
-                #if str(train_num[xx+1])=="Perception":
+    for xx in range(counter-1):
+        sum=0
+        for xxx in quiz2:
+            tmp2=str(train_num[xx+1])+","+str(xxx)
+            if tmp2 in datakun:
+                sum+=datakun[tmp2]
+                if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
+                    sum -= datakun[tmp2]
+                #else:
+                    #if str(train_num[xx+1])=="YouTube":
+                        #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Empiricism":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-            #if str(train_num[xx+1])=="Empiricism":
-                #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-            #if str(train_num[xx+1])=="Thought":
-                #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
-            #if str(train_num[xx+1])=="Game":
-                #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
-            #if str(train_num[xx+1])=="Recursion":
-                #print(str(tmp2)+",score="+str(sum))
-            #if str(train_num[xx+1])=="BeamStackSearch":
-                #print(str(tmp2)+",score="+str(sum))
-            #if str(train_num[xx+1])=="BeamSearch":
-                #print(str(tmp2)+",score="+str(sum))
-    #if look == True:
-        #sum=0
-    dic2[str(train_num[xx+1])]=sum    
-    if sum>maxsum:
-        maxsum=sum
-        ans=train_num[xx+1]
-
-
-g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
-print(g)
-x_all, y_all = zip(*g)
-
-for i in range(5):
-    sumsum+=y_all[i]
-
-print("Answer:"+str(ans))
-print("Score:"+'{:.3f}'.format(maxsum/(sumsum)))
-print("Words:"+str(counter))
-plt.figure(figsize= (10,6))
-plt.bar(x_all, y_all)
-plt.show()
+                #if str(train_num[xx+1])=="Thought":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
+                #if str(train_num[xx+1])=="Game":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
+                #if str(train_num[xx+1])=="Recursion":
+                    #print(str(tmp2)+",score="+str(sum))
+                #if str(train_num[xx+1])=="BeamStackSearch":
+                    #print(str(tmp2)+",score="+str(sum))
+                #if str(train_num[xx+1])=="BeamSearch":
+                    #print(str(tmp2)+",score="+str(sum))
+        dic2[str(train_num[xx+1])]=sum
+        if sum>maxsum:
+            maxsum=sum
+            ans=train_num[xx+1]
+    g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
+    print(g)
+    x_all, y_all = zip(*g)
+    for i in range(5):
+        sumsum+=y_all[i]
+    print("Answer:"+str(ans))
+    print("Score:"+'{:.3f}'.format(maxsum/(sumsum)))
+    print("Words:"+str(counter))
+    plt.figure(figsize= (10,6))
+    plt.bar(x_all, y_all)
+    plt.show()
