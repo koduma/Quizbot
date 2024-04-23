@@ -1,6 +1,5 @@
 import os
 import matplotlib.pyplot as plt
-
 import psutil
 
 strr=""
@@ -111,9 +110,9 @@ for loop in range(PROBLEM):
                 if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
                     sum -= datakun[tmp2]
                 #else:
-                    #if str(train_num[xx+1])=="Olympic":
+                    #if str(train_num[xx+1])=="Robot":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Olympic":
+                #if str(train_num[xx+1])=="Robot":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Thought":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
@@ -135,7 +134,19 @@ for loop in range(PROBLEM):
     for i in range(5):
         sumsum+=y_all[i]
     print("Answer:"+str(ans))
-    print("Score:"+'{:.3f}'.format(maxsum/(sumsum)))
+    score=maxsum/(sumsum+1)
+    print("Score:"+'{:.3f}'.format(score))
+    if score < 0.3:
+        print("Eval:F") 
+    else:
+        if score < 0.4:
+            print("Eval:C")
+        else:
+            if score < 0.6:
+                print("Eval:A")
+            else:
+                if score < 1.0:
+                    print("Eval:S")               
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
