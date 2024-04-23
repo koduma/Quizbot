@@ -1,5 +1,6 @@
 import os
 import matplotlib.pyplot as plt
+
 import psutil
 
 strr=""
@@ -83,6 +84,12 @@ for l in range(len(meta)):
             else:
                 datakun[tmp3]=1
 
+for l in range(len(meta)):
+    if NoAns[meta[l]] > 10:
+        print("ERROR:"+str(meta[l]))
+        #s=str(meta[l])
+        #os.rename(s+".txt",s.upper()+".txt")
+
 for loop in range(PROBLEM):
     quiz=""
     with open('./quiz.txt') as f:
@@ -104,9 +111,9 @@ for loop in range(PROBLEM):
                 if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
                     sum -= datakun[tmp2]
                 #else:
-                    #if str(train_num[xx+1])=="YouTube":
+                    #if str(train_num[xx+1])=="Olympic":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Empiricism":
+                #if str(train_num[xx+1])=="Olympic":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Thought":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
