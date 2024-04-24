@@ -112,9 +112,9 @@ for loop in range(PROBLEM):
                 #else:
                     #if str(train_num[xx+1])=="Robot":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Robot":
+                #if str(train_num[xx+1])=="Shogi":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Thought":
+                #if str(train_num[xx+1])=="DeepBlue(ChessComputer)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
                 #if str(train_num[xx+1])=="Game":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
@@ -145,8 +145,7 @@ for loop in range(PROBLEM):
             if score < 0.6:
                 print("Eval:A")
             else:
-                if score < 1.0:
-                    print("Eval:S")               
+                print("Eval:S")               
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
