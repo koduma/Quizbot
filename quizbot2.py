@@ -94,7 +94,7 @@ def scoring(s1,s2):
     sum=0
     for x in s1:
         for y in s2:
-         tmp=str(x)+","+str(y)
+         tmp=str(x)+","+str(y)  
          if tmp in datakun:
              sum+=datakun[tmp]
              if NoAns[str(x)] > 10 or NoAns[str(y)] > 10:
@@ -120,7 +120,7 @@ for loop in range(PROBLEM):
             for line in f:
                 xi=xi+line
         xi=xi.split()
-        ret=scoring(xi,quiz2)            
+        ret=scoring(xi,quiz2)/(len(xi)+1.0)            
         dic2[str(meta[xx])]=ret
         if ret>maxsum:
             maxsum=ret
@@ -131,18 +131,8 @@ for loop in range(PROBLEM):
     for i in range(5):
         sumsum+=y_all[i]
     print("Answer:"+str(ans))
-    score=maxsum/(sumsum+1)
-    print("Score:"+'{:.3f}'.format(score))
-    if score < 0.3:
-        print("Eval:F") 
-    else:
-        if score < 0.4:
-            print("Eval:C")
-        else:
-            if score < 0.6:
-                print("Eval:A")
-            else:
-                print("Eval:S")               
+    score=maxsum/(sumsum+0.001)
+    print("Score:"+'{:.3f}'.format(score))               
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
