@@ -20,6 +20,7 @@ counter=1
 now=[1]
 
 PROBLEM = 1
+TABOO = 10
 
 for l in range(len(meta)):
 
@@ -72,7 +73,8 @@ for l in range(len(meta)):
     for c in range(now[l]-1,counter-1):
         for c2 in range(c+1,counter-1):
             tmp = str(train_num[c+1])+","+str(train_num[c2+1])
-            #print(tmp)
+            #if title=="Gram":
+                #print(tmp)
             if tmp in datakun:
                 datakun[tmp]+=1
             else:
@@ -84,7 +86,7 @@ for l in range(len(meta)):
                 datakun[tmp3]=1
 
 for l in range(len(meta)):
-    if NoAns[meta[l]] > 10:
+    if NoAns[meta[l]] > TABOO:
         print("ERROR:"+str(meta[l]))
         #s=str(meta[l])
         #os.rename(s+".txt",s.upper()+".txt")
@@ -107,12 +109,12 @@ for loop in range(PROBLEM):
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 in datakun:
                 sum+=datakun[tmp2]
-                if NoAns[train_num[xx+1]] > 10 or NoAns[xxx] > 10:
+                if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
                     sum -= datakun[tmp2]
                 #else:
-                    #if str(train_num[xx+1])=="Robot":
+                    #if str(train_num[xx+1])=="JoeBiden":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Shogi":
+                #if str(train_num[xx+1])=="ElectricBattery":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="DeepBlue(ChessComputer)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
