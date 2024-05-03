@@ -21,6 +21,7 @@ counter=1
 now=[1]
 
 PROBLEM = 1
+TABOO = 10
 
 for l in range(len(meta)):
 
@@ -85,7 +86,7 @@ for l in range(len(meta)):
                 datakun[tmp3]=1
 
 for l in range(len(meta)):
-    if NoAns[meta[l]] > 10:
+    if NoAns[meta[l]] > TABOO:
         print("ERROR:"+str(meta[l]))
         #s=str(meta[l])
         #os.rename(s+".txt",s.upper()+".txt")
@@ -97,7 +98,7 @@ def scoring(s1,s2):
          tmp=str(x)+","+str(y)  
          if tmp in datakun:
              sum+=datakun[tmp]
-             if NoAns[str(x)] > 10 or NoAns[str(y)] > 10:
+             if NoAns[str(x)] > TABOO or NoAns[str(y)] > TABOO:
                  sum-=datakun[tmp]
 
     return sum
