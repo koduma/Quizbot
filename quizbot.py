@@ -106,11 +106,11 @@ for loop in range(PROBLEM):
     
     for xx in range(counter-1):
         sum=0
-        same=False
         for xxx in quiz2:
             dist = Levenshtein.distance(str(train_num[xx+1]), str(xxx))
             if dist < 2:
-                same=True
+                sum=0
+                break
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 in datakun:
                 sum+=datakun[tmp2]
@@ -131,8 +131,6 @@ for loop in range(PROBLEM):
                     #print(str(tmp2)+",score="+str(sum))
                 #if str(train_num[xx+1])=="BeamSearch":
                     #print(str(tmp2)+",score="+str(sum))
-        if same == True:
-            sum=0
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
             maxsum=sum
