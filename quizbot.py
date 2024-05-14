@@ -1,6 +1,7 @@
 import os
 import matplotlib.pyplot as plt
 import psutil
+import Levenshtein
 
 strr=""
 meta=""
@@ -20,7 +21,7 @@ counter=1
 now=[1]
 
 PROBLEM = 1
-TABOO = 10
+TABOO = 200
 
 for l in range(len(meta)):
 
@@ -105,16 +106,20 @@ for loop in range(PROBLEM):
     
     for xx in range(counter-1):
         sum=0
+        same=False
         for xxx in quiz2:
+            dist = Levenshtein.distance(str(train_num[xx+1]), str(xxx))
+            if dist < 2:
+                same=True
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 in datakun:
                 sum+=datakun[tmp2]
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
                     sum -= datakun[tmp2]
                 #else:
-                    #if str(train_num[xx+1])=="JoeBiden":
+                    #if str(train_num[xx+1])=="Empiricism":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="ElectricBattery":
+                #if str(train_num[xx+1])=="Empiricism":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="DeepBlue(ChessComputer)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
@@ -126,6 +131,8 @@ for loop in range(PROBLEM):
                     #print(str(tmp2)+",score="+str(sum))
                 #if str(train_num[xx+1])=="BeamSearch":
                     #print(str(tmp2)+",score="+str(sum))
+        if same == True:
+            sum=0
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
             maxsum=sum
