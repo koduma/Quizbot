@@ -21,7 +21,7 @@ counter=1
 now=[1]
 
 PROBLEM = 1
-TABOO = 10
+TABOO = 20
 
 for l in range(len(meta)):
 
@@ -116,6 +116,8 @@ for loop in range(PROBLEM):
     dic2 = dict()
     
     for xx in range(len(meta)):
+        if str(meta[xx]) in quiz2:
+            continue
         xi=""
         with open("./"+str(meta[xx])+".txt") as f:
             for line in f:
