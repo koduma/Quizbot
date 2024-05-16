@@ -117,7 +117,7 @@ for loop in range(PROBLEM):
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
                     sum -= datakun[tmp2]
                 #else:
-                    #if str(train_num[xx+1])=="Empiricism":
+                    #if str(train_num[xx+1])=="DeepBlue(ChessComputer)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Empiricism":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -157,6 +157,6 @@ for loop in range(PROBLEM):
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
     print("Num:"+str(len(meta)))
-    plt.figure(figsize= (10,6))
+    plt.figure(figsize= (15,6))
     plt.bar(x_all, y_all)
     plt.show()
