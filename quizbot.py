@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import psutil
 import Levenshtein
 from googletrans import Translator
+import re
 
 strr=""
 meta=""
@@ -25,6 +26,9 @@ PROBLEM = 1
 TABOO = 200
 
 translator = Translator()
+
+def is_ja(s):
+    return True if re.search(r'[ぁ-んァ-ン]', s) else False 
 
 for l in range(len(meta)):
 
@@ -99,9 +103,13 @@ for loop in range(PROBLEM):
     quiz=""
     with open('./quiz.txt') as f:
         for line in f:
-            quiz=quiz+line            
+            quiz=quiz+line
+    if is_ja(quiz) == False:
+        quiz_ja = translator.translate(quiz, src='en', dest='ja').text
+    else:
+        quiz_ja=quiz
+        quiz=translator.translate(quiz_ja, src='ja', dest='en').text
     quiz2 = quiz.split()
-    quiz_ja = translator.translate(quiz, src='en', dest='ja').text
     print("Quiz_ja:"+quiz_ja)
     print("Quiz_en:"+quiz)
     sumsum=0
