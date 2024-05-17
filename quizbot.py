@@ -110,8 +110,9 @@ for loop in range(PROBLEM):
         quiz_ja=quiz
         quiz=translator.translate(quiz_ja, src='ja', dest='en').text
     quiz2 = quiz.split()
-    print("Quiz_ja:"+quiz_ja)
-    print("Quiz_en:"+quiz)
+    print("Quiz_ja:\n"+quiz_ja)
+    print("\n")
+    print("Quiz_en:\n"+quiz)
     sumsum=0
     maxsum=0
     ans=""
