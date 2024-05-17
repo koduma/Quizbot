@@ -2,6 +2,7 @@ import os
 import matplotlib.pyplot as plt
 import psutil
 import Levenshtein
+from googletrans import Translator
 
 strr=""
 meta=""
@@ -22,6 +23,8 @@ now=[1]
 
 PROBLEM = 1
 TABOO = 200
+
+translator = Translator()
 
 for l in range(len(meta)):
 
@@ -98,7 +101,9 @@ for loop in range(PROBLEM):
         for line in f:
             quiz=quiz+line            
     quiz2 = quiz.split()
-    print("Quiz:"+quiz)
+    quiz_ja = translator.translate(quiz, src='en', dest='ja').text
+    print("Quiz_ja:"+quiz_ja)
+    print("Quiz_en:"+quiz)
     sumsum=0
     maxsum=0
     ans=""
@@ -140,7 +145,9 @@ for loop in range(PROBLEM):
     x_all, y_all = zip(*g)
     for i in range(5):
         sumsum+=y_all[i]
-    print("Answer:"+str(ans))
+    ans_ja = translator.translate(str(ans), src='en', dest='ja').text
+    print("Answer_ja:"+ans_ja)    
+    print("Answer_en:"+str(ans))
     score=maxsum/(sumsum+1)
     print("Score:"+'{:.3f}'.format(score))
     if score < 0.3:
