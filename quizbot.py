@@ -4,6 +4,7 @@ import psutil
 import Levenshtein
 from googletrans import Translator
 import re
+import sys
 
 strr=""
 meta=""
@@ -28,7 +29,20 @@ TABOO = 500
 translator = Translator()
 
 def is_ja(s):
-    return True if re.search(r'[ぁ-んァ-ン]', s) else False 
+    return True if re.search(r'[ぁ-んァ-ン]', s) else False
+
+looked = dict()
+
+for l in range(len(meta)):
+    title = meta[l]
+    title=title.upper()
+    ex=title in looked
+    if ex==True:
+        print(title)
+    else:
+        looked[title]=1
+
+#sys.exit()
 
 for l in range(len(meta)):
 
@@ -64,10 +78,10 @@ for l in range(len(meta)):
     for c in talk:
         tmp5 = title+","+str(c)
         #print(str("c="+str(c)))
-        #if str(title)=="Empiricism":
-            #print("AAAAAAAAAAAAAAAAAAAAAAAAA"+tmp5+"====="+str(c))
         if tmp5 in datakun:
             datakun[tmp5]+=2
+            #if str(title)=="Empiricism":
+                #print(str(tmp5)+"="+str(datakun[tmp5]))
         else:
             datakun[tmp5]=2
 
@@ -81,10 +95,12 @@ for l in range(len(meta)):
     for c in range(now[l]-1,counter-1):
         for c2 in range(c+1,counter-1):
             tmp = str(train_num[c+1])+","+str(train_num[c2+1])
-            #if title=="Gram":
-                #print(tmp)
+            #if train_num[c+1]=="Empiricism":
+                #print(tmp+","+str(l))
             if tmp in datakun:
                 datakun[tmp]+=1
+                #if str(train_num[c+1])=="Empiricism":
+                    #print(str(tmp)+"="+str(datakun[tmp]))
             else:
                 datakun[tmp]=1
             tmp3 = str(train_num[c2+1])+","+str(train_num[c+1])
@@ -131,8 +147,10 @@ for loop in range(PROBLEM):
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
                     sum -= datakun[tmp2]
                 #else:
-                    #if str(train_num[xx+1])=="DeepBlue(ChessComputer)":
+                    #if str(train_num[xx+1])=="LionelMessi":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                    #if str(train_num[xx+1])=="Recursion(ComputerScience)":
+                        #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
                 #if str(train_num[xx+1])=="Empiricism":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="DeepBlue(ChessComputer)":
