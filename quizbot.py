@@ -77,13 +77,16 @@ for l in range(len(meta)):
     now.append(n)       
     for c in talk:
         tmp5 = title+","+str(c)
-        #print(str("c="+str(c)))
+        tmp6 = str(c)+","+str(title)
         if tmp5 in datakun:
             datakun[tmp5]+=2
-            #if str(title)=="Empiricism":
-                #print(str(tmp5)+"="+str(datakun[tmp5]))
         else:
             datakun[tmp5]=2
+
+        if tmp6 in datakun:
+            datakun[tmp6]+=2
+        else:
+            datakun[tmp6]=2
 
 #for c in range(counter-2):
 #    tmp = str(train_num[c+1])+","+str(train_num[c+2])
@@ -115,6 +118,7 @@ for l in range(len(meta)):
         #s=str(meta[l])
         #os.rename(s+".txt",s.upper()+".txt")
 
+
 for loop in range(PROBLEM):
     quiz=""
     with open('./quiz.txt') as f:
@@ -137,10 +141,10 @@ for loop in range(PROBLEM):
     for xx in range(counter-1):
         sum=0
         for xxx in quiz2:
-            dist = Levenshtein.distance(str(train_num[xx+1]), str(xxx))
+            dist = Levenshtein.distance(str(train_num[xx+1]), str(xxx))                
             if dist < 2:
                 sum=0
-                break
+                break 
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 in datakun:
                 sum+=datakun[tmp2]
@@ -151,11 +155,11 @@ for loop in range(PROBLEM):
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                     #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Empiricism":
+                #if str(train_num[xx+1])=="tomato":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="DeepBlue(ChessComputer)":
+                #if str(train_num[xx+1])=="Cucumber":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
-                #if str(train_num[xx+1])=="Game":
+                #if str(train_num[xx+1])=="Tomato":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
                 #if str(train_num[xx+1])=="Recursion":
                     #print(str(tmp2)+",score="+str(sum))
