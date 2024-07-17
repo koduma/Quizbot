@@ -37,12 +37,12 @@ for l in range(len(meta)):
     title = meta[l]
     title=title.upper()
     ex=title in looked
-    if ex==True:
+    if ex==True and title!="LATEX":
         print(title)
     else:
         looked[title]=1
 
-#sys.exit()
+sys.exit()
 
 for l in range(len(meta)):
 
@@ -118,7 +118,6 @@ for l in range(len(meta)):
         #s=str(meta[l])
         #os.rename(s+".txt",s.upper()+".txt")
 
-
 for loop in range(PROBLEM):
     quiz=""
     with open('./quiz.txt') as f:
@@ -155,7 +154,7 @@ for loop in range(PROBLEM):
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                     #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="tomato":
+                #if str(train_num[xx+1])=="NetworkFlowProblem":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Cucumber":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
