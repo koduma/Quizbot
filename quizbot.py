@@ -42,7 +42,7 @@ for l in range(len(meta)):
     else:
         looked[title]=1
 
-sys.exit()
+#sys.exit()
 
 for l in range(len(meta)):
 
