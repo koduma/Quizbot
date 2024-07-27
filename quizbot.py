@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 2
+PROBLEM = 1
 TABOO = 500
 
 translator = Translator()
