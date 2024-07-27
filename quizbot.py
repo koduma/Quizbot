@@ -128,6 +128,15 @@ for loop in range(PROBLEM):
     else:
         quiz_ja=quiz
         quiz=translator.translate(quiz_ja, src='ja', dest='en').text
+
+    quiz3=""
+    
+    for k in range(len(quiz)):
+        if quiz[k] == "." or quiz[k] == "," or quiz[k] == "?":
+           quiz3+=" "+quiz[k]+" "
+        else:
+            quiz3+=quiz[k]
+    quiz=quiz3    
     quiz2 = quiz.split()
     print("Quiz_ja:\n"+quiz_ja)
     print("\n")
