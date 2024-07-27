@@ -132,7 +132,7 @@ for loop in range(PROBLEM):
     quiz3=""
     
     for k in range(len(quiz)):
-        if quiz[k] == "." or quiz[k] == "," or quiz[k] == "?":
+        if quiz[k] == "." or quiz[k] == "," or quiz[k] == "?" or quiz[k] == '"' or quiz[k] == "'":
            quiz3+=" "+quiz[k]+" "
         else:
             quiz3+=quiz[k]
