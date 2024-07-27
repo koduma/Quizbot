@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 1
+PROBLEM = 2
 TABOO = 500
 
 translator = Translator()
@@ -41,7 +41,7 @@ for l in range(len(meta)):
         print(title)
     else:
         looked[title]=1
-
+        
 #sys.exit()
 
 for l in range(len(meta)):
@@ -140,8 +140,8 @@ for loop in range(PROBLEM):
     for xx in range(counter-1):
         sum=0
         for xxx in quiz2:
-            dist = Levenshtein.distance(str(train_num[xx+1]), str(xxx))                
-            if dist < 2:
+            dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
+            if dist < 1:
                 sum=0
                 break 
             tmp2=str(train_num[xx+1])+","+str(xxx)
