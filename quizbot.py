@@ -132,8 +132,44 @@ for loop in range(PROBLEM):
     quiz3=""
     
     for k in range(len(quiz)):
-        if quiz[k] == "." or quiz[k] == "," or quiz[k] == "?" or quiz[k] == '"' or quiz[k] == "'":
-           quiz3+=" "+quiz[k]+" "
+        sp=0
+        if quiz[k] == ".":
+            sp=1
+        elif quiz[k] == ",":
+            sp=1 
+        elif quiz[k] == "?":
+            sp=1            
+        elif quiz[k] == '"':
+            sp=1        
+        elif quiz[k] == "'":
+            sp=1
+        elif quiz[k] == "[":
+            sp=1
+        elif quiz[k] == "]":
+            sp=1
+        elif quiz[k] == "(":
+            sp=1            
+        elif quiz[k] == ")":
+            sp=1            
+        elif quiz[k] == ":":
+            sp=1            
+        elif quiz[k] == ";":
+            sp=1            
+        elif quiz[k] == "/":
+            sp=1
+        elif quiz[k] == "!":
+            sp=1
+        elif quiz[k] == "#":
+            sp=1            
+        elif quiz[k] == "&":
+            sp=1
+        elif quiz[k] == "$":
+            sp=1
+        elif quiz[k] == "%":
+            sp=1
+
+        if sp > 0:
+            quiz3+=" "+quiz[k]+" "
         else:
             quiz3+=quiz[k]
     quiz=quiz3    
