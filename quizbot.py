@@ -31,6 +31,48 @@ translator = Translator()
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
 
+def is_sp(s):
+
+    sp=0
+    
+    if s == ".":
+        sp=1
+    elif s == ",":
+        sp=1 
+    elif s == "?":
+        sp=1            
+    elif s == '"':
+        sp=1        
+    elif s == "'":
+        sp=1
+    elif s == "[":
+        sp=1
+    elif s == "]":
+        sp=1
+    elif s == "(":
+        sp=1            
+    elif s == ")":
+        sp=1            
+    elif s == ":":
+        sp=1            
+    elif s == ";":
+        sp=1            
+    elif s == "/":
+        sp=1
+    elif s == "!":
+        sp=1
+    elif s == "#":
+        sp=1            
+    elif s == "&":
+        sp=1
+    elif s == "$":
+        sp=1
+    elif s == "%":
+        sp=1
+    elif s == "-":
+        sp=1 
+    return sp
+
 looked = dict()
 
 for l in range(len(meta)):
@@ -53,8 +95,15 @@ for l in range(len(meta)):
     with open("./"+title+".txt") as f:
         for line in f:
             strr=strr+line
-            
-    talk = strr.split()
+    strr2=""
+
+    for k in range(len(strr)):   
+        if is_sp(strr[k]) > 0:
+            strr2+=" "+strr[k]+" "
+        else:
+            strr2+=strr[k]
+    
+    talk = strr2.split()
 
     n=0
 
@@ -131,44 +180,8 @@ for loop in range(PROBLEM):
 
     quiz3=""
     
-    for k in range(len(quiz)):
-        sp=0
-        if quiz[k] == ".":
-            sp=1
-        elif quiz[k] == ",":
-            sp=1 
-        elif quiz[k] == "?":
-            sp=1            
-        elif quiz[k] == '"':
-            sp=1        
-        elif quiz[k] == "'":
-            sp=1
-        elif quiz[k] == "[":
-            sp=1
-        elif quiz[k] == "]":
-            sp=1
-        elif quiz[k] == "(":
-            sp=1            
-        elif quiz[k] == ")":
-            sp=1            
-        elif quiz[k] == ":":
-            sp=1            
-        elif quiz[k] == ";":
-            sp=1            
-        elif quiz[k] == "/":
-            sp=1
-        elif quiz[k] == "!":
-            sp=1
-        elif quiz[k] == "#":
-            sp=1            
-        elif quiz[k] == "&":
-            sp=1
-        elif quiz[k] == "$":
-            sp=1
-        elif quiz[k] == "%":
-            sp=1
-
-        if sp > 0:
+    for k in range(len(quiz)):   
+        if is_sp(quiz[k]) > 0:
             quiz3+=" "+quiz[k]+" "
         else:
             quiz3+=quiz[k]
@@ -183,27 +196,29 @@ for loop in range(PROBLEM):
     dic2 = dict()
     
     for xx in range(counter-1):
-        sum=0
+        sum=1.0
         for xxx in quiz2:
+            if str(xxx)=="?":
+                continue
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
             if dist < 1:
                 sum=0
                 break 
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 in datakun:
-                sum+=datakun[tmp2]
+                sum*=datakun[tmp2]
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
-                    sum -= datakun[tmp2]
+                    sum /= datakun[tmp2]
                 #else:
                     #if str(train_num[xx+1])=="LionelMessi":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                     #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="NetworkFlowProblem":
+                #if str(train_num[xx+1])=="Xray":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Cucumber":
+                #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
-                #if str(train_num[xx+1])=="Tomato":
+                #if str(train_num[xx+1])=="ElectricVehicle(EV)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
                 #if str(train_num[xx+1])=="Recursion":
                     #print(str(tmp2)+",score="+str(sum))
