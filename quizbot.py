@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 1
+PROBLEM = 25
 TABOO = 500
 
 translator = Translator()
@@ -167,9 +167,12 @@ for l in range(len(meta)):
         #s=str(meta[l])
         #os.rename(s+".txt",s.upper()+".txt")
 
+ok=0
+ng=0
+
 for loop in range(PROBLEM):
     quiz=""
-    with open('./quiz.txt') as f:
+    with open('./testcase/quiz'+str(loop+1)+'.txt') as f:
         for line in f:
             quiz=quiz+line
     if is_ja(quiz) == False:
@@ -214,12 +217,14 @@ for loop in range(PROBLEM):
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                     #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Xray":
+                #if str(train_num[xx+1])=="Vitamin":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Recursion(ComputerScience)":
+                #if str(train_num[xx+1])=="Epistemology":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
-                #if str(train_num[xx+1])=="ElectricVehicle(EV)":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
+                #if str(train_num[xx+1])=="MeaningOfLife":
+                    #Wprint(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
+                #if str(train_num[xx+1])=="EiffelTower":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))      
                 #if str(train_num[xx+1])=="Recursion":
                     #print(str(tmp2)+",score="+str(sum))
                 #if str(train_num[xx+1])=="BeamStackSearch":
@@ -238,6 +243,14 @@ for loop in range(PROBLEM):
     ans_ja = translator.translate(str(ans), src='en', dest='ja').text
     print("Answer_ja:"+ans_ja)    
     print("Answer_en:"+str(ans))
+    truth=""
+    with open('./testcase/ans'+str(loop+1)+'.txt') as f:
+        for line in f:
+            truth=truth+line
+    if str(truth)==str(ans):
+        ok+=1
+    else:
+        ng+=1
     score=maxsum/(sumsum+1)
     print("Score:"+'{:.3f}'.format(score))
     if score < 0.3:
@@ -254,6 +267,8 @@ for loop in range(PROBLEM):
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
     print("Num:"+str(len(meta)))
-    plt.figure(figsize= (15,6))
-    plt.bar(x_all, y_all)
-    plt.show()
+    #plt.figure(figsize= (15,6))
+    #plt.bar(x_all, y_all)
+    #plt.show()
+
+print(str("AC=")+str(ok)+",WA="+str(ng))
