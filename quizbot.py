@@ -24,7 +24,7 @@ counter=1
 now=[1]
 
 PROBLEM = 25
-TABOO = 505
+TABOO = 600
 
 translator = Translator()
 
