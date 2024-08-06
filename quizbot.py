@@ -23,8 +23,8 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 25
-TABOO = 600
+PROBLEM = 26
+TABOO = 1000
 
 translator = Translator()
 
@@ -178,7 +178,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=25
+    PROBLEM=26
 
 for loop in range(PROBLEM):
     quiz=""
