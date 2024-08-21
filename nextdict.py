@@ -233,12 +233,12 @@ for loop in range(PROBLEM):
             if tmp1 in datakun:
                 datakun[tmp1]+=0.5
             else:
-                datakun[tmp1]=0.5
+                datakun[tmp1]=1
             
             if tmp2 in datakun:
                 datakun[tmp2]+=0.5
             else:
-                datakun[tmp2]=0.5   
+                datakun[tmp2]=1   
             #print(str(tmp1)+"="+str(datakun[tmp1]))
             
 key_file = open("nextkey.txt", "wt")
