@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = len(meta)#1
+PROBLEM = len(meta)
 TABOO = 1000
 
 translator = Translator()
@@ -225,31 +225,18 @@ for loop in range(PROBLEM):
                     sum/=datakun[tmp2]
         dic2[str(train_num[xx+1])]=sum
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
-    x_all, y_all = zip(*g)
-    for x in quiz2:
-        s1=str(x)+","+str(x_all[0])
-        s2=str(x_all[0])+","+str(x)
-        if s1 in datakun:
-            datakun[s1]+=2
-        else:
-            datakun[s1]=2
-            
-        if s2 in datakun:
-            datakun[s2]+=2
-        else:
-            datakun[s2]=2
-        
-    for i in range(4):
+    x_all, y_all = zip(*g)        
+    for i in range(5):
         for x in quiz2:
-            tmp1=str(x)+","+str(x_all[i+1])
-            tmp2=str(x_all[i+1])+","+str(x)
+            tmp1=str(x)+","+str(x_all[i])
+            tmp2=str(x_all[i])+","+str(x)
             if tmp1 in datakun:
-                datakun[tmp1]+=0.5
+                datakun[tmp1]+=0.1
             else:
                 datakun[tmp1]=1
             
             if tmp2 in datakun:
-                datakun[tmp2]+=0.5
+                datakun[tmp2]+=0.1
             else:
                 datakun[tmp2]=1   
             #print(str(tmp1)+"="+str(datakun[tmp1]))
