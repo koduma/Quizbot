@@ -226,6 +226,19 @@ for loop in range(PROBLEM):
         dic2[str(train_num[xx+1])]=sum
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
     x_all, y_all = zip(*g)
+    for x in quiz2:
+        s1=str(x)+","+str(x_all[0])
+        s2=str(x_all[0])+","+str(x)
+        if s1 in datakun:
+            datakun[s1]+=2
+        else:
+            datakun[s1]=2
+            
+        if s2 in datakun:
+            datakun[s2]+=2
+        else:
+            datakun[s2]=2
+        
     for i in range(4):
         for x in quiz2:
             tmp1=str(x)+","+str(x_all[i+1])
