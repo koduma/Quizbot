@@ -184,7 +184,7 @@ try:
             nextvalue.append(str(line))
     
     for i in range(nksize):
-        datakun[str(nextkey[i]).rstrip('\n')]=int(nextvalue[i].rstrip('\n'))
+        datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
 
 except FileNotFoundError:
     print("fileNoExist")
@@ -233,7 +233,7 @@ for loop in range(PROBLEM):
             if tmp1 in datakun:
                 datakun[tmp1]+=0.5
             else:
-                datakun[tmp1]+=0.5
+                datakun[tmp1]=0.5
             
             if tmp2 in datakun:
                 datakun[tmp2]+=0.5
