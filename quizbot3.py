@@ -185,7 +185,7 @@ try:
             nextvalue.append(str(line))
     
     for i in range(nksize):
-        datakun[str(nextkey[i]).rstrip('\n')]=int(nextvalue[i].rstrip('\n'))
+        datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
 
 except FileNotFoundError:
     print("fileNoExist") 
