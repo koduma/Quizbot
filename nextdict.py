@@ -231,14 +231,14 @@ for loop in range(PROBLEM):
             tmp1=str(x)+","+str(x_all[i+1])
             tmp2=str(x_all[i+1])+","+str(x)
             if tmp1 in datakun:
-                datakun[tmp1]+=1
+                datakun[tmp1]+=0.5
             else:
-                datakun[tmp1]=1
+                datakun[tmp1]+=0.5
             
             if tmp2 in datakun:
-                datakun[tmp2]+=1
+                datakun[tmp2]+=0.5
             else:
-                datakun[tmp2]=1   
+                datakun[tmp2]=0.5   
             #print(str(tmp1)+"="+str(datakun[tmp1]))
             
 key_file = open("nextkey.txt", "wt")
