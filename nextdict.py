@@ -189,6 +189,8 @@ try:
 except FileNotFoundError:
     print("fileNoExist")
 
+dic3 = dict()    
+
 for loop in range(PROBLEM):
     print("loop="+str(loop+1)+"/"+str(PROBLEM))
     quiz=""
@@ -207,29 +209,49 @@ for loop in range(PROBLEM):
     quiz2 = quiz.split()
     dic2 = dict()
 
-    print(str(quiz2))
+    #print(str(quiz2))
     
-    for xx in range(counter-1):
+    for xx in range(len(meta)):
         sum=1.0
         for xxx in quiz2:
             if str(xxx)=="?":
                 continue
-            dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
+            dist = Levenshtein.distance(str(meta[xx]).upper(), str(xxx).upper())                
             if dist < 1:
                 sum=1.0
                 break 
-            tmp2=str(train_num[xx+1])+","+str(xxx)
+            tmp2=str(meta[xx])+","+str(xxx)
             if tmp2 in datakun:
                 sum*=datakun[tmp2]
-                if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
+                if NoAns[str(meta[xx])] > TABOO or NoAns[xxx] > TABOO:
                     sum/=datakun[tmp2]
-        dic2[str(train_num[xx+1])]=sum
+        dic2[str(meta[xx])]=sum
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
     x_all, y_all = zip(*g)        
     for i in range(5):
+        print(str(x_all[i]))
+        dic3[str(loop)+","+str(i)]=str(x_all[i])
+
+for loop in range(PROBLEM):
+    print("loop="+str(loop+1)+"/"+str(PROBLEM))
+    quiz=""
+    print(str(meta[loop]))
+    with open("./"+str(meta[loop])+".txt") as f:
+        for line in f:
+            quiz=quiz+line
+    quiz3=""
+    
+    for k in range(len(quiz)):   
+        if is_sp(quiz[k]) > 0:
+            quiz3+=" "+quiz[k]+" "
+        else:
+            quiz3+=quiz[k]
+    quiz=quiz3    
+    quiz2 = quiz.split()
+    for i in range(5):
         for x in quiz2:
-            tmp1=str(x)+","+str(x_all[i])
-            tmp2=str(x_all[i])+","+str(x)
+            tmp1=str(x)+","+str(dic3[str(loop)+","+str(i)])
+            tmp2=str(dic3[str(loop)+","+str(i)])+","+str(x)
             if tmp1 in datakun:
                 datakun[tmp1]+=0.1
             else:
@@ -238,8 +260,7 @@ for loop in range(PROBLEM):
             if tmp2 in datakun:
                 datakun[tmp2]+=0.1
             else:
-                datakun[tmp2]=1   
-            #print(str(tmp1)+"="+str(datakun[tmp1]))
+                datakun[tmp2]=1
             
 key_file = open("nextkey.txt", "wt")
 value_file = open("nextvalue.txt", "wt")
