@@ -123,43 +123,7 @@ for l in range(len(meta)):
             n=counter
         else:
             NoAns[x]+=1
-    now.append(n)       
-    for c in talk:
-        tmp5 = title+","+str(c)
-        tmp6 = str(c)+","+str(title)
-        if tmp5 in datakun:
-            datakun[tmp5]+=2
-        else:
-            datakun[tmp5]=2
-
-        if tmp6 in datakun:
-            datakun[tmp6]+=2
-        else:
-            datakun[tmp6]=2
-
-#for c in range(counter-2):
-#    tmp = str(train_num[c+1])+","+str(train_num[c+2])
-#    if tmp in data:
-#        data[tmp]+=1
-#    else:
-#        data[tmp]=1
-    
-    for c in range(now[l]-1,counter-1):
-        for c2 in range(c+1,counter-1):
-            tmp = str(train_num[c+1])+","+str(train_num[c2+1])
-            #if train_num[c+1]=="Empiricism":
-                #print(tmp+","+str(l))
-            if tmp in datakun:
-                datakun[tmp]+=1
-                #if str(train_num[c+1])=="Empiricism":
-                    #print(str(tmp)+"="+str(datakun[tmp]))
-            else:
-                datakun[tmp]=1
-            tmp3 = str(train_num[c2+1])+","+str(train_num[c+1])
-            if tmp3 in datakun:
-                datakun[tmp3]+=1
-            else:
-                datakun[tmp3]=1
+    now.append(n)
 
 for l in range(len(meta)):
     if NoAns[meta[l]] > TABOO:
