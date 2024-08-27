@@ -133,26 +133,30 @@ for l in range(len(meta)):
 
 
 nksize=0
-nextkey=[]
-nextvalue=[]
 
 try:
-    with open('./nextkey.txt') as f:
-        for line in f:
-            nksize+=1
-            line.rstrip('\n')
-            nextkey.append(str(line))
-            
-    with open('./nextvalue.txt') as f:
-        for line in f:
-            line.rstrip('\n')
-            nextvalue.append(str(line))
-    
-    for i in range(nksize):
-        datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
+   with open('./ndict.txt') as f:
+    for line in f:
+        nksize+=1
+        key=""
+        value=""
+        number=False
+        stopper=0
+        for i in range(len(line)):
+            if line[i]=="@":
+                stopper=i
+        for i in range(len(line)):
+            if i==stopper:
+                number=True
+                continue
+            if number == False:
+                key+=line[i]
+            else:
+                value+=line[i]       
+        datakun[str(key).rstrip('\n')]=float(str(value).rstrip('\n'))
 
 except FileNotFoundError:
-    print("fileNoExist") 
+    print("fileNoExist")
 
 
 ok=0
