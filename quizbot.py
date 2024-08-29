@@ -221,24 +221,26 @@ for loop in range(PROBLEM):
                 continue
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
             if dist < 1:
-                sum=0
+                sum=1.0
                 break 
             tmp2=str(train_num[xx+1])+","+str(xxx)
+            if tmp2 not in datakun:
+                sum/=1.2
             if tmp2 in datakun:
                 sum*=datakun[tmp2]
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
-                    sum /= datakun[tmp2]
+                    sum/=datakun[tmp2]
                 #else:
                     #if str(train_num[xx+1])=="LionelMessi":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                     #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="FRIDAY":
+                #if str(train_num[xx+1])=="Neanderthal":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Epistemology":
+                #if str(train_num[xx+1])=="VaticanCity":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
-                #if str(train_num[xx+1])=="MeaningOfLife":
-                    #Wprint(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
+                #if str(train_num[xx+1])=="USSR":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
                 #if str(train_num[xx+1])=="EiffelTower":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))      
                 #if str(train_num[xx+1])=="Recursion":
@@ -285,9 +287,10 @@ for loop in range(PROBLEM):
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
     print("Num:"+str(len(meta)))
-    #plt.figure(figsize= (15,6))
-    #plt.bar(x_all, y_all)
-    #plt.show()
+    if mode=="n":
+        plt.figure(figsize= (15,6))
+        plt.bar(x_all, y_all)
+        plt.show()
 
 if mode=="y":
     print(str("AC=")+str(ok)+",WA="+str(ng))
