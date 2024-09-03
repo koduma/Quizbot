@@ -87,6 +87,9 @@ for l in range(len(meta)):
 #sys.exit()
 
 for l in range(len(meta)):
+    
+    if (l+1)%100 == 0:
+        print("param="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
 
     strr=""
     
@@ -125,7 +128,7 @@ for l in range(len(meta)):
             NoAns[x]+=1
     now.append(n)       
     for c in talk:
-        tmp5 = title+","+str(c)
+        tmp5 = str(title)+","+str(c)
         tmp6 = str(c)+","+str(title)
         if tmp5 in datakun:
             datakun[tmp5]+=2
@@ -135,7 +138,7 @@ for l in range(len(meta)):
         if tmp6 in datakun:
             datakun[tmp6]+=2
         else:
-            datakun[tmp6]=2
+            datakun[tmp6]=2   
 
 #for c in range(counter-2):
 #    tmp = str(train_num[c+1])+","+str(train_num[c+2])
@@ -181,6 +184,7 @@ else:
     PROBLEM=26
 
 for loop in range(PROBLEM):
+    
     quiz=""
 
     if mode=="y":
@@ -222,33 +226,19 @@ for loop in range(PROBLEM):
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
             if dist < 1:
                 sum=1.0
-                break 
+                break
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 not in datakun:
                 sum/=1.2
             if tmp2 in datakun:
                 sum*=datakun[tmp2]
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
-                    sum/=datakun[tmp2]
+                    sum/=datakun[tmp2]       
                 #else:
-                    #if str(train_num[xx+1])=="LionelMessi":
-                        #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                     #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Neanderthal":
+                #if str(train_num[xx+1])=="Fruit":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="VaticanCity":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
-                #if str(train_num[xx+1])=="USSR":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))  
-                #if str(train_num[xx+1])=="EiffelTower":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))      
-                #if str(train_num[xx+1])=="Recursion":
-                    #print(str(tmp2)+",score="+str(sum))
-                #if str(train_num[xx+1])=="BeamStackSearch":
-                    #print(str(tmp2)+",score="+str(sum))
-                #if str(train_num[xx+1])=="BeamSearch":
-                    #print(str(tmp2)+",score="+str(sum))
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
             maxsum=sum
