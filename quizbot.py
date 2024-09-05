@@ -87,9 +87,6 @@ for l in range(len(meta)):
 #sys.exit()
 
 for l in range(len(meta)):
-    
-    if (l+1)%100 == 0:
-        print("param="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
 
     strr=""
     
@@ -163,6 +160,9 @@ for l in range(len(meta)):
                 datakun[tmp3]+=1
             else:
                 datakun[tmp3]=1
+
+    if (l+1)%100 == 0 or (l+1)==len(meta):
+        print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
 
 for l in range(len(meta)):
     if NoAns[meta[l]] > TABOO:
