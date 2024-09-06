@@ -246,6 +246,8 @@ for loop in range(PROBLEM):
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
     print(g)
     x_all, y_all = zip(*g)
+    if y_all[0] < 1.01:
+        ans="Unknown"
     for i in range(5):
         sumsum+=y_all[i]
     ans_ja = translator.translate(str(ans), src='en', dest='ja').text
