@@ -124,7 +124,7 @@ for i in range(len(spt4)):
         continue
     ans+=" "+spt4[i]
 
-#file = open(str(g)+"or"+str(s)+".txt", "wt")
+#file = open(str(g)+"OR"+str(s)+".txt", "wt")
 #file.write(str(ans)+"\n")
-file = open(str(g)+"+"+str(s)+".txt", "wt")
+file = open(str(g)+"AND"+str(s)+".txt", "wt")
 file.write(str(AND)+"\n")
