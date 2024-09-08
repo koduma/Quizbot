@@ -198,8 +198,8 @@ for i in range(len(spt4)):
     ans+=" "+spt4[i]
         
 
-file = open("NOT"+str(g)+".txt","wt")
-file.write(str(z)+"\n")
+#file = open("NOT"+str(g)+".txt","wt")
+#file.write(str(z)+"\n")
 #file = open(str(g)+"OR"+str(s)+".txt", "wt")
 #file.write(str(ans)+"\n")
 #file = open(str(g)+"AND"+str(s)+".txt", "wt")
