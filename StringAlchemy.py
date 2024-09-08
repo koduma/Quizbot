@@ -174,5 +174,5 @@ for l in range(len(meta)):
 #file.write(str(z)+"\n")
 #file = open(str(g)+"OR"+str(s)+".txt", "wt")
 #file.write(str(ans)+"\n")
-file = open(str(g)+"AND"+str(s)+".txt", "wt")
-file.write(str(AND)+"\n")
+#file = open(str(g)+"AND"+str(s)+".txt", "wt")
+#file.write(str(AND)+"\n")
