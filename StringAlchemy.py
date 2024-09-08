@@ -6,8 +6,8 @@ from googletrans import Translator
 import re
 import sys
 
-s="APPLE"
-g="Tree"
+s="Water"
+g="Light"
 
 silver=""
 gold=""
@@ -124,6 +124,54 @@ for i in range(len(spt4)):
         continue
     ans+=" "+spt4[i]
 
+meta=""
+    
+
+with open("./metadata.txt") as f:
+    for line in f:
+       meta=meta+line
+
+meta=meta.split()
+
+z=""
+
+for l in range(len(meta)):
+
+    if z != "":
+        break
+    
+    strr=""
+    
+    title = meta[l]
+    
+    with open("./"+title+".txt") as f:
+        for line in f:
+            strr=strr+line
+    strr2=""
+
+    for k in range(len(strr)):   
+        if is_sp(strr[k]) > 0:
+            strr2+=" "+strr[k]+" "
+        else:
+            strr2+=strr[k]
+    
+    talk = strr2.split()
+    
+    hit=0
+    for i in range(len(talk)):
+        if hit >0:
+            break
+        for j in range(len(spt1)):
+            if talk[i]==spt1[j]:
+                hit+=1
+    if hit == 0:
+        print(title)
+        for i in range(len(talk)):
+            z+=talk[i]+" "
+        
+
+#file = open("NOT"+str(g)+".txt","wt")
+#file.write(str(z)+"\n")
 #file = open(str(g)+"OR"+str(s)+".txt", "wt")
 #file.write(str(ans)+"\n")
 file = open(str(g)+"AND"+str(s)+".txt", "wt")
