@@ -13,6 +13,7 @@ silver=""
 gold=""
 
 ddd = dict()
+NoAns = dict()
 
 def is_sp(s):
 
@@ -56,6 +57,58 @@ def is_sp(s):
         sp=1 
     return sp
 
+
+meta=""
+    
+
+with open("./metadata.txt") as f:
+    for line in f:
+       meta=meta+line
+
+meta=meta.split()
+
+z=""
+
+for l in range(len(meta)):
+
+    if z != "":
+        break
+    
+    strr=""
+    
+    title = meta[l]
+    
+    with open("./"+title+".txt") as f:
+        for line in f:
+            strr=strr+line
+    strr2=""
+
+    for k in range(len(strr)):   
+        if is_sp(strr[k]) > 0:
+            strr2+=" "+strr[k]+" "
+        else:
+            strr2+=strr[k]
+    
+    talk = strr2.split()
+
+    for x in talk:
+        if x not in NoAns:
+            NoAns[x]=1
+        else:
+            NoAns[x]+=1
+
+    hit=0
+    for i in range(len(talk)):
+        if hit >0:
+            break
+        for j in range(len(spt1)):
+            if talk[i]==spt1[j] and NoAns[talk[i]] < 1000:
+                hit+=1
+    if hit == 0:
+        print(title)
+        for i in range(len(talk)):
+            z+=talk[i]+" "
+
 with open("./"+s+".txt") as f:
     for line in f:
         silver=silver+line
@@ -96,7 +149,7 @@ AND=""
 
 for i in range(len(spt1)):
     for j in range(len(spt2)):
-        if spt1[i]==spt2[j]:
+        if spt1[i]==spt2[j] and NoAns[spt1[i]] < 1000:
             if spt1[i] not in ddd:
                 ddd[spt1[i]]=1
                 AND+=spt1[i]+" "
@@ -123,51 +176,6 @@ for i in range(len(spt4)):
         cnt+=1
         continue
     ans+=" "+spt4[i]
-
-meta=""
-    
-
-with open("./metadata.txt") as f:
-    for line in f:
-       meta=meta+line
-
-meta=meta.split()
-
-z=""
-
-for l in range(len(meta)):
-
-    if z != "":
-        break
-    
-    strr=""
-    
-    title = meta[l]
-    
-    with open("./"+title+".txt") as f:
-        for line in f:
-            strr=strr+line
-    strr2=""
-
-    for k in range(len(strr)):   
-        if is_sp(strr[k]) > 0:
-            strr2+=" "+strr[k]+" "
-        else:
-            strr2+=strr[k]
-    
-    talk = strr2.split()
-    
-    hit=0
-    for i in range(len(talk)):
-        if hit >0:
-            break
-        for j in range(len(spt1)):
-            if talk[i]==spt1[j]:
-                hit+=1
-    if hit == 0:
-        print(title)
-        for i in range(len(talk)):
-            z+=talk[i]+" "
         
 
 #file = open("NOT"+str(g)+".txt","wt")
