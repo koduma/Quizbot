@@ -6,8 +6,8 @@ from googletrans import Translator
 import re
 import sys
 
-s="Water"
-g="Light"
+s="Tuesday"
+g="Wednesday"
 
 silver=""
 gold=""
@@ -196,8 +196,24 @@ for i in range(len(spt4)):
         cnt+=1
         continue
     ans+=" "+spt4[i]
-        
 
+
+SLASH=""        
+
+for i in range(len(spt1)):
+    hit=0
+    for j in range(len(spt3)):
+        if spt1[i]==spt3[j]:
+            hit=1
+            break
+    if hit == 0:
+        SLASH+=spt1[i]+" "
+
+print(SLASH)        
+
+#file = open("SLASH"+str(g)+".txt","wt")
+#file.write(str(SLASH)+"\n")
+    
 #file = open("NOT"+str(g)+".txt","wt")
 #file.write(str(z)+"\n")
 #file = open(str(g)+"OR"+str(s)+".txt", "wt")
