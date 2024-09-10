@@ -245,7 +245,11 @@ def XORgate(s5,s3):
 
 XOR=XORgate(spt5,spt3)
 
-print("XOR="+str(XOR)+",AND="+str(ANDgs)+",OR="+str(ORgs)+",DIFF="+str(DIFF))
+print("XOR="+str(XOR))
+print("AND="+str(ANDgs))
+print("OR="+str(ORgs))
+print("DIFF="+str(DIFF))
+print("HA="+str(ANDgs)+str(XOR))
             
 #file = open("DIFF"+str(g)+".txt","wt")
 #file.write(str(DIFF)+"\n")
