@@ -240,16 +240,50 @@ def XORgate(s5,s3):
                     break
         if hit == 0:
             xor+=s5[i]+" "
-    
+            
     return xor
 
 XOR=XORgate(spt5,spt3)
 
-print("XOR="+str(XOR))
-print("AND="+str(ANDgs))
-print("OR="+str(ORgs))
-print("DIFF="+str(DIFF))
-print("HA="+str(ANDgs)+str(XOR))
+#print("XOR="+str(XOR))
+#print("AND="+str(ANDgs))
+#print("OR="+str(ORgs))
+#print("DIFF="+str(DIFF))
+#print("HA="+str(ANDgs)+str(XOR))
+
+def HA():
+    return ANDgs , XOR
+
+def FA(cx,sy,cy,sm):
+    ttt=""
+    for i in range(len(cx)):
+        ttt+=cx[i]+" "
+    for i in range(len(cy)):
+        ttt+=cy[i]+" "
+        
+    kkk=ttt.split()
+    
+    t,c2=ANDgateORgate(cx,cy,kkk)
+    
+    zzz=c2.split()
+    
+    ans="FA="
+    
+    for i in range(len(zzz)):
+        ans+=zzz[i]+" "
+        
+    for i in range(len(sm)):
+        ans+=sm[i]+" "    
+        
+    print(ans)
+
+
+x1=ANDgs.split()
+x2=XOR.split()
+x3="".split()
+x4=x2
+
+FA(x1,x2,x3,x4)    
             
 #file = open("DIFF"+str(g)+".txt","wt")
 #file.write(str(DIFF)+"\n")
