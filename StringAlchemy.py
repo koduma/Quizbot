@@ -209,14 +209,14 @@ for i in range(len(spt1)):
     if hit == 0:
         SLASH+=spt1[i]+" "
 
-print(SLASH)        
-
 #file = open("SLASH"+str(g)+".txt","wt")
 #file.write(str(SLASH)+"\n")
     
 #file = open("NOT"+str(g)+".txt","wt")
 #file.write(str(z)+"\n")
+
 #file = open(str(g)+"OR"+str(s)+".txt", "wt")
 #file.write(str(ans)+"\n")
+
 #file = open(str(g)+"AND"+str(s)+".txt", "wt")
 #file.write(str(AND)+"\n")
