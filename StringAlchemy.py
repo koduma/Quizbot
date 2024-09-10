@@ -6,8 +6,8 @@ from googletrans import Translator
 import re
 import sys
 
-s="Tuesday"
-g="Wednesday"
+s="Light"
+g="Water"
 
 silver=""
 gold=""
@@ -127,96 +127,133 @@ for k in range(len(goldsilver)):
 
 spt1=spgold.split()
 spt2=spsilver.split()
-AND=""
-
-z=""
-
-
-for l in range(len(meta)):
-
-    if z != "":
-        break
-    
-    strr=""
-    
-    title = meta[l]
-    
-    with open("./"+title+".txt") as f:
-        for line in f:
-            strr=strr+line
-    strr2=""
-
-    for k in range(len(strr)):   
-        if is_sp(strr[k]) > 0:
-            strr2+=" "+strr[k]+" "
-        else:
-            strr2+=strr[k]
-    
-    talk = strr2.split()
-
-    hit=0
-    for i in range(len(talk)):
-        if hit >0:
-            break            
-        for j in range(len(spt1)):
-            if talk[i]==spt1[j] and NoAns[talk[i]] <= 1000:
-                hit+=1
-                
-    if hit == 0:
-        print(title)
-        for i in range(len(talk)):
-            z+=talk[i]+" "
-
-for i in range(len(spt1)):
-    for j in range(len(spt2)):
-        if spt1[i]==spt2[j] and NoAns[spt1[i]] <= 1000:
-            if spt1[i] not in ddd:
-                ddd[spt1[i]]=1
-                AND+=spt1[i]+" "
-            else:
-                ddd[spt1[i]]+=1
-
-spt3=AND.split()
 spt4=spgoldsilver.split()
 
-era=[]
 
-for i in range(len(spt4)):
-    if spt4[i] in ddd:
-        if ddd[spt4[i]] > 0:
-            era.append(i)
-            ddd[spt4[i]]-=1
-
-era.append(len(spt4))
-
-ans=""
-cnt=0
-for i in range(len(spt4)):
-    if i==era[cnt]:
-        cnt+=1
-        continue
-    ans+=" "+spt4[i]
-
-
-SLASH=""        
-
-for i in range(len(spt1)):
-    hit=0
-    for j in range(len(spt3)):
-        if spt1[i]==spt3[j]:
-            hit=1
-            break
-    if hit == 0:
-        SLASH+=spt1[i]+" "
-
-#file = open("SLASH"+str(g)+".txt","wt")
-#file.write(str(SLASH)+"\n")
+def NOTgate(s1):
     
+    z=""
+    
+    for l in range(len(meta)):
+        
+        if z != "":
+            return z
+            
+        strr=""
+        
+        title = meta[l]
+        
+        with open("./"+title+".txt") as f:
+            for line in f:
+                strr=strr+line
+                
+        strr2=""
+        
+        for k in range(len(strr)):
+            if is_sp(strr[k]) > 0:
+                strr2+=" "+strr[k]+" "
+            else:
+                strr2+=strr[k]
+        
+        talk = strr2.split()
+        hit=0
+        for i in range(len(talk)):
+            if hit > 0:
+                break
+            for j in range(len(s1)):
+                if talk[i] in NoAns:
+                    if talk[i]==s1[j] and NoAns[talk[i]] <= 1000:
+                        hit+=1
+                        break        
+        if hit == 0:
+            print(title)
+            for i in range(len(talk)):
+                z+=talk[i]+" "
+                
+    return z
+
+NOTg=NOTgate(spt1)
+NOTs=NOTgate(spt2)
+
+def ANDgateORgate(s1,s2,s4):
+    AND=""
+    for i in range(len(s1)):
+        for j in range(len(s2)):
+            if s1[i] in NoAns:
+                if s1[i]==s2[j] and NoAns[s1[i]] <= 1000:
+                    if s1[i] not in ddd:
+                        ddd[s1[i]]=1
+                        AND+=s1[i]+" "
+                    else:
+                        ddd[s1[i]]+=1
+
+    OR=""
+
+    era=[]
+    for i in range(len(s4)):
+        if s4[i] in ddd:
+            if ddd[s4[i]] > 0:
+                era.append(i)
+                ddd[s4[i]]-=1
+    era.append(len(s4))
+
+    cnt=0
+    for i in range(len(s4)):
+        if i==era[cnt]:
+            cnt+=1
+            continue
+        OR+=s4[i]+" "
+                    
+    return AND,OR
+
+ANDgs,ORgs = ANDgateORgate(spt1,spt2,spt4)
+
+spt3=ANDgs.split()
+
+def DIFFgate(s1,s3):
+
+    diff=""
+    for i in range(len(s1)):
+        hit=0
+        for j in range(len(s3)):
+            if s1[i]==s3[j]:
+                hit=1
+                break
+        if hit == 0:
+            diff+=s1[i]+" "
+            
+    return diff
+
+DIFF=DIFFgate(spt1,spt3)
+
+spt5=ORgs.split()
+
+
+def XORgate(s5,s3):
+    xor=""
+    for i in range(len(s5)):
+        hit=0
+        for j in range(len(s3)):
+            if s5[i] in NoAns:
+                if s5[i]==s3[j] and NoAns[s5[i]] <= 1000:
+                    hit+=1
+                    break
+        if hit == 0:
+            xor+=s5[i]+" "
+    
+    return xor
+
+XOR=XORgate(spt5,spt3)
+
+print("XOR="+str(XOR)+",AND="+str(ANDgs)+",OR="+str(ORgs)+",DIFF="+str(DIFF))
+            
+#file = open("DIFF"+str(g)+".txt","wt")
+#file.write(str(DIFF)+"\n")
+#file = open(str(g)+"XOR"+str(s)+".txt","wt")
+#file.write(str(XOR)+"\n")    
 #file = open("NOT"+str(g)+".txt","wt")
-#file.write(str(z)+"\n")
-
+#file.write(str(NOTg)+"\n")
 #file = open(str(g)+"OR"+str(s)+".txt", "wt")
-#file.write(str(ans)+"\n")
-
+#file.write(str(ORgs)+"\n")
 #file = open(str(g)+"AND"+str(s)+".txt", "wt")
-#file.write(str(AND)+"\n")
+#file.write(str(ANDgs)+"\n")
