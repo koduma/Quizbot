@@ -307,3 +307,4 @@ for loop1 in range(10001):
         if ans != "Unknown":
             file = open(str(ans)+".txt","a")
             file.write(str(s3)+"\n")
+            file.close()
