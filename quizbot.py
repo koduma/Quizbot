@@ -217,9 +217,28 @@ for loop in range(PROBLEM):
     maxsum=0
     ans=""
     dic2 = dict()
-    
+
+    hint=""
+    maxhit=1
+
+    for xxx in range(len(quiz2)):
+        hit=0
+        for x in range(len(quiz2)):
+            if quiz2[xxx] in quiz2[x]:
+                if quiz2[xxx] in NoAns:
+                    if NoAns[quiz2[xxx]] <= TABOO:
+                        hit+=1            
+        if hit>maxhit:
+            maxhit=hit
+            hint=quiz2[xxx]
+    #print("hint="+str(hint)+",maxhit="+str(maxhit))
     for xx in range(counter-1):
         sum=1.0
+        tmp=str(train_num[xx+1])+","+str(hint)
+        if tmp in datakun:
+            sum=float(pow(2,maxhit-1))
+            #if str(train_num[xx+1])=="FRIDAY":
+                #print("sum="+str(sum))
         for xxx in quiz2:
             if str(xxx)=="?":
                 continue
@@ -237,7 +256,7 @@ for loop in range(PROBLEM):
                 #else:
                     #if str(train_num[xx+1])=="Recursion(ComputerScience)":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Fruit":
+                #if str(train_num[xx+1])=="FRIDAY":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
