@@ -223,11 +223,12 @@ for loop in range(PROBLEM):
 
     for xxx in range(len(quiz2)):
         hit=0
-        for x in range(len(quiz2)):
-            if quiz2[xxx] in quiz2[x]:
-                if quiz2[xxx] in NoAns:
-                    if NoAns[quiz2[xxx]] <= TABOO:
-                        hit+=1            
+        if len(quiz2[xxx])>1:
+            for x in range(len(quiz2)):
+                if quiz2[xxx] in quiz2[x]:
+                    if quiz2[xxx] in NoAns:
+                        if NoAns[quiz2[xxx]] <= TABOO:
+                            hit+=1            
         if hit>maxhit:
             maxhit=hit
             hint=quiz2[xxx]
@@ -237,7 +238,7 @@ for loop in range(PROBLEM):
         tmp=str(train_num[xx+1])+","+str(hint)
         if tmp in datakun:
             sum=float(pow(2,maxhit-1))
-            #if str(train_num[xx+1])=="FRIDAY":
+            #if str(train_num[xx+1])=="IrreversibleProcess":
                 #print("sum="+str(sum))
         for xxx in quiz2:
             if str(xxx)=="?":
@@ -254,7 +255,7 @@ for loop in range(PROBLEM):
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
                     sum/=datakun[tmp2]       
                 #else:
-                    #if str(train_num[xx+1])=="Recursion(ComputerScience)":
+                    #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
                 #if str(train_num[xx+1])=="FRIDAY":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
