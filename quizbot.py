@@ -70,7 +70,10 @@ def is_sp(s):
     elif s == "%":
         sp=1
     elif s == "-":
-        sp=1 
+        sp=1
+    elif s == "{":
+        sp=1
+    elif s == "}":
     return sp
 
 looked = dict()
