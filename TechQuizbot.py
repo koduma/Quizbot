@@ -52,6 +52,7 @@ word=dict()
 
 prob=10000#2000000
 counter=0
+tolerance=10
 
 a = pd.read_csv("Answers.csv",encoding="ISO-8859-1")
 
@@ -116,7 +117,7 @@ def generate(s,quiz3):
                     a+=datakun[tmp]
                     sum=a
                     hit+=1
-                if sum>maxscore and hit>=len(quiz3)/2:
+                if sum>maxscore and hit>=len(quiz3)/tolerance:
                     maxscore=sum
                     ret=str(word[d])
     return ret,maxscore
