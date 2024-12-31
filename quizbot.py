@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 26
+PROBLEM = 27
 TABOO = 1000
 
 translator = Translator()
@@ -167,6 +167,13 @@ for l in range(len(meta)):
 
     if (l+1)%100 == 0 or (l+1)==len(meta):
         print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
+        #b = sys.getsizeof(datakun)
+        #b += sum(map(sys.getsizeof, datakun.values())) + sum(map(sys.getsizeof, datakun.keys()))
+        #kb = b / 1024
+        #mb = kb / 1024
+        #gb = mb / 1024
+        #gb2 = format(gb, '.2f')
+        #print("params="+str(len(datakun))+","+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
 
 for l in range(len(meta)):
     if NoAns[meta[l]] > TABOO:
@@ -185,7 +192,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=26
+    PROBLEM=27
 
 for loop in range(PROBLEM):
     
@@ -261,7 +268,7 @@ for loop in range(PROBLEM):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="FRIDAY":
+                #if str(train_num[xx+1])=="SuperIntelligence":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
