@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 27
+PROBLEM = 28
 TABOO = 1000
 
 translator = Translator()
@@ -192,7 +192,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=27
+    PROBLEM=28
 
 for loop in range(PROBLEM):
     
@@ -268,8 +268,10 @@ for loop in range(PROBLEM):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="SuperIntelligence":
+                #if str(train_num[xx+1])=="BonusPayment":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="GolfClub":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
             maxsum=sum
