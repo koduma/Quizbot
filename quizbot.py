@@ -95,6 +95,8 @@ def is_sp(s):
         sp=1
     elif s=="@":
         sp=1
+    elif s=="=":
+        sp=1    
     return sp
 
 looked = dict()
@@ -293,7 +295,7 @@ for loop in range(PROBLEM):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Diligence":
+                #if str(train_num[xx+1])=="CuttingTool(Machining)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="GolfClub":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
