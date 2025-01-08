@@ -75,6 +75,26 @@ def is_sp(s):
         sp=1
     elif s == "}":
         sp=1
+    elif s=="“":
+        sp=1
+    elif s=="’":
+        sp=1
+    elif s=="”":
+        sp=1
+    elif s==">":
+        sp=1
+    elif s=="<":
+        sp=1
+    elif s=="+":
+        sp=1
+    elif s=="*":
+        sp=1
+    elif s=="|":
+        sp=1
+    elif s=="¥":
+        sp=1
+    elif s=="@":
+        sp=1
     return sp
 
 looked = dict()
@@ -232,6 +252,11 @@ for loop in range(PROBLEM):
     hint=""
     maxhit=1
 
+    #for xxx in range(len(quiz2)):
+        #if quiz2[xxx] in NoAns:
+            #if NoAns[quiz2[xxx]]<=TABOO:
+                #print(str(quiz2[xxx])+"="+str(NoAns[quiz2[xxx]]))
+
     for xxx in range(len(quiz2)):
         hit=0
         if len(quiz2[xxx])>1:
@@ -264,11 +289,11 @@ for loop in range(PROBLEM):
             if tmp2 in datakun:
                 sum*=datakun[tmp2]
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
-                    sum/=datakun[tmp2]       
+                    sum/=datakun[tmp2]        
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="BonusPayment":
+                #if str(train_num[xx+1])=="Diligence":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="GolfClub":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
@@ -281,12 +306,9 @@ for loop in range(PROBLEM):
     x_all, y_all = zip(*g)
     if y_all[0] < 1.01:
         ans="Unknown"
-    for i in range(5):
-        sumsum+=y_all[i]
     ans_ja = translator.translate(str(ans), src='en', dest='ja').text
     print("Answer_ja:"+ans_ja)    
     print("Answer_en:"+str(ans))
-
     if mode == "y":
         truth=""
         with open('./testcase/ans'+str(loop+1)+'.txt') as f:
@@ -296,15 +318,15 @@ for loop in range(PROBLEM):
             ok+=1
         else:
             ng+=1
-    score=maxsum/(sumsum+1)
+    score=maxsum/(len(quiz2)+1)
     print("Score:"+'{:.3f}'.format(score))
-    if score < 0.3:
+    if score < 1.0:
         print("Eval:F") 
     else:
-        if score < 0.4:
+        if score < 10.0:
             print("Eval:C")
         else:
-            if score < 0.6:
+            if score < 100.0:
                 print("Eval:A")
             else:
                 print("Eval:S")               
