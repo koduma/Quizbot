@@ -218,7 +218,6 @@ for l in range(len(meta)):
         #s=str(meta[l])
         #os.rename(s+".txt",s.upper()+".txt")
 
-
 ok=0
 ng=0
 mode=""
@@ -308,10 +307,12 @@ def solve(loop,o,add):
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
             if dist < 1:
                 sum=1.0
-                break    
+                break
+            bbb=False    
             if is_include(str(train_num[xx+1]),str(xxx))==True:
+                #include[str(train_num[xx+1])]=True
                 for w1 in range(len(quiz2)):
-                    if include==True:
+                    if bbb==True:
                         break
                     for w2 in range(w1+1,len(quiz2)):
                         w3=str(quiz2[w1])+str(quiz2[w2])
@@ -320,6 +321,7 @@ def solve(loop,o,add):
                         d2=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w4).upper())
                         if d1 <=1 or d2 <=1:
                             include[str(train_num[xx+1])]=True
+                            bbb=True
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 not in datakun:
                 sum/=1.2
