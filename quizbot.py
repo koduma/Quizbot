@@ -24,7 +24,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 35
+PROBLEM = 37
 TABOO = 1000
 
 translator = Translator()
@@ -230,9 +230,11 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=35
+    PROBLEM=37
 
-for loop in range(PROBLEM):
+def solve(loop,o,add):
+
+    global ok,ng
     
     quiz=""
 
@@ -257,11 +259,14 @@ for loop in range(PROBLEM):
             quiz3+=" "+quiz[k]+" "
         else:
             quiz3+=quiz[k]
-    quiz=quiz3    
+    quiz=quiz3
+    if len(add)>0:
+        quiz+=" "+add
     quiz2 = quiz.split()
-    print("Quiz_ja:\n"+quiz_ja)
-    print("\n")
-    print("Quiz_en:\n"+quiz)
+    if o==True:
+        print("Quiz_ja:\n"+quiz_ja)
+        print("\n")
+        print("Quiz_en:\n"+quiz)
     sumsum=0
     maxsum=0
     ans=""
@@ -287,6 +292,9 @@ for loop in range(PROBLEM):
             maxhit=hit
             hint=quiz2[xxx]
     #print("hint="+str(hint)+",maxhit="+str(maxhit))
+
+    include=dict()
+    
     for xx in range(counter-1):
         sum=1.0
         tmp=str(train_num[xx+1])+","+str(hint)
@@ -300,8 +308,7 @@ for loop in range(PROBLEM):
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
             if dist < 1:
                 sum=1.0
-                break
-            include=False    
+                break    
             if is_include(str(train_num[xx+1]),str(xxx))==True:
                 for w1 in range(len(quiz2)):
                     if include==True:
@@ -312,10 +319,7 @@ for loop in range(PROBLEM):
                         d1=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w3).upper())
                         d2=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w4).upper())
                         if d1 <=1 or d2 <=1:
-                            include=True
-            if include == True:
-                sum=1.0
-                break
+                            include[str(train_num[xx+1])]=True
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 not in datakun:
                 sum/=1.2
@@ -335,8 +339,10 @@ for loop in range(PROBLEM):
             maxsum=sum
             ans=train_num[xx+1]
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
-    print(g)
     x_all, y_all = zip(*g)
+    if str(x_all[0]) in include:
+        return -1,str(x_all[0])
+    print(g)
     if y_all[0] < 1.01:
         ans="Unknown"
     ans_ja = translator.translate(str(ans), src='en', dest='ja').text
@@ -371,6 +377,34 @@ for loop in range(PROBLEM):
         plt.figure(figsize= (15,6))
         plt.bar(x_all, y_all)
         plt.show()
+
+    return 0,"end"
+
+
+if mode=="n":
+    o=True
+    add=""
+    while True:
+        a,b=solve(0,o,add)
+        if a==0:
+            break
+        else:
+            o=False
+            add=str(b)
+
+else:
+
+    for l in range(PROBLEM):
+        o=True
+        add=""
+        while True:
+            a,b=solve(l,o,add)
+            if a==0:
+                break
+            else:
+                o=False
+                add=str(b)
+
 
 if mode=="y":
     print(str("AC=")+str(ok)+",WA="+str(ng))
