@@ -1,3 +1,4 @@
+
 import os
 import matplotlib.pyplot as plt
 import psutil
@@ -23,13 +24,27 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 28
+PROBLEM = 35
 TABOO = 1000
 
 translator = Translator()
 
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
+
+def is_include(s,t):
+    if s not in NoAns or t not in NoAns:
+        return False
+    if NoAns[s]>TABOO or NoAns[t]>TABOO:
+        return False
+    if (s+","+t) not in datakun or (t+","+s) not in datakun:
+        return False        
+    if datakun[s+","+t] >5 or datakun[t+","+s]>5:
+        if len(s)>=len(t):
+            return (t.upper() in s.upper())
+        else:
+            return (s.upper() in t.upper())        
+    return False
 
 def is_sp(s):
 
@@ -203,6 +218,7 @@ for l in range(len(meta)):
         #s=str(meta[l])
         #os.rename(s+".txt",s.upper()+".txt")
 
+
 ok=0
 ng=0
 mode=""
@@ -214,7 +230,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=28
+    PROBLEM=35
 
 for loop in range(PROBLEM):
     
@@ -285,6 +301,21 @@ for loop in range(PROBLEM):
             if dist < 1:
                 sum=1.0
                 break
+            include=False    
+            if is_include(str(train_num[xx+1]),str(xxx))==True:
+                for w1 in range(len(quiz2)):
+                    if include==True:
+                        break
+                    for w2 in range(w1+1,len(quiz2)):
+                        w3=str(quiz2[w1])+str(quiz2[w2])
+                        w4=str(quiz2[w2])+str(quiz2[w1])
+                        d1=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w3).upper())
+                        d2=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w4).upper())
+                        if d1 <=1 or d2 <=1:
+                            include=True
+            if include == True:
+                sum=1.0
+                break
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 not in datakun:
                 sum/=1.2
@@ -295,9 +326,9 @@ for loop in range(PROBLEM):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="TruthTable":
+                #if str(train_num[xx+1])=="Team":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="GolfClub":
+                #if str(train_num[xx+1])=="NetworkFlowProblem":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
