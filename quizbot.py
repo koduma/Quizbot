@@ -1,4 +1,3 @@
-
 import os
 import matplotlib.pyplot as plt
 import psutil
@@ -24,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 37
+PROBLEM = 35
 TABOO = 1000
 
 translator = Translator()
@@ -229,7 +228,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=37
+    PROBLEM=35
 
 def solve(loop,o,add):
 
