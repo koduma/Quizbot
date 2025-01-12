@@ -306,7 +306,7 @@ def solve(loop,o,add):
             #if str(train_num[xx+1])=="IrreversibleProcess":
                 #print("sum="+str(sum))
         for xxx in quiz2:
-            if str(xxx)=="?":
+            if str(xxx)=="?" or str(xxx)=="!":
                 continue
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
             if dist < 1:
@@ -337,9 +337,9 @@ def solve(loop,o,add):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="206":
+                #if str(train_num[xx+1])=="IBMWatson":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="NetworkFlowProblem":
+                #if str(train_num[xx+1])=="Summation":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
