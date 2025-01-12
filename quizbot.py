@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 35
+PROBLEM = 43
 TABOO = 1000
 
 translator = Translator()
@@ -32,17 +32,25 @@ def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
 
 def is_include(s,t):
+    #if s!="SolarSystem":
+        #return False
     if s not in NoAns or t not in NoAns:
+        #print(str(0)+",s="+s+",t="+t)
         return False
     if NoAns[s]>TABOO or NoAns[t]>TABOO:
+        #print(str(1)+",s="+s+",t="+t)
         return False
     if (s+","+t) not in datakun or (t+","+s) not in datakun:
+        #print(str(2)+",s="+s+",t="+t)
         return False        
     if datakun[s+","+t] >5 or datakun[t+","+s]>5:
         if len(s)>=len(t):
+            #print(str(3)+",s="+s+",t="+t)
             return (t.upper() in s.upper())
         else:
-            return (s.upper() in t.upper())        
+            #print(str(4)+",s="+s+",t="+t)
+            return (s.upper() in t.upper())
+    #print(str(5)+",s="+s+",t="+t)
     return False
 
 def is_sp(s):
@@ -135,6 +143,9 @@ for l in range(len(meta)):
     with open("./"+title+".txt") as f:
         for line in f:
             strr=strr+line
+
+    if str(title)=="300000kms":
+        title="300000km/s"
     strr2=""
 
     for k in range(len(strr)):   
@@ -163,7 +174,7 @@ for l in range(len(meta)):
             n=counter
         else:
             NoAns[x]+=1
-    now.append(n)       
+    now.append(n)
     for c in talk:
         tmp5 = str(title)+","+str(c)
         tmp6 = str(c)+","+str(title)
@@ -187,8 +198,8 @@ for l in range(len(meta)):
     for c in range(now[l]-1,counter-1):
         for c2 in range(c+1,counter-1):
             tmp = str(train_num[c+1])+","+str(train_num[c2+1])
-            #if train_num[c+1]=="Empiricism":
-                #print(tmp+","+str(l))
+            #if train_num[c+1]=="206":
+                #print(tmp)
             if tmp in datakun:
                 datakun[tmp]+=1
                 #if str(train_num[c+1])=="Empiricism":
@@ -211,12 +222,6 @@ for l in range(len(meta)):
         #gb2 = format(gb, '.2f')
         #print("params="+str(len(datakun))+","+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
 
-for l in range(len(meta)):
-    if NoAns[meta[l]] > TABOO:
-        print("ERROR:"+str(meta[l]))
-        #s=str(meta[l])
-        #os.rename(s+".txt",s.upper()+".txt")
-
 ok=0
 ng=0
 mode=""
@@ -228,7 +233,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=35
+    PROBLEM=43
 
 def solve(loop,o,add):
 
@@ -307,7 +312,7 @@ def solve(loop,o,add):
             if dist < 1:
                 sum=1.0
                 break
-            bbb=False    
+            bbb=False
             if is_include(str(train_num[xx+1]),str(xxx))==True:
                 #include[str(train_num[xx+1])]=True
                 for w1 in range(len(quiz2)):
@@ -327,14 +332,15 @@ def solve(loop,o,add):
             if tmp2 in datakun:
                 sum*=datakun[tmp2]
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
-                    sum/=datakun[tmp2]        
+                    if xxx != "water":
+                        sum/=datakun[tmp2]        
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Team":
+                #if str(train_num[xx+1])=="206":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="NetworkFlowProblem":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
         dic2[str(train_num[xx+1])]=sum
         if sum>maxsum:
             maxsum=sum
@@ -356,8 +362,11 @@ def solve(loop,o,add):
                 truth=truth+line
         if str(truth)==str(ans):
             ok+=1
+            print("State:AC")
         else:
             ng+=1
+            print("State:WA")
+            print("Truth:"+str(truth))
     score=maxsum/(len(quiz2)+1)
     print("Score:"+'{:.3f}'.format(score))
     if score < 1.0:
