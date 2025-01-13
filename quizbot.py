@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 43
+PROBLEM = 51
 TABOO = 1000
 
 translator = Translator()
@@ -233,7 +233,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=43
+    PROBLEM=51
 
 def solve(loop,o,add):
 
@@ -337,7 +337,7 @@ def solve(loop,o,add):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="IBMWatson":
+                #if str(train_num[xx+1])=="MOON":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Summation":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
