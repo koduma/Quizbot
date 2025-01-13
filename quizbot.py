@@ -23,7 +23,7 @@ meta=meta.split()
 counter=1
 now=[1]
 
-PROBLEM = 58
+PROBLEM = 65
 TABOO = 1000
 
 translator = Translator()
@@ -226,14 +226,14 @@ ok=0
 ng=0
 mode=""
 
-print("testcase?(y/n)=")
+print("testcase?(y/n)=",end="")
 
 mode=input()
 
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=58
+    PROBLEM=65
 
 def solve(loop,o,add):
 
@@ -270,6 +270,7 @@ def solve(loop,o,add):
         print("Quiz_ja:\n"+quiz_ja)
         print("\n")
         print("Quiz_en:\n"+quiz)
+        print("\n")
     sumsum=0
     maxsum=0
     ans=""
@@ -349,6 +350,7 @@ def solve(loop,o,add):
     x_all, y_all = zip(*g)
     if str(x_all[0]) in include:
         return -1,str(x_all[0])
+    print("TOP5:",end="")    
     print(g)
     if y_all[0] < 1.01:
         ans="Unknown"
@@ -405,6 +407,8 @@ if mode=="n":
 else:
 
     for l in range(PROBLEM):
+        print("------------------------------------------------------------------")
+        print(str("Problem:")+str(l+1)+"/"+str(PROBLEM))
         o=True
         add=""
         while True:
