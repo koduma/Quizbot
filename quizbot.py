@@ -22,8 +22,9 @@ meta=meta.split()
 
 counter=1
 now=[1]
+WA=[]
 
-PROBLEM = 65
+PROBLEM = 74
 TABOO = 1000
 
 translator = Translator()
@@ -163,6 +164,9 @@ for l in range(len(meta)):
     NoAns[title]=0
     counter+=1
     n=counter
+
+    #for i in range(len(talk)):
+        #talk[i]=str(talk[i]).lower()
     
     for x in talk:
         ex=x in train.keys()
@@ -233,7 +237,7 @@ mode=input()
 if mode=="n":
     PROBLEM=1
 else:
-    PROBLEM=65
+    PROBLEM=74
 
 def solve(loop,o,add):
 
@@ -266,6 +270,10 @@ def solve(loop,o,add):
     if len(add)>0:
         quiz+=" "+add
     quiz2 = quiz.split()
+
+    #for i in range(len(quiz2)):
+        #quiz2[i]=str(quiz2[i]).lower()
+    
     if o==True:
         print("Quiz_ja:\n"+quiz_ja)
         print("\n")
@@ -366,6 +374,7 @@ def solve(loop,o,add):
             ok+=1
             print("State:AC")
         else:
+            WA.append(loop+1)
             ng+=1
             print("State:WA")
             print("Truth:"+str(truth))
@@ -422,3 +431,8 @@ else:
 
 if mode=="y":
     print(str("AC=")+str(ok)+",WA="+str(ng))
+    if len(WA)!=0:
+        print("WA_Problem:",end="")
+        for i in range(len(WA)-1):
+            print(str(WA[i])+",",end="")
+        print(str(WA[len(WA)-1]))
