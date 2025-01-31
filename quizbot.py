@@ -215,6 +215,7 @@ for l in range(len(meta)):
                 datakun[tmp3]+=1
             else:
                 datakun[tmp3]=1
+                
 
     if (l+1)%100 == 0 or (l+1)==len(meta):
         print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
@@ -346,11 +347,11 @@ def solve(loop,o,add):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="MontyHallProblem":
+                #if str(train_num[xx+1])=="AngelProblem":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Hydrogen":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-        dic2[str(train_num[xx+1])]=round(sum,1)
+        dic2[str(train_num[xx+1])]=round(sum,2)
         if sum>maxsum:
             maxsum=sum
             ans=train_num[xx+1]
@@ -358,7 +359,7 @@ def solve(loop,o,add):
     x_all, y_all = zip(*g)
     if str(x_all[0]) in include:
         return -1,str(x_all[0])
-    print("TOP5:",end="")    
+    print("Top5:",end="")    
     print(g)
     if y_all[0] < 1.01:
         ans="Unknown"
