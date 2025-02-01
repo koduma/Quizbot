@@ -240,7 +240,7 @@ if mode=="1" or mode=="2":
 else:
     PROBLEM=74
 
-def solve(loop,o,add):
+def solve(loop,o,add,q):
 
     global ok,ng
     
@@ -255,10 +255,9 @@ def solve(loop,o,add):
             for line in f:
                 quiz=quiz+line
     elif mode=="1":
-        print("Input_Quiz:")
-        quiz=input()
-        if len(quiz)==0:
-            sys.exit()
+        quiz=q
+    if len(quiz)==0:
+        sys.exit()
         
     if is_ja(quiz) == False:
         quiz_ja = translator.translate(quiz, src='en', dest='ja').text
@@ -275,7 +274,7 @@ def solve(loop,o,add):
             quiz3+=quiz[k]
     quiz=quiz3
     if len(add)>0:
-        quiz+=" "+add
+        quiz+=add
     quiz2 = quiz.split()
 
     #for i in range(len(quiz2)):
@@ -416,13 +415,14 @@ def solve(loop,o,add):
 if mode=="2":
     o=True
     add=""
+    q=""
     while True:
-        a,b=solve(0,o,add)
+        a,b=solve(0,o,add,q)
         if a==0:
             break
         else:
             o=False
-            add=str(b)
+            add+=" "+str(b)
 
 elif mode=="3":
 
@@ -431,22 +431,26 @@ elif mode=="3":
         print(str("Problem:")+str(l+1)+"/"+str(PROBLEM))
         o=True
         add=""
+        q=""
         while True:
-            a,b=solve(l,o,add)
+            a,b=solve(l,o,add,q)
             if a==0:
                 break
             else:
                 o=False
-                add=str(b)
+                add+=" "+str(b)
 elif mode=="1":
     o=True
     add=""
     while True:
-        print("------------------------------------------------------------------")
-        a,b=solve(0,o,add)
+        if o==True:
+            print("------------------------------------------------------------------")
+            print("Input_Quiz:")
+            q=input()
+        a,b=solve(0,o,add,q)
         if a!=0:
             o=False
-            add=str(b)
+            add+=" "+str(b)
         else:
             o=True
             add=""
