@@ -447,6 +447,9 @@ elif mode=="1":
         if a!=0:
             o=False
             add=str(b)
+        else:
+            o=True
+            add=""
 
 
 if mode=="3":
