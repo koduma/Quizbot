@@ -231,11 +231,11 @@ ok=0
 ng=0
 mode=""
 
-print("testcase?(y/n)=",end="")
+print("mode?(1:keyboard,2:txt,3:testcase)=",end="")
 
 mode=input()
 
-if mode=="n":
+if mode=="1" or mode=="2":
     PROBLEM=1
 else:
     PROBLEM=74
@@ -246,14 +246,20 @@ def solve(loop,o,add):
     
     quiz=""
 
-    if mode=="y":
+    if mode=="3":
         with open('./testcase/quiz'+str(loop+1)+'.txt') as f:
             for line in f:
                 quiz=quiz+line
-    else:
+    elif mode=="2":
         with open('./quiz.txt') as f:
             for line in f:
                 quiz=quiz+line
+    elif mode=="1":
+        print("Input_Quiz:")
+        quiz=input()
+        if len(quiz)==0:
+            sys.exit()
+        
     if is_ja(quiz) == False:
         quiz_ja = translator.translate(quiz, src='en', dest='ja').text
     else:
@@ -347,10 +353,14 @@ def solve(loop,o,add):
                 #else:
                     #if str(train_num[xx+1])=="IrreversibleProcess":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="AngelProblem":
+                #if str(train_num[xx+1])=="Synchronicity":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Hydrogen":
+                #if str(train_num[xx+1])=="Metaphysics":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Ones'Complement":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="PhilosophyOfLogic":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
         dic2[str(train_num[xx+1])]=round(sum,2)
         if sum>maxsum:
             maxsum=sum
@@ -366,12 +376,12 @@ def solve(loop,o,add):
     ans_ja = translator.translate(str(ans), src='en', dest='ja').text
     print("Answer_ja:"+ans_ja)    
     print("Answer_en:"+str(ans))
-    if mode == "y":
+    if mode == "3":
         truth=""
         with open('./testcase/ans'+str(loop+1)+'.txt') as f:
             for line in f:
                 truth=truth+line
-        if str(truth)==str(ans):
+        if str(truth).lower()==str(ans).lower():
             ok+=1
             print("State:AC")
         else:
@@ -395,7 +405,7 @@ def solve(loop,o,add):
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
     print("Num:"+str(len(meta)))
-    if mode=="n":
+    if mode=="2":
         plt.figure(figsize= (15,6))
         plt.bar(x_all, y_all)
         plt.show()
@@ -403,7 +413,7 @@ def solve(loop,o,add):
     return 0,"end"
 
 
-if mode=="n":
+if mode=="2":
     o=True
     add=""
     while True:
@@ -414,7 +424,7 @@ if mode=="n":
             o=False
             add=str(b)
 
-else:
+elif mode=="3":
 
     for l in range(PROBLEM):
         print("------------------------------------------------------------------")
@@ -428,9 +438,18 @@ else:
             else:
                 o=False
                 add=str(b)
+elif mode=="1":
+    o=True
+    add=""
+    while True:
+        print("------------------------------------------------------------------")
+        a,b=solve(0,o,add)
+        if a!=0:
+            o=False
+            add=str(b)
 
 
-if mode=="y":
+if mode=="3":
     print(str("AC=")+str(ok)+",WA="+str(ng))
     if len(WA)!=0:
         print("WA_Problem:",end="")
