@@ -480,9 +480,9 @@ elif mode=="4":
             while True:
                 if c >=10:
                     break
-                r=random.randint(1, counter-1)
+                r=random.randint(0, len(meta)-1)
                 if r not in d:
-                    q+=train_num[r]+" "
+                    q+=meta[r]+" "
                     d[r]=1
                     c+=1
             print("Input_Quiz:")
