@@ -5,6 +5,7 @@ import Levenshtein
 from googletrans import Translator
 import re
 import sys
+import random
 
 strr=""
 meta=""
@@ -231,14 +232,14 @@ ok=0
 ng=0
 mode=""
 
-print("mode?(1:keyboard,2:txt,3:testcase)=",end="")
+print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 
 mode=input()
 
-if mode=="1" or mode=="2":
-    PROBLEM=1
-else:
+if mode=="3":
     PROBLEM=74
+else:
+    PROBLEM=1
 
 def solve(loop,o,add,q):
 
@@ -254,7 +255,7 @@ def solve(loop,o,add,q):
         with open('./quiz.txt') as f:
             for line in f:
                 quiz=quiz+line
-    elif mode=="1":
+    elif mode=="1" or mode=="4":
         quiz=q
     if len(quiz)==0:
         sys.exit()
@@ -399,6 +400,18 @@ def solve(loop,o,add,q):
             if score < 100.0:
                 print("Eval:A")
             else:
+                if mode=="4":
+                    for yyy in quiz2:
+                        tp1 = str(ans)+","+str(yyy)
+                        tp2 = str(yyy)+","+str(ans)
+                        if tp1 in datakun:
+                            datakun[tp1]+=1
+                        else:
+                            datakun[tp1]=1
+                        if tp2 in datakun:
+                            datakun[tp2]+=1
+                        else:
+                            datakun[tp2]=1
                 print("Eval:S")               
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
@@ -454,6 +467,33 @@ elif mode=="1":
         else:
             o=True
             add=""
+            
+elif mode=="4":
+    o=True
+    add=""
+    while True:
+        if o==True:
+            print("------------------------------------------------------------------")
+            q=""
+            d=dict()
+            c=0
+            while True:
+                if c >=10:
+                    break
+                r=random.randint(1, counter-1)
+                if r not in d:
+                    q+=train_num[r]+" "
+                    d[r]=1
+                    c+=1
+            print("Input_Quiz:")
+            print(q)
+        a,b=solve(0,o,add,q)
+        if a!=0:
+            o=False
+            add+=" "+str(b)
+        else:
+            o=True
+            add=""            
 
 
 if mode=="3":
