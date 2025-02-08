@@ -6,6 +6,7 @@ from googletrans import Translator
 import re
 import sys
 import random
+import warnings
 
 strr=""
 meta=""
@@ -25,10 +26,32 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 74
+PROBLEM = 75
 TABOO = 1000
 
 translator = Translator()
+
+warnings.simplefilter('ignore')
+
+def calculator(s):
+    ev = 0
+    ret = ""
+    ans=0
+    for i in range(len(s)):
+        st = s[i]
+        for j in range(i+1, len(s)):
+            st += s[j]
+            try:
+                safe_globals = {"__builtins__": None}
+                result = eval(st, safe_globals, {})
+                if isinstance(result, (int, float, complex)):
+                    if j - i >= ev:
+                        ev = j - i
+                        ret = st
+                        ans=result
+            except:
+                continue
+    return ev,ans
 
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
@@ -237,7 +260,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=74
+    PROBLEM=75
 else:
     PROBLEM=1
 
@@ -365,6 +388,15 @@ def solve(loop,o,add,q):
         if sum>maxsum:
             maxsum=sum
             ans=train_num[xx+1]
+    i1,i2=calculator(quiz)
+    #print("i1="+str(i1))
+    if i1>=3:
+        sco=float(pow(1.5,i1))
+        dic2[str(i2)]=round(sco,2)
+        #print("i2="+str(i2)+",sco="+str(sco))
+        if sco>maxsum:
+            maxsum=round(sco,2)
+            ans=str(i2)
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
     x_all, y_all = zip(*g)
     if str(x_all[0]) in include:
