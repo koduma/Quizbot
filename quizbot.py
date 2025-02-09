@@ -1,3 +1,4 @@
+import math
 import os
 import matplotlib.pyplot as plt
 import psutil
@@ -42,7 +43,18 @@ def calculator(s):
         for j in range(i+1, len(s)):
             st += s[j]
             try:
-                safe_globals = {"__builtins__": None}
+                safe_globals = {
+                    "__builtins__": None,
+                    "sin": math.sin,
+                    "cos": math.cos,
+                    "tan": math.tan,
+                    "log": math.log,
+                    "log10": math.log10,
+                    "sqrt": math.sqrt,
+                    "pi": math.pi,
+                    "e": math.e,
+                    "abs": abs
+                }
                 result = eval(st, safe_globals, {})
                 if isinstance(result, (int, float, complex)):
                     if j - i >= ev:
@@ -391,9 +403,9 @@ def solve(loop,o,add,q):
     i1,i2=calculator(quiz)
     #print("i1="+str(i1))
     if i1>=3:
-        sco=float(pow(1.5,i1))
+        sco=float(pow(1.5,i1*10/len(quiz2)))
         dic2[str(i2)]=round(sco,2)
-        #print("i2="+str(i2)+",sco="+str(sco))
+        #print("i2="+str(i2)+",i1="+str(i1)+",len="+str(len(quiz2))+",sco="+str(sco))
         if sco>maxsum:
             maxsum=round(sco,2)
             ans=str(i2)
