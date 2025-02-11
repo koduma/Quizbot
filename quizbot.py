@@ -1,3 +1,4 @@
+
 import math
 import os
 import matplotlib.pyplot as plt
@@ -76,7 +77,8 @@ def calculator(s):
                             if j - i >= ev:
                                 ev = j - i
                                 ret = st
-                                ans = "True"
+                                if ans != "False":
+                                    ans = "True"
                         else:
                             if j - i >= ev:
                                 ev = j - i
@@ -93,7 +95,6 @@ def calculator(s):
                 continue
 
     return ev, ans
-
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
 
