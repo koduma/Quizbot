@@ -37,7 +37,8 @@ warnings.simplefilter('ignore')
 def calculator(s):
     ev = 0
     ret = ""
-    ans=0
+    ans = None
+
     safe_globals = {
         "__builtins__": None,
         "sin": math.sin,
@@ -50,20 +51,48 @@ def calculator(s):
         "e": math.e,
         "abs": abs
     }
+
     for i in range(len(s)):
         st = s[i]
         for j in range(i+1, len(s)):
             st += s[j]
             try:
-                result = eval(st, safe_globals, {})
-                if isinstance(result, (int, float, complex)):
-                    if j - i >= ev:
-                        ev = j - i
-                        ret = st
-                        ans=result
-            except:
+                if "=" in st:
+                    parts = st.split("=")
+                    if len(parts) != 2:
+                        continue
+
+                    left_expr = parts[0].strip()
+                    right_expr = parts[1].strip()
+
+                    if not left_expr or not right_expr:
+                        continue
+
+                    left_val = eval(left_expr, safe_globals, {})
+                    right_val = eval(right_expr, safe_globals, {})
+
+                    if isinstance(left_val, (int, float)) and isinstance(right_val, (int, float)):
+                        if abs(left_val - right_val) < 1e-9:
+                            if j - i >= ev:
+                                ev = j - i
+                                ret = st
+                                ans = "True"
+                        else:
+                            if j - i >= ev:
+                                ev = j - i
+                                ret = st
+                                ans = "False"                
+                else:
+                    result = eval(st, safe_globals, {})
+                    if isinstance(result, (int, float, complex)):
+                        if j - i >= ev:
+                            ev = j - i
+                            ret = st
+                            ans = result
+            except Exception:
                 continue
-    return ev,ans
+
+    return ev, ans
 
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
@@ -405,7 +434,11 @@ def solve(loop,o,add,q):
     i1,i2=calculator(quiz)
     #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
     if i1>=3:
-        sco=float(pow(2.0,i1*50/len(quiz)))
+        sco=0.0
+        if float(i1/len(quiz))<0.1:
+            sco=float(pow(2.0,i1*10/len(quiz)))
+        else:
+            sco=float(pow(2.0,i1*100/len(quiz)))
         dic2[str(i2)]=round(sco,2)
         #print("i2="+str(i2)+",i1="+str(i1)+",len="+str(len(quiz))+",sco="+str(sco))
         if sco>maxsum:
