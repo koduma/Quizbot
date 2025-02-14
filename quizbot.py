@@ -1,4 +1,3 @@
-
 import math
 import os
 import matplotlib.pyplot as plt
@@ -34,6 +33,14 @@ TABOO = 1000
 translator = Translator()
 
 warnings.simplefilter('ignore')
+
+def fix_expression(s: str) -> str:
+    s = re.sub(r'(\d)\s*\.\s*(\d)', r'\1.\2', s)
+    s = re.sub(r'\s*([*/+\-^])\s*', r'\1', s)
+    s = re.sub(r'(?<!\d)\s*\.\s*(?!\d)', r' . ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    
+    return s
 
 def calculator(s):
     ev = 0
@@ -432,14 +439,16 @@ def solve(loop,o,add,q):
         if sum>maxsum:
             maxsum=sum
             ans=train_num[xx+1]
-    i1,i2=calculator(quiz)
+    tmp_quiz=quiz        
+    tmp_quiz2=fix_expression(tmp_quiz)
+    i1,i2=calculator(tmp_quiz2)
     #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
     if i1>=3:
         sco=0.0
-        if float(i1/len(quiz))<0.1:
-            sco=float(pow(2.0,i1*10/len(quiz)))
+        if float(i1/len(tmp_quiz2))<0.1:
+            sco=float(pow(2.0,i1*10/len(tmp_quiz2)))
         else:
-            sco=float(pow(2.0,i1*100/len(quiz)))
+            sco=float(pow(2.0,i1*100/len(tmp_quiz2)))
         dic2[str(i2)]=round(sco,2)
         #print("i2="+str(i2)+",i1="+str(i1)+",len="+str(len(quiz))+",sco="+str(sco))
         if sco>maxsum:
