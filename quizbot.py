@@ -81,20 +81,19 @@ def calculator(s):
 
                     if isinstance(left_val, (int, float)) and isinstance(right_val, (int, float)):
                         if abs(left_val - right_val) < 1e-9:
-                            if j - i >= ev:
+                            if j - i > ev:
                                 ev = j - i
                                 ret = st
-                                if ans != "False":
-                                    ans = "True"
+                                ans = "True"
                         else:
-                            if j - i >= ev:
+                            if j - i > ev:
                                 ev = j - i
                                 ret = st
                                 ans = "False"                
                 else:
                     result = eval(st, safe_globals, {})
                     if isinstance(result, (int, float, complex)):
-                        if j - i >= ev:
+                        if j - i > ev:
                             ev = j - i
                             ret = st
                             ans = result
