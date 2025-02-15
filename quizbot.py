@@ -68,6 +68,7 @@ def calculator(s):
                 if "=" in st:
                     parts = st.split("=")
                     if len(parts) != 2:
+                        ans = "False"
                         continue
 
                     left_expr = parts[0].strip()
