@@ -8,6 +8,8 @@ import re
 import sys
 import random
 import warnings
+import sympy
+from sympy import sympify, Eq, solve
 
 strr=""
 meta=""
@@ -27,7 +29,7 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 75
+PROBLEM = 78
 TABOO = 1000
 
 translator = Translator()
@@ -47,6 +49,8 @@ def calculator(s):
     ret = ""
     ans = None
 
+    #print(s)
+
     safe_globals = {
         "__builtins__": None,
         "sin": math.sin,
@@ -62,13 +66,27 @@ def calculator(s):
 
     for i in range(len(s)):
         st = s[i]
+        pt=0
         for j in range(i+1, len(s)):
-            st += s[j]
+            add=""
+            if s[j]=='%':
+                add="/100.0"
+            else:
+                add=s[j]    
+            st += add
+            if 'of' in st:
+                st = st.replace('of','*')
+            if 'divisible' in st:
+                st = st.replace('divisible','%')
+                pt=1
+            if 'by' in st:
+                st = st.replace('by',' ')
             try:
                 if "=" in st:
                     parts = st.split("=")
                     if len(parts) != 2:
-                        ans = "False"
+                        if ans == None:
+                            ans="False"
                         continue
 
                     left_expr = parts[0].strip()
@@ -76,28 +94,71 @@ def calculator(s):
 
                     if not left_expr or not right_expr:
                         continue
+                        
+                    try:
+                        left_sym = sympify(left_expr)
+                        right_sym = sympify(right_expr)
+                        free_vars = left_sym.free_symbols.union(right_sym.free_symbols)
+                        if not free_vars:
+                            try:
+                                left_val = float(left_sym.evalf())
+                                right_val = float(right_sym.evalf())
+                                if j - i >= ev:
+                                    ev = j - i
+                                    ret = st
+                                    if abs(left_val - right_val) < 1e-9:
+                                        ans = "True"
+                                    else:
+                                        ans = "False"
+                            except Exception:
+                                pass
+                        else:
+                            eq = Eq(left_sym, right_sym)
+                            try:
+                                sol = solve(eq, list(free_vars))
+                                if j - i >= ev:
+                                    ev = j - i
+                                    ret = st
+                                    if isinstance(sol, list):
+                                        ans = sol[0]
+                                    else:
+                                        ans = sol
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
 
                     left_val = eval(left_expr, safe_globals, {})
                     right_val = eval(right_expr, safe_globals, {})
 
                     if isinstance(left_val, (int, float)) and isinstance(right_val, (int, float)):
+                        #print("l="+str(left_expr)+",r="+str(right_expr))
                         if abs(left_val - right_val) < 1e-9:
-                            if j - i > ev:
+                            if j - i >= ev:
                                 ev = j - i
                                 ret = st
-                                ans = "True"
+                                if ans != "False":
+                                    ans = "True"
                         else:
-                            if j - i > ev:
+                            if j - i >= ev:
                                 ev = j - i
                                 ret = st
                                 ans = "False"                
                 else:
                     result = eval(st, safe_globals, {})
                     if isinstance(result, (int, float, complex)):
-                        if j - i > ev:
+                        #print("st="+str(st)+",result="+str(result)+",j-i="+str(j-i)+",pt="+str(pt))
+                        if j - i >= ev:
                             ev = j - i
                             ret = st
-                            ans = result
+                            if pt==0:
+                                #print(str("st=")+str(st)+",result="+str(result))
+                                ans = result
+                            else:
+                                if result==0:
+                                    ans="True"
+                                else:
+                                    ans="False"
             except Exception:
                 continue
 
@@ -311,11 +372,11 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=75
+    PROBLEM=78
 else:
     PROBLEM=1
 
-def solve(loop,o,add,q):
+def quiz_solve(loop,o,add,q):
 
     global ok,ng
     
@@ -443,7 +504,7 @@ def solve(loop,o,add,q):
     tmp_quiz2=fix_expression(tmp_quiz)
     i1,i2=calculator(tmp_quiz2)
     #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
-    if i1>=3:
+    if i1>=2:
         sco=0.0
         if float(i1/len(tmp_quiz2))<0.1:
             sco=float(pow(2.0,i1*10/len(tmp_quiz2)))
@@ -519,7 +580,7 @@ if mode=="2":
     add=""
     q=""
     while True:
-        a,b=solve(0,o,add,q)
+        a,b=quiz_solve(0,o,add,q)
         if a==0:
             break
         else:
@@ -535,7 +596,7 @@ elif mode=="3":
         add=""
         q=""
         while True:
-            a,b=solve(l,o,add,q)
+            a,b=quiz_solve(l,o,add,q)
             if a==0:
                 break
             else:
@@ -549,7 +610,7 @@ elif mode=="1":
             print("------------------------------------------------------------------")
             print("Input_Quiz:")
             q=input()
-        a,b=solve(0,o,add,q)
+        a,b=quiz_solve(0,o,add,q)
         if a!=0:
             o=False
             add+=" "+str(b)
@@ -576,7 +637,7 @@ elif mode=="4":
                     c+=1
             print("Input_Quiz:")
             print(q)
-        a,b=solve(0,o,add,q)
+        a,b=quiz_solve(0,o,add,q)
         if a!=0:
             o=False
             add+=" "+str(b)
