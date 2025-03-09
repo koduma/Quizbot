@@ -81,6 +81,8 @@ def calculator(s):
                 pt=1
             if 'by' in st:
                 st = st.replace('by',' ')
+            if 'divided' in st:
+                st = st.replace('divided','*1.0/')    
             try:
                 if "=" in st:
                     parts = st.split("=")
@@ -451,12 +453,14 @@ def quiz_solve(loop,o,add,q):
     
     for xx in range(counter-1):
         sum=1.0
+        cnt=len(quiz2)+1
         tmp=str(train_num[xx+1])+","+str(hint)
         if tmp in datakun:
             sum=float(pow(2,maxhit-1))
             #if str(train_num[xx+1])=="IrreversibleProcess":
                 #print("sum="+str(sum))
         for xxx in quiz2:
+            cnt-=1
             if str(xxx)=="?" or str(xxx)=="!":
                 continue
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
@@ -476,19 +480,19 @@ def quiz_solve(loop,o,add,q):
                         d2=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w4).upper())
                         if d1 <=1 or d2 <=1:
                             include[str(train_num[xx+1])]=True
-                            bbb=True
+                            bbb=True                
             tmp2=str(train_num[xx+1])+","+str(xxx)
             if tmp2 not in datakun:
                 sum/=1.2
             if tmp2 in datakun:
-                sum*=datakun[tmp2]
+                sum*=datakun[tmp2]#float(datakun[tmp2]+cnt)
                 if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
                     if xxx != "water":
-                        sum/=datakun[tmp2]        
+                        sum/=datakun[tmp2]#float(datakun[tmp2]+cnt)        
                 #else:
-                    #if str(train_num[xx+1])=="IrreversibleProcess":
+                    #if str(train_num[xx+1])=="MortalityRate":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Synchronicity":
+                #if str(train_num[xx+1])=="MortalityRate":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Metaphysics":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
