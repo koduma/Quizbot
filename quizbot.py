@@ -29,7 +29,7 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 78
+PROBLEM = 80
 TABOO = 1000
 
 translator = Translator()
@@ -49,6 +49,57 @@ def calculator(s):
     ret = ""
     ans = None
 
+    lower_s = s.lower()
+    lower_s = lower_s.replace('wide', 'width')
+    lower_s = lower_s.replace('high', 'height')
+
+    if all(word in lower_s for word in ["rectangle", "area", "height", "width"]):
+        # Use the normalized string (lower_s) for regex matching.
+        height_match = re.search(r'height\s*(?:=|:)?\s*([\d\.]+)\s*(cm|m)?', lower_s, flags=re.IGNORECASE)
+        width_match = re.search(r'width\s*(?:=|:)?\s*([\d\.]+)\s*(cm|m)?', lower_s, flags=re.IGNORECASE)
+        # Second attempt: Look for cases where the number appears before the keyword.
+        if not height_match:
+            height_match = re.search(r'([\d\.]+)\s*(cm|m)?\s*height', lower_s, flags=re.IGNORECASE)
+        if not width_match:
+            width_match = re.search(r'([\d\.]+)\s*(cm|m)?\s*width', lower_s, flags=re.IGNORECASE)
+            
+        if height_match and width_match:
+            try:
+                height = float(height_match.group(1))
+                width = float(width_match.group(1))
+                # Convert dimensions if provided in centimeters.
+                if height_match.group(2) and height_match.group(2).lower() == 'cm':
+                    height = height / 100.0
+                if width_match.group(2) and width_match.group(2).lower() == 'cm':
+                    width = width / 100.0
+                calculated_area = height * width
+                # Always return the area in m^2 after converting dimensions.
+                meter=False
+                centimeter=False
+                lower_s=lower_s.split()
+                for i in range(len(lower_s)):
+                    if lower_s[i]=='meters':
+                        meter=True
+                    if lower_s[i]=='meter':
+                        meter=True
+                    if lower_s[i]=='metre':
+                        meter=True
+                    if lower_s[i]=='metres':
+                        meter=True
+                    if lower_s[i]=='centimeters':
+                        centimeter=True
+                    if lower_s[i]=='centimeter':
+                        centimeter=True
+                    if lower_s[i]=='centimetre':
+                        centimeter=True
+                    if lower_s[i]=='centimetres':
+                        centimeter=True    
+                if meter==True:
+                    return len(s), f"{calculated_area} m^2"
+                elif centimeter==True:
+                    return len(s), f"{calculated_area*10000.0} cm^2"
+            except Exception:
+                pass
     #print(s)
 
     safe_globals = {
@@ -374,7 +425,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=78
+    PROBLEM=80
 else:
     PROBLEM=1
 
