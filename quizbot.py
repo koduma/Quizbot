@@ -49,13 +49,27 @@ def calculator(s):
     ret = ""
     ans = None
 
+    
+    safe_globals = {
+        "__builtins__": None,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "log": math.log,
+        "log10": math.log10,
+        "sqrt": math.sqrt,
+        "pi": math.pi,
+        "e": math.e,
+        "abs": abs
+    }
+
     lower_s = s.lower()
     lower_s = lower_s.replace('wide', 'width')
     lower_s = lower_s.replace('high', 'height')
     lower_s = lower_s.replace('sizes', 'size')
     lower_s = lower_s.replace('diameters', 'diameter')
 
-    pattern = r"([\d\.]+)(?:\s*(cm|m))?"
+    pattern = r"((?:\d+\.\d+)|(?:\d+/\d+)|(?:\d+))(?:\s*(cm|m))?"
 
     matches = re.findall(pattern, s)
 
@@ -110,8 +124,10 @@ def calculator(s):
         second_match = matches[1]
         number1, unit1 = first_match[0], first_match[1]
         number2, unit2 = second_match[0], second_match[1]
-        number1=float(number1)
-        number2=float(number2)
+        n1 = eval(number1, safe_globals, {})
+        n2 = eval(number2, safe_globals, {})
+        number1=float(n1)
+        number2=float(n2)
         if unit1=='cm':
             number1=number1/100.0
         if unit2=='cm':
@@ -136,7 +152,8 @@ def calculator(s):
     if xx == 3 or xx == 4:            
         first_match = matches[0]
         number1, unit1 = first_match[0], first_match[1]
-        number1=float(number1)
+        n1 = eval(number1, safe_globals, {})
+        number1=float(n1)
         if unit1=='cm':
             number1=number1/100.0
         ca=0    
@@ -154,7 +171,8 @@ def calculator(s):
     if xx == 5 or xx == 6:            
         first_match = matches[0]
         number1, unit1 = first_match[0], first_match[1]
-        number1=float(number1)
+        n1 = eval(number1, safe_globals, {})
+        number1=float(n1)
         if unit1=='cm':
             number1=number1/100.0
         ca=0    
@@ -170,19 +188,6 @@ def calculator(s):
             return len(s),f"{ca}π"
     
     #print(s)
-
-    safe_globals = {
-        "__builtins__": None,
-        "sin": math.sin,
-        "cos": math.cos,
-        "tan": math.tan,
-        "log": math.log,
-        "log10": math.log10,
-        "sqrt": math.sqrt,
-        "pi": math.pi,
-        "e": math.e,
-        "abs": abs
-    }
 
     for i in range(len(s)):
         st = s[i]
