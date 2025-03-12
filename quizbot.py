@@ -59,227 +59,116 @@ def calculator(s):
 
     matches = re.findall(pattern, s)
 
+    xx=0
+
     if all(word in lower_s for word in ["rectangle", "area", "height", "width"]) or all(word in lower_s for word in ["rectangle", "area","size"]):
         if matches:
-            first_match = matches[0]
-            second_match = matches[1]
-            number1, unit1 = first_match[0], first_match[1]
-            number2, unit2 = second_match[0], second_match[1]
-            number1=float(number1)
-            number2=float(number2)
-            if unit1=='cm':
-                number1=number1/100.0
-            if unit2=='cm':
-                number2=number2/100.0
-            ca=number1*number2    
-            meter=False
-            centimeter=False
-            ls=lower_s.split()
-            for i in range(len(ls)):
-                if ls[i]=='meters':
-                    meter=True
-                if ls[i]=='meter':
-                    meter=True
-                if ls[i]=='metre':
-                    meter=True
-                if ls[i]=='metres':
-                    meter=True
-                if ls[i]=='centimeters':
-                    centimeter=True
-                if ls[i]=='centimeter':
-                    centimeter=True
-                if ls[i]=='centimetre':
-                    centimeter=True
-                if ls[i]=='centimetres':
-                    centimeter=True    
+            xx=1
+        
+    if all(word in lower_s for word in ["rectangle", "perimeter", "height", "width"]) or all(word in lower_s for word in ["rectangle", "perimeter", "size"]):
+        if matches:
+            xx=2
+
+    if all(word in lower_s for word in ["circle", "area", "diameter"]):
+        if matches:
+            xx=3
+
+    if all(word in lower_s for word in ["circle", "area", "radius"]):
+        if matches:
+            xx=4
+
+    if all(word in lower_s for word in ["circle", "circumference", "radius"]):
+        if matches:
+            xx=5
+
+    if all(word in lower_s for word in ["circle", "circumference", "diameter"]):
+        if matches:
+            xx=6
+
+    meter=False
+    centimeter=False
+    ls=lower_s.split()
+    for i in range(len(ls)):
+        if ls[i]=='meters':
+            meter=True
+        if ls[i]=='meter':
+            meter=True
+        if ls[i]=='metre':
+            meter=True
+        if ls[i]=='metres':
+            meter=True
+        if ls[i]=='centimeters':
+            centimeter=True
+        if ls[i]=='centimeter':
+            centimeter=True
+        if ls[i]=='centimetre':
+            centimeter=True
+        if ls[i]=='centimetres':
+            centimeter=True 
+    if xx ==1 or xx==2:
+        first_match = matches[0]
+        second_match = matches[1]
+        number1, unit1 = first_match[0], first_match[1]
+        number2, unit2 = second_match[0], second_match[1]
+        number1=float(number1)
+        number2=float(number2)
+        if unit1=='cm':
+            number1=number1/100.0
+        if unit2=='cm':
+            number2=number2/100.0
+        ca=0
+        if xx == 1:
+            ca=number1*number2
             if meter==True:
                 return len(s), f"{ca} m^2"
             elif centimeter==True:
                 return len(s), f"{ca*10000.0} cm^2"
             else:
                 return len(s),f"{ca}"
-        
-    if all(word in lower_s for word in ["rectangle", "perimeter", "height", "width"]) or all(word in lower_s for word in ["rectangle", "perimeter", "size"]):
-        if matches:
-            first_match = matches[0]
-            second_match = matches[1]
-            number1, unit1 = first_match[0], first_match[1]
-            number2, unit2 = second_match[0], second_match[1]
-            number1=float(number1)
-            number2=float(number2)
-            if unit1=='cm':
-                number1=number1/100.0
-            if unit2=='cm':
-                number2=number2/100.0
-            ca=2.0*(number1+number2)    
-            meter=False
-            centimeter=False
-            ls=lower_s.split()
-            for i in range(len(ls)):
-                if ls[i]=='meters':
-                    meter=True
-                if ls[i]=='meter':
-                    meter=True
-                if ls[i]=='metre':
-                    meter=True
-                if ls[i]=='metres':
-                    meter=True
-                if ls[i]=='centimeters':
-                    centimeter=True
-                if ls[i]=='centimeter':
-                    centimeter=True
-                if ls[i]=='centimetre':
-                    centimeter=True
-                if ls[i]=='centimetres':
-                    centimeter=True    
+        if xx == 2:
+            ca=2.0*(number1+number2)
             if meter==True:
                 return len(s), f"{ca} m"
             elif centimeter==True:
                 return len(s), f"{ca*100.0} cm"
             else:
                 return len(s),f"{ca}"
+    if xx == 3 or xx == 4:            
+        first_match = matches[0]
+        number1, unit1 = first_match[0], first_match[1]
+        number1=float(number1)
+        if unit1=='cm':
+            number1=number1/100.0
+        ca=0    
+        if xx == 3:
+            ca=(1.0/2.0)*(number1)*(1.0/2.0)*(number1)
+        if xx == 4:
+            ca=number1*number1
+        if meter==True:
+            return len(s), f"{ca}π m^2"
+        elif centimeter==True:
+            return len(s), f"{ca*10000.0}π cm^2"
+        else:
+            return len(s),f"{ca}π"
 
-    if all(word in lower_s for word in ["circle", "area", "diameter"]):
-        if matches:
-            first_match = matches[0]
-            number1, unit1 = first_match[0], first_match[1]
-            number1=float(number1)
-            if unit1=='cm':
-                number1=number1/100.0
-            ca=(1.0/2.0)*(number1)*(1.0/2.0)*(number1)   
-            meter=False
-            centimeter=False
-            ls=lower_s.split()
-            for i in range(len(ls)):
-                if ls[i]=='meters':
-                    meter=True
-                if ls[i]=='meter':
-                    meter=True
-                if ls[i]=='metre':
-                    meter=True
-                if ls[i]=='metres':
-                    meter=True
-                if ls[i]=='centimeters':
-                    centimeter=True
-                if ls[i]=='centimeter':
-                    centimeter=True
-                if ls[i]=='centimetre':
-                    centimeter=True
-                if ls[i]=='centimetres':
-                    centimeter=True    
-            if meter==True:
-                return len(s), f"{ca}π m^2"
-            elif centimeter==True:
-                return len(s), f"{ca*10000.0}π cm^2"
-            else:
-                return len(s),f"{ca}π"
-
-    if all(word in lower_s for word in ["circle", "area", "radius"]):
-        if matches:
-            first_match = matches[0]
-            number1, unit1 = first_match[0], first_match[1]
-            number1=float(number1)
-            if unit1=='cm':
-                number1=number1/100.0
-            ca=number1*number1   
-            meter=False
-            centimeter=False
-            ls=lower_s.split()
-            for i in range(len(ls)):
-                if ls[i]=='meters':
-                    meter=True
-                if ls[i]=='meter':
-                    meter=True
-                if ls[i]=='metre':
-                    meter=True
-                if ls[i]=='metres':
-                    meter=True
-                if ls[i]=='centimeters':
-                    centimeter=True
-                if ls[i]=='centimeter':
-                    centimeter=True
-                if ls[i]=='centimetre':
-                    centimeter=True
-                if ls[i]=='centimetres':
-                    centimeter=True    
-            if meter==True:
-                return len(s), f"{ca}π m^2"
-            elif centimeter==True:
-                return len(s), f"{ca*10000.0}π cm^2"
-            else:
-                return len(s),f"{ca}π"
-
-    if all(word in lower_s for word in ["circle", "circumference", "radius"]):
-        if matches:
-            first_match = matches[0]
-            number1, unit1 = first_match[0], first_match[1]
-            number1=float(number1)
-            if unit1=='cm':
-                number1=number1/100.0
-            ca=2.0*number1  
-            meter=False
-            centimeter=False
-            ls=lower_s.split()
-            for i in range(len(ls)):
-                if ls[i]=='meters':
-                    meter=True
-                if ls[i]=='meter':
-                    meter=True
-                if ls[i]=='metre':
-                    meter=True
-                if ls[i]=='metres':
-                    meter=True
-                if ls[i]=='centimeters':
-                    centimeter=True
-                if ls[i]=='centimeter':
-                    centimeter=True
-                if ls[i]=='centimetre':
-                    centimeter=True
-                if ls[i]=='centimetres':
-                    centimeter=True    
-            if meter==True:
-                return len(s), f"{ca}π m"
-            elif centimeter==True:
-                return len(s), f"{ca*100.0}π cm"
-            else:
-                return len(s),f"{ca}π"
-
-    if all(word in lower_s for word in ["circle", "circumference", "diameter"]):
-        if matches:
-            first_match = matches[0]
-            number1, unit1 = first_match[0], first_match[1]
-            number1=float(number1)
-            if unit1=='cm':
-                number1=number1/100.0
-            ca=number1  
-            meter=False
-            centimeter=False
-            ls=lower_s.split()
-            for i in range(len(ls)):
-                if ls[i]=='meters':
-                    meter=True
-                if ls[i]=='meter':
-                    meter=True
-                if ls[i]=='metre':
-                    meter=True
-                if ls[i]=='metres':
-                    meter=True
-                if ls[i]=='centimeters':
-                    centimeter=True
-                if ls[i]=='centimeter':
-                    centimeter=True
-                if ls[i]=='centimetre':
-                    centimeter=True
-                if ls[i]=='centimetres':
-                    centimeter=True    
-            if meter==True:
-                return len(s), f"{ca}π m"
-            elif centimeter==True:
-                return len(s), f"{ca*100.0}π cm"
-            else:
-                return len(s),f"{ca}π"
-            
-        
+    if xx == 5 or xx == 6:            
+        first_match = matches[0]
+        number1, unit1 = first_match[0], first_match[1]
+        number1=float(number1)
+        if unit1=='cm':
+            number1=number1/100.0
+        ca=0    
+        if xx == 5:
+            ca=2.0*number1
+        if xx == 6:
+            ca=number1
+        if meter==True:
+            return len(s), f"{ca}π m"
+        elif centimeter==True:
+            return len(s), f"{ca*100.0}π cm"
+        else:
+            return len(s),f"{ca}π"
+    
     #print(s)
 
     safe_globals = {
