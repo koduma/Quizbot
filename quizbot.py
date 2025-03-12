@@ -29,7 +29,7 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 86
+PROBLEM = 87
 TABOO = 1000
 
 translator = Translator()
@@ -494,7 +494,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=86
+    PROBLEM=87
 else:
     PROBLEM=1
 
