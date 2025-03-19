@@ -575,9 +575,11 @@ def quiz_solve(loop,o,add,q):
     #print("hint="+str(hint)+",maxhit="+str(maxhit))
 
     include=dict()
-    
+
     for xx in range(counter-1):
         sum=1.0
+        if NoAns[train_num[xx+1]] > TABOO:
+            continue
         cnt=len(quiz2)+1
         tmp=str(train_num[xx+1])+","+str(hint)
         if tmp in datakun:
@@ -611,7 +613,7 @@ def quiz_solve(loop,o,add,q):
                 sum/=1.2
             if tmp2 in datakun:
                 sum*=datakun[tmp2]#float(datakun[tmp2]+cnt)
-                if NoAns[train_num[xx+1]] > TABOO or NoAns[xxx] > TABOO:
+                if NoAns[xxx] > TABOO:
                     if xxx != "water":
                         sum/=datakun[tmp2]#float(datakun[tmp2]+cnt)        
                 #else:
