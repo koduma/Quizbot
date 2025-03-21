@@ -521,12 +521,18 @@ def quiz_solve(loop,o,add,q):
         quiz=q
     if len(quiz)==0:
         sys.exit()
-        
-    if is_ja(quiz) == False:
-        quiz_ja = translator.translate(quiz, src='en', dest='ja').text
-    else:
-        quiz_ja=quiz
-        quiz=translator.translate(quiz_ja, src='ja', dest='en').text
+
+    quiz_ja=""
+
+    try:
+        if is_ja(quiz) == False:
+            quiz_ja = translator.translate(quiz, src='en', dest='ja').text
+        else:
+            quiz_ja=quiz
+            quiz=translator.translate(quiz_ja, src='ja', dest='en').text
+
+    except Exception:
+        pass
 
     quiz3=""
     
