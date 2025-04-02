@@ -29,12 +29,17 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 87
+PROBLEM = 88
 TABOO = 1000
 
 translator = Translator()
 
 warnings.simplefilter('ignore')
+
+def extract_unit(s: str) -> str:
+    pattern = r'\d+(?:\.\d+)?\s*([a-zA-Z]+)'
+    match = re.search(pattern, s)
+    return match.group(1) if match else ""
 
 def fix_expression(s: str) -> str:
     s = re.sub(r'(\d)\s*\.\s*(\d)', r'\1.\2', s)
@@ -189,25 +194,30 @@ def calculator(s):
     
     #print(s)
 
+    pt=0
+
+    if 'of' in s:
+        s = s.replace('of','*')
+    if 'divisible' in s:
+        s = s.replace('divisible','%')
+        pt=1
+    if 'by' in s:
+        s = s.replace('by',' ')
+    if 'divided' in s:
+        s = s.replace('divided','*1.0/')
+    unit=extract_unit(s)
+    if unit in s and len(unit)>0:
+        s = s.replace(unit,'')
+
     for i in range(len(s)):
         st = s[i]
-        pt=0
         for j in range(i+1, len(s)):
             add=""
             if s[j]=='%':
                 add="/100.0"
             else:
                 add=s[j]    
-            st += add
-            if 'of' in st:
-                st = st.replace('of','*')
-            if 'divisible' in st:
-                st = st.replace('divisible','%')
-                pt=1
-            if 'by' in st:
-                st = st.replace('by',' ')
-            if 'divided' in st:
-                st = st.replace('divided','*1.0/')    
+            st += add    
             try:
                 if "=" in st:
                     parts = st.split("=")
@@ -289,6 +299,9 @@ def calculator(s):
             except Exception:
                 continue
 
+    ans=str(ans)
+    if len(unit)>0:
+        ans+=str(unit)
     return ev, ans
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
@@ -499,7 +512,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=87
+    PROBLEM=88
 else:
     PROBLEM=1
 
