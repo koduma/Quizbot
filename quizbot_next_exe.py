@@ -649,7 +649,62 @@ def quiz_solve(loop,o,add,q):
 
     include=dict()
 
+    printed = [False] * 15
+
     for xx in range(counter-1):
+        per=xx/(counter+1)
+        if per < 0.1:
+            idx = 0
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.2:
+            idx = 1
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.3:
+            idx = 2
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.4:
+            idx = 3
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.5:
+            idx = 4
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.6:
+            idx = 5
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.7:
+            idx = 6
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.8:
+            idx = 7
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        elif per < 0.9:
+            idx = 8
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        else:
+            idx = 9
+            if printed[idx]==False:
+                print("thinking..."+str(per*100.0)+"%")
+                printed[idx]=True
+        if xx == counter-2:
+            print("complete")
         sum=1.0
         if NoAns[train_num[xx+1]] > TABOO:
             continue
