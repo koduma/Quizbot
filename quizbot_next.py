@@ -21,7 +21,7 @@ NoAns = dict()
 
 with open("./metadata2.txt") as f:
     for line in f:
-       meta=meta+line
+        meta=meta+line
 
 meta=meta.split()
 
@@ -30,7 +30,7 @@ now=[1]
 WA=[]
 
 PROBLEM = 89
-TABOO = 10000
+TABOO = 3400#10000
 
 translator = Translator()
 
@@ -422,6 +422,7 @@ for l in range(len(meta)):
             for line in f:
                 strr=strr+line
     else:
+        #break
         with open("./getdata/"+title+".txt") as f:
             for line in f:
                 strr=strr+line
@@ -499,14 +500,14 @@ for l in range(len(meta)):
                 
 
     if (l+1)%100 == 0 or (l+1)==len(meta):
-        print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
-        #b = sys.getsizeof(datakun)
-        #b += sum(map(sys.getsizeof, datakun.values())) + sum(map(sys.getsizeof, datakun.keys()))
-        #kb = b / 1024
-        #mb = kb / 1024
-        #gb = mb / 1024
-        #gb2 = format(gb, '.2f')
-        #print("params="+str(len(datakun))+","+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
+        #print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
+        b = sys.getsizeof(datakun)
+        b += sum(map(sys.getsizeof, datakun.values())) + sum(map(sys.getsizeof, datakun.keys()))
+        kb = b / 1024
+        mb = kb / 1024
+        gb = mb / 1024
+        gb2 = format(gb, '.2f')
+        print("params="+str(len(datakun))+",mem="+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
 
 ok=0
 ng=0
@@ -603,7 +604,7 @@ def quiz_solve(loop,o,add,q):
     printed = [False] * 15
 
     for xx in range(counter-1):
-        per=xx/(counter+1)
+        per=round(xx/(counter+1),1)
         if per < 0.1:
             idx = 0
             if printed[idx]==False:
@@ -794,6 +795,7 @@ if mode=="2":
         if a==0:
             break
         else:
+            print("ReThinking...")
             o=False
             add+=" "+str(b)
 
@@ -810,6 +812,7 @@ elif mode=="3":
             if a==0:
                 break
             else:
+                print("ReThinking...")
                 o=False
                 add+=" "+str(b)
 elif mode=="1":
@@ -822,6 +825,7 @@ elif mode=="1":
             q=input()
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
+            print("ReThinking...")
             o=False
             add+=" "+str(b)
         else:
@@ -849,6 +853,7 @@ elif mode=="4":
             print(q)
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
+            print("ReThinking...")
             o=False
             add+=" "+str(b)
         else:
