@@ -29,7 +29,7 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 88
+PROBLEM = 89
 TABOO = 1000
 
 translator = Translator()
@@ -512,7 +512,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=88
+    PROBLEM=89
 else:
     PROBLEM=1
 
@@ -598,56 +598,56 @@ def quiz_solve(loop,o,add,q):
     printed = [False] * 15
 
     for xx in range(counter-1):
-        per=xx/(counter+1)
+        per=round(100.0*xx/(counter+1),1)
         if per < 0.1:
             idx = 0
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.2:
             idx = 1
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.3:
             idx = 2
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.4:
             idx = 3
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.5:
             idx = 4
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.6:
             idx = 5
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.7:
             idx = 6
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.8:
             idx = 7
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         elif per < 0.9:
             idx = 8
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         else:
             idx = 9
             if printed[idx]==False:
-                print("thinking..."+str(per*100.0)+"%")
+                print("thinking..."+str(per)+"%")
                 printed[idx]=True
         if xx == counter-2:
             print("complete")
@@ -789,6 +789,7 @@ if mode=="2":
         if a==0:
             break
         else:
+            print("ReThinking...")
             o=False
             add+=" "+str(b)
 
@@ -805,6 +806,7 @@ elif mode=="3":
             if a==0:
                 break
             else:
+                print("ReThinking...")
                 o=False
                 add+=" "+str(b)
 elif mode=="1":
@@ -817,6 +819,7 @@ elif mode=="1":
             q=input()
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
+            print("ReThinking...")
             o=False
             add+=" "+str(b)
         else:
@@ -844,6 +847,7 @@ elif mode=="4":
             print(q)
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
+            print("ReThinking...")
             o=False
             add+=" "+str(b)
         else:
