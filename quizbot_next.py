@@ -1,3 +1,4 @@
+
 import math
 import os
 import matplotlib.pyplot as plt
@@ -30,7 +31,7 @@ now=[1]
 WA=[]
 
 PROBLEM = 89
-TABOO = 3400#10000
+TABOO = 4700#10000
 
 translator = Translator()
 
@@ -411,7 +412,30 @@ for l in range(len(meta)):
         
 #sys.exit()
 
+print("load?(y/n)=",end="")
+ld=input()
+
 for l in range(len(meta)):
+
+    if ld=='y':
+        nksize=0
+        nextkey=[]
+        nextvalue=[]
+        try:
+            with open('./nextkey.txt') as f:
+                for line in f:
+                    nksize+=1
+                    line.rstrip('\n')
+                    nextkey.append(str(line))
+            with open('./nextvalue.txt') as f:
+                for line in f:
+                    line.rstrip('\n')
+                    nextvalue.append(str(line))
+            for i in range(nksize):
+                datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
+        except FileNotFoundError:
+            print("fileNoExist")
+        break
 
     strr=""
     
@@ -508,6 +532,21 @@ for l in range(len(meta)):
         gb = mb / 1024
         gb2 = format(gb, '.2f')
         print("params="+str(len(datakun))+",mem="+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
+
+
+nk_wrl=""
+nv_wrl=""
+for key, value in datakun.items():
+    sr1=str(key)
+    sr2=str(value)
+    nk_wrl+=sr1+'\n'
+    nv_wrl+=sr2+'\n'
+
+with open("nextkey.txt", "w", encoding="utf-8") as f:
+    f.write(nk_wrl)
+
+with open("nextvalue.txt", "w", encoding="utf-8") as f:
+    f.write(nv_wrl) 
 
 ok=0
 ng=0
