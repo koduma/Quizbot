@@ -1,4 +1,3 @@
-
 import math
 import os
 import matplotlib.pyplot as plt
@@ -412,30 +411,30 @@ for l in range(len(meta)):
         
 #sys.exit()
 
-print("load?(y/n)=",end="")
-ld=input()
+#print("load?(y/n)=",end="")
+#ld=input()
 
 for l in range(len(meta)):
 
-    if ld=='y':
-        nksize=0
-        nextkey=[]
-        nextvalue=[]
-        try:
-            with open('./nextkey.txt') as f:
-                for line in f:
-                    nksize+=1
-                    line.rstrip('\n')
-                    nextkey.append(str(line))
-            with open('./nextvalue.txt') as f:
-                for line in f:
-                    line.rstrip('\n')
-                    nextvalue.append(str(line))
-            for i in range(nksize):
-                datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
-        except FileNotFoundError:
-            print("fileNoExist")
-        break
+    #if ld=='y':
+        #nksize=0
+        #nextkey=[]
+        #nextvalue=[]
+        #try:
+            #with open('./nextkey.txt') as f:
+                #for line in f:
+                    #nksize+=1
+                    #line.rstrip('\n')
+                    #nextkey.append(str(line))
+            #with open('./nextvalue.txt') as f:
+                #for line in f:
+                    #line.rstrip('\n')
+                    #nextvalue.append(str(line))
+            #for i in range(nksize):
+                #datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
+        #except FileNotFoundError:
+            #print("fileNoExist")
+        #break
 
     strr=""
     
@@ -534,19 +533,23 @@ for l in range(len(meta)):
         print("params="+str(len(datakun))+",mem="+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
 
 
-nk_wrl=""
-nv_wrl=""
-for key, value in datakun.items():
-    sr1=str(key)
-    sr2=str(value)
-    nk_wrl+=sr1+'\n'
-    nv_wrl+=sr2+'\n'
+#nk_w=""
+#nv_w=""
+#siz=0
 
-with open("nextkey.txt", "w", encoding="utf-8") as f:
-    f.write(nk_wrl)
-
-with open("nextvalue.txt", "w", encoding="utf-8") as f:
-    f.write(nv_wrl) 
+#for key, value in datakun.items():
+    #sr1=str(key)+'\n'
+    #sr2=str(value)+'\n'
+    #nk_w+=sr1
+    #nv_w+=sr2
+    #if siz % 1000 == 0:
+        #with open("nextkey.txt", mode="a", encoding="utf-8") as f:
+            #f.write(nk_w)
+        #with open("nextvalue.txt", mode="a", encoding="utf-8") as f:
+            #f.write(nv_w)
+        #nk_w=""
+        
+    #siz+=1
 
 ok=0
 ng=0
