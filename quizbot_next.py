@@ -1,3 +1,4 @@
+
 import math
 import os
 import matplotlib.pyplot as plt
@@ -30,7 +31,7 @@ now=[1]
 WA=[]
 
 PROBLEM = 89
-TABOO = 4700#10000
+TABOO = 7000
 
 translator = Translator()
 
@@ -444,11 +445,12 @@ for l in range(len(meta)):
         with open("./"+title+".txt") as f:
             for line in f:
                 strr=strr+line
-    else:
-        #break
+    elif l<70000:
         with open("./getdata/"+title+".txt") as f:
             for line in f:
                 strr=strr+line
+    else:
+        break
         
     if str(title)=="300000kms":
         title="300000km/s"
@@ -761,7 +763,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="MortalityRate":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="MortalityRate":
+                #if str(train_num[xx+1])=="MarioKart":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Metaphysics":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
