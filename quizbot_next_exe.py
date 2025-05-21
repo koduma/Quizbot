@@ -470,10 +470,12 @@ for l in range(len(meta)):
         with open(resource_path(f"{title}.txt"), encoding="utf-8") as f:
             for line in f:
                 strr += line
-    else:
+    elif l<70000:
         with open(resource_path(f"getdata/{title}.txt"), encoding="utf-8") as f:
             for line in f:
                 strr += line
+    else:
+        break
         
     if str(title)=="300000kms":
         title="300000km/s"
