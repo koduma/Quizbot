@@ -79,7 +79,7 @@ now=[1]
 WA=[]
 
 PROBLEM = 89
-TABOO = 15000
+TABOO = 7000
 
 translator = Translator()
 
