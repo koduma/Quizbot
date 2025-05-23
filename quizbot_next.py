@@ -1,4 +1,3 @@
-
 import math
 import os
 import matplotlib.pyplot as plt
@@ -763,7 +762,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="MortalityRate":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="MarioKart":
+                #if str(train_num[xx+1])=="Dog":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Metaphysics":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -882,11 +881,23 @@ elif mode=="3":
 elif mode=="1":
     o=True
     add=""
+    qz=""
     while True:
+        q=""
         if o==True:
             print("------------------------------------------------------------------")
             print("Input_Quiz:")
-            q=input()
+            while True:
+                q2 = input()
+                if "@@@" in q2:
+                    q2 = q2.replace("@@@", "")
+                    q+=q2
+                    break
+                q+=q2        
+        q = q.replace("@@@", "")
+        if o == False:
+            q=qz
+        qz=q    
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
             print("ReThinking...")
