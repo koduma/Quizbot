@@ -829,14 +829,27 @@ elif mode=="3":
                 print("ReThinking...")
                 o=False
                 add+=" "+str(b)
+
 elif mode=="1":
     o=True
     add=""
+    qz=""
     while True:
+        q=""
         if o==True:
             print("------------------------------------------------------------------")
             print("Input_Quiz:")
-            q=input()
+            while True:
+                q2 = input()
+                if "@@@" in q2:
+                    q2 = q2.replace("@@@", "")
+                    q+=q2
+                    break
+                q+=q2        
+        q = q.replace("@@@", "")
+        if o == False:
+            q=qz
+        qz=q    
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
             print("ReThinking...")
