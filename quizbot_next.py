@@ -891,9 +891,9 @@ elif mode=="1":
                 q2 = input()
                 if "@@@" in q2:
                     q2 = q2.replace("@@@", "")
-                    q+=q2
+                    q+=q2+" "
                     break
-                q+=q2        
+                q+=q2+" "        
         q = q.replace("@@@", "")
         if o == False:
             q=qz
