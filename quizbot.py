@@ -674,14 +674,14 @@ def quiz_solve(loop,o,add,q):
         sum=1.0
         if NoAns[train_num[xx+1]] > TABOO:
             continue
-        cnt=len(quiz2)+1
+        cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
         if tmp in datakun:
             sum=float(pow(2,maxhit-1))
             #if str(train_num[xx+1])=="IrreversibleProcess":
                 #print("sum="+str(sum))
         for xxx in quiz2:
-            cnt-=1
+            cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
                 continue
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
@@ -706,10 +706,13 @@ def quiz_solve(loop,o,add,q):
             if tmp2 not in datakun:
                 sum/=1.2
             if tmp2 in datakun:
-                sum*=datakun[tmp2]#float(datakun[tmp2]+cnt)
+                weight=1.0
+                if cnt < 5:
+                    weight=3.0
+                sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
                 if NoAns[xxx] > TABOO:
                     if xxx != "water":
-                        sum/=datakun[tmp2]#float(datakun[tmp2]+cnt)        
+                        sum/=(weight*datakun[tmp2])#float(datakun[tmp2]+cnt)        
                 #else:
                     #if str(train_num[xx+1])=="MortalityRate":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
