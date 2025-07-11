@@ -13,6 +13,7 @@ from sympy import sympify, Eq, solve
 
 strr=""
 meta=""
+docs = 0
 
 train = dict()
 train_num = dict()
@@ -413,6 +414,8 @@ for l in range(len(meta)):
 
 for l in range(len(meta)):
 
+    docs=docs+1
+
     strr=""
     
     title = meta[l]
@@ -794,7 +797,7 @@ def quiz_solve(loop,o,add,q):
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
-    print("Num:"+str(len(meta)))
+    print("Docs:"+str(docs))
     if mode=="2":
         plt.figure(figsize= (15,6))
         plt.bar(x_all, y_all)
