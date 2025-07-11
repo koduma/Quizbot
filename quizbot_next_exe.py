@@ -62,6 +62,7 @@ def show_remain_txt():
 
 strr=""
 meta=""
+docs=0
 
 train = dict()
 train_num = dict()
@@ -467,10 +468,12 @@ for l in range(len(meta)):
     title = meta[l]
     
     if l <= 10040:
+        docs=docs+1
         with open(resource_path(f"{title}.txt"), encoding="utf-8") as f:
             for line in f:
                 strr += line
     elif l<70000:
+        docs=docs+1
         with open(resource_path(f"getdata/{title}.txt"), encoding="utf-8") as f:
             for line in f:
                 strr += line
@@ -850,7 +853,7 @@ def quiz_solve(loop,o,add,q):
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
-    print("Docs:"+str(len(meta)))
+    print("Docs:"+str(docs))
     if mode=="2":
         plt.figure(figsize= (15,6))
         plt.bar(x_all, y_all)
