@@ -846,7 +846,7 @@ def quiz_solve(loop,o,add,q):
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
-    print("Docs:"+str(docs)
+    print("Docs:"+str(docs))
     if mode=="2":
         plt.figure(figsize= (15,6))
         plt.bar(x_all, y_all)
