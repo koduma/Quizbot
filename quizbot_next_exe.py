@@ -62,7 +62,6 @@ def show_remain_txt():
 
 strr=""
 meta=""
-docs=0
 
 train = dict()
 train_num = dict()
