@@ -29,7 +29,7 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 90
+PROBLEM = 91
 TABOO = 7000
 RARE = 400
 docs = 0
@@ -573,7 +573,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=90
+    PROBLEM=91
 else:
     PROBLEM=1
 
@@ -658,6 +658,13 @@ def quiz_solve(loop,o,add,q):
 
     printed = [False] * 15
 
+    ngram = dict()
+
+    for k1 in range(len(quiz2)):
+        if k1+2 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])+str(quiz2[k1+2])
+            ngram[str(kt).lower()]=1
+
     for xx in range(counter-1):
         per=xx/(counter+1)
         if per < 0.1:
@@ -741,6 +748,10 @@ def quiz_solve(loop,o,add,q):
             sum=float(pow(2,maxhit-1))
             #if str(train_num[xx+1])=="IrreversibleProcess":
                 #print("sum="+str(sum))
+        strl=str(train_num[xx+1]).lower()
+        if strl in ngram:
+            sum=1.0
+            continue
         for xxx in quiz2:
             cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
