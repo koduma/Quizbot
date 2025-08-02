@@ -78,13 +78,22 @@ meta=meta.split()
 counter=1
 now=[1]
 WA=[]
-
-PROBLEM = 89
+docs = 0
+PROBLEM = 90
 TABOO = 7000
+RARE = 400
 
 translator = Translator()
 
 warnings.simplefilter('ignore')
+
+def is_english_word(text):
+    if re.fullmatch(r'[a-zA-Z]+', text):
+        return 1
+    elif re.fullmatch(r'[0-9]+', text):
+        return 0
+    else:
+        return 0
 
 def extract_unit(s: str) -> str:
     pattern = r'\d+(?:\.\d+)?\s*([a-zA-Z]+)'
@@ -571,7 +580,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=89
+    PROBLEM=90
 else:
     PROBLEM=1
 
@@ -771,7 +780,9 @@ def quiz_solve(loop,o,add,q):
                 sum*=(datakun[tmp2]*weight)#float(datakun[tmp2]+cnt)
                 if NoAns[xxx] > TABOO:
                     if xxx != "water":
-                        sum/=(weight*datakun[tmp2])#float(datakun[tmp2]+cnt)        
+                        sum/=(weight*datakun[tmp2])#float(datakun[tmp2]+cnt)                   
+                if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
+                    sum*=3.0
                 #else:
                     #if str(train_num[xx+1])=="MortalityRate":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
@@ -808,9 +819,13 @@ def quiz_solve(loop,o,add,q):
         return -1,str(x_all[0])
     print("Top5:",end="")    
     print(g)
+    ans_ja=""
     if y_all[0] < 1.01:
         ans="Unknown"
-    ans_ja = translator.translate(str(ans), src='en', dest='ja').text
+    try:
+        ans_ja = translator.translate(str(ans), src='en', dest='ja').text
+    except Exception:
+        pass
     print("Answer_ja:"+ans_ja)    
     print("Answer_en:"+str(ans))
     if mode == "3":
