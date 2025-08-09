@@ -32,7 +32,7 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 91
+PROBLEM = 111
 TABOO = 7000
 RARE = 400
 docs = 0
@@ -543,14 +543,14 @@ for l in range(len(meta)):
         tmp5 = str(title)+","+str(c)
         tmp6 = str(c)+","+str(title)
         if tmp5 in datakun:
-            datakun[tmp5]+=2
+            datakun[tmp5]+=4#2
         else:
-            datakun[tmp5]=2
+            datakun[tmp5]=4#2
 
         if tmp6 in datakun:
-            datakun[tmp6]+=2
+            datakun[tmp6]+=4#2
         else:
-            datakun[tmp6]=2   
+            datakun[tmp6]=4#2
 
 #for c in range(counter-2):
 #    tmp = str(train_num[c+1])+","+str(train_num[c+2])
@@ -565,16 +565,14 @@ for l in range(len(meta)):
             #if train_num[c+1]=="206":
                 #print(tmp)
             if tmp in datakun:
-                datakun[tmp]+=1
-                #if str(train_num[c+1])=="Empiricism":
-                    #print(str(tmp)+"="+str(datakun[tmp]))
+                datakun[tmp]+=2#1
             else:
-                datakun[tmp]=1
+                datakun[tmp]=2#1
             tmp3 = str(train_num[c2+1])+","+str(train_num[c+1])
             if tmp3 in datakun:
-                datakun[tmp3]+=1
+                datakun[tmp3]+=2#1
             else:
-                datakun[tmp3]=1
+                datakun[tmp3]=2#1
                 
 
     if (l+1)%100 == 0 or (l+1)==len(meta):
@@ -586,7 +584,12 @@ for l in range(len(meta)):
         gb = mb / 1024
         gb2 = format(gb, '.2f')
         print("params="+str(len(datakun))+",mem="+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
-
+        #if (l+1)%100==0:
+            #cot = 0
+            #for key, value in datakun.items():
+                #if float(value) >=0.9 and float(value) <= 1.1:
+                    #cot += 1
+            #print("count="+str(cot))
 
 #nk_w=""
 #nv_w=""
@@ -615,7 +618,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=91
+    PROBLEM=111
 else:
     PROBLEM=1
 
@@ -890,13 +893,13 @@ def quiz_solve(loop,o,add,q):
             print("Truth:"+str(truth))
     score=maxsum/(len(quiz2)+1)
     print("Score:"+'{:.3f}'.format(score))
-    if score < 1.0:
+    if score < 100.0:
         print("Eval:F") 
     else:
-        if score < 10.0:
+        if score < 10000.0:
             print("Eval:C")
         else:
-            if score < 100.0:
+            if score < 1000000.0:
                 print("Eval:A")
             else:
                 if mode=="4":
