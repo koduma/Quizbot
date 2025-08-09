@@ -10,6 +10,9 @@ import random
 import warnings
 import sympy
 from sympy import sympify, Eq, solve
+import googlesearch
+import requests
+from bs4 import BeautifulSoup
 
 strr=""
 meta=""
@@ -37,6 +40,45 @@ docs = 0
 translator = Translator()
 
 warnings.simplefilter('ignore')
+
+def get_ansi(tk):
+
+    ret=""
+    if len(tk)>0:
+        for i in range(len(tk)):
+            if tk[len(tk)-i-1]=="/":
+                break
+            ret+=tk[len(tk)-i-1]
+    fret=""
+    if len(ret)>0:
+        for i in range(len(ret)):
+            fret+=ret[len(ret)-i-1]
+        
+    return fret
+
+def get_wikipedia_intro(url: str) -> str:
+    title = url.rsplit('/', 1)[-1]
+
+    endpoint = "https://en.wikipedia.org/w/api.php"
+
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "extracts",
+        "exintro": True,
+        "explaintext": True,
+        "titles": title,
+        "redirects": 1
+    }
+
+    response = requests.get(endpoint, params=params)
+    data = response.json()
+
+    pages = data.get("query", {}).get("pages", {})
+    for page_id, page in pages.items():
+        if "extract" in page:
+            return page["extract"].strip()
+    return None
 
 def is_english_word(text):
     if re.fullmatch(r'[a-zA-Z]+', text):
@@ -740,7 +782,7 @@ def quiz_solve(loop,o,add,q):
         if xx == counter-2:
             print("complete")
         sum=1.0
-        if NoAns[train_num[xx+1]] > TABOO:
+        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water":
             continue
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
@@ -783,7 +825,7 @@ def quiz_solve(loop,o,add,q):
                     weight=3.0
                 sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
                 if NoAns[xxx] > TABOO:
-                    if xxx != "water":
+                    if str(xxx).lower() != "water":
                         sum/=(weight*datakun[tmp2])#float(datakun[tmp2]+cnt)
                 if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
                     sum*=3.0
@@ -874,6 +916,26 @@ def quiz_solve(loop,o,add,q):
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
     print("Docs:"+str(docs))
+    query1=quiz.split()
+    query2=quiz
+    for ir in range(len(query1)):
+        if str(query1[ir]) in NoAns:
+            if NoAns[str(query1[ir])] > TABOO:
+               query2=query2.replace(str(query1[ir]),"") 
+    results = googlesearch.search(query2, num_results=5)
+    for url in results:
+        if "wikipedia" in url:
+            #print(url)
+            s_en=str(get_ansi(url))
+            s_ja=""
+            try:
+                s_ja = translator.translate(str(get_ansi(url)), src='en', dest='ja').text
+                print("GoogleAnswer_ja:"+str(s_ja))
+            except Exception:
+                pass
+            print("GoogleAnswer_en:"+str(s_en))                
+            break
+    
     if mode=="2":
         plt.figure(figsize= (15,6))
         plt.bar(x_all, y_all)
