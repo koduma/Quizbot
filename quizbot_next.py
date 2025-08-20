@@ -22,6 +22,7 @@ train_num = dict()
 datakun = dict()
 NoAns = dict()
 
+
 with open("./metadata2.txt") as f:
     for line in f:
         meta=meta+line
@@ -32,7 +33,7 @@ counter=1
 now=[1]
 WA=[]
 
-PROBLEM = 111
+PROBLEM = 116
 TABOO = 7000
 RARE = 400
 docs = 0
@@ -618,7 +619,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 
 if mode=="3":
-    PROBLEM=111
+    PROBLEM=116
 else:
     PROBLEM=1
 
@@ -709,6 +710,18 @@ def quiz_solve(loop,o,add,q):
         if k1+2 < len(quiz2):
             kt=str(quiz2[k1])+str(quiz2[k1+1])+str(quiz2[k1+2])
             ngram[str(kt).lower()]=1
+
+    for k1 in range(len(quiz2)):
+        if k1+1 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])
+            ngram[str(kt).lower()]=1
+            
+    #for ib in range(len(quiz2)):
+        #if ib > 4:
+            #break
+        #if str(quiz2[ib]) in NoAns:
+            #if NoAns[str(quiz2[ib])] <= TABOO:
+                #print("type="+str(quiz2[ib]))
 
     for xx in range(counter-1):
         per=xx/(counter+1)
@@ -829,7 +842,7 @@ def quiz_solve(loop,o,add,q):
                 sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water":
-                        sum/=(weight*datakun[tmp2])#float(datakun[tmp2]+cnt)
+                        sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
                 if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
                     sum*=3.0
                 #else:
