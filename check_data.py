@@ -66,7 +66,10 @@ try:
             line.rstrip('\n')
             key=get_key(str(line))
             val=get_val(str(line))
-            train_num[str(key)]=str(val)
+            if str(key)!="54233@":
+                train_num[int(key)]=str(val)
+            else:
+                train_num[54233]="@"
             a+=1
             if a < 10:
                 print("train_num")
