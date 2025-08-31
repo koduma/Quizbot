@@ -511,7 +511,8 @@ for l in range(len(meta)):
                 line=line.replace('\n',"")
                 key=get_key(str(line))
                 val=get_val(str(line))
-                train_num[int(key)]=str(val)
+                if str(key)!="54233@":
+                    train_num[int(key)]=str(val)
         with open('./NoAns.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
