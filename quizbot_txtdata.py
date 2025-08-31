@@ -679,8 +679,8 @@ mode=""
 
 print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 
-#mode=input()
-mode="3"
+mode=input()
+#mode="3"
 
 if mode=="3":
     PROBLEM=116
