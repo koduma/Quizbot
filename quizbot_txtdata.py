@@ -1005,19 +1005,17 @@ def quiz_solve(loop,o,add,q):
         if str(query1[ir]) in NoAns:
             if NoAns[str(query1[ir])] > TABOO:
                query2=query2.replace(str(query1[ir]),"") 
-    results = googlesearch.search(query2, num_results=5)
-    for url in results:
-        if "wikipedia" in url:
-            #print(url)
-            s_en=str(get_ansi(url))
-            s_ja=""
-            try:
+    try:
+        results = googlesearch.search(query2, num_results=5)
+        for url in results:
+            if "wikipedia" in url:
+                s_en=str(get_ansi(url))
                 s_ja = translator.translate(str(get_ansi(url)), src='en', dest='ja').text
                 print("GoogleAnswer_ja:"+str(s_ja))
-            except Exception:
-                pass
-            print("GoogleAnswer_en:"+str(s_en))                
-            break
+                print("GoogleAnswer_en:"+str(s_en))
+                break
+    except Exception:
+        pass        
     
     if mode=="2":
         plt.figure(figsize= (15,6))
