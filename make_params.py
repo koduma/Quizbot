@@ -553,6 +553,50 @@ for l in range(len(meta)):
         else:
             datakun[tmp6]=4#2
 
+    for c in talk:
+        tmp5 = str(title)+","+str(c).lower()
+        tmp6 = str(c).lower()+","+str(title)
+
+        if str(c).lower()!=str(c):
+            if tmp5 in datakun:
+                datakun[tmp5]+=4#2
+            else:
+                datakun[tmp5]=4#2
+            if tmp6 in datakun:
+                datakun[tmp6]+=4#2
+            else:
+                datakun[tmp6]=4#2
+"""
+    for c in talk:
+        tmp5 = str(title).lower()+","+str(c)
+        tmp6 = str(c)+","+str(title).lower()
+
+        if str(title).lower()!=str(title):
+            if tmp5 in datakun:
+                datakun[tmp5]+=4#2
+            else:
+                datakun[tmp5]=4#2
+            if tmp6 in datakun:
+                datakun[tmp6]+=4#2
+            else:
+                datakun[tmp6]=4#2
+
+    for c in talk:
+        tmp5 = str(title).lower()+","+str(c).lower()
+        tmp6 = str(c).lower()+","+str(title).lower()
+
+        if str(title).lower()!=str(title) and str(c).lower()!=str(c):
+            if tmp5 in datakun:
+                datakun[tmp5]+=4#2
+            else:
+                datakun[tmp5]=4#2
+            if tmp6 in datakun:
+                datakun[tmp6]+=4#2
+            else:
+                datakun[tmp6]=4#2
+
+"""
+
 #for c in range(counter-2):
 #    tmp = str(train_num[c+1])+","+str(train_num[c+2])
 #    if tmp in data:
