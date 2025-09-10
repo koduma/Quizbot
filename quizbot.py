@@ -1,3 +1,4 @@
+
 import math
 import os
 import matplotlib.pyplot as plt
@@ -10,6 +11,13 @@ import random
 import warnings
 import sympy
 from sympy import sympify, Eq, solve
+import googlesearch
+import requests
+from bs4 import BeautifulSoup
+import spacy
+
+
+nlp = spacy.load("en_core_web_sm")
 
 strr=""
 meta=""
@@ -18,24 +26,66 @@ train = dict()
 train_num = dict()
 datakun = dict()
 NoAns = dict()
+lema = dict()
 
-with open("./metadata.txt") as f:
+
+with open("./metadata2.txt") as f:
     for line in f:
-       meta=meta+line
+        meta=meta+line
 
 meta=meta.split()
 
 counter=1
 now=[1]
 WA=[]
+
+PROBLEM = 116
+TABOO = 7000
+RARE = 400
 docs = 0
-PROBLEM = 90
-TABOO = 1000
-RARE = 50
 
 translator = Translator()
 
 warnings.simplefilter('ignore')
+
+def get_ansi(tk):
+
+    ret=""
+    if len(tk)>0:
+        for i in range(len(tk)):
+            if tk[len(tk)-i-1]=="/":
+                break
+            ret+=tk[len(tk)-i-1]
+    fret=""
+    if len(ret)>0:
+        for i in range(len(ret)):
+            fret+=ret[len(ret)-i-1]
+        
+    return fret
+
+def get_wikipedia_intro(url: str) -> str:
+    title = url.rsplit('/', 1)[-1]
+
+    endpoint = "https://en.wikipedia.org/w/api.php"
+
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "extracts",
+        "exintro": True,
+        "explaintext": True,
+        "titles": title,
+        "redirects": 1
+    }
+
+    response = requests.get(endpoint, params=params)
+    data = response.json()
+
+    pages = data.get("query", {}).get("pages", {})
+    for page_id, page in pages.items():
+        if "extract" in page:
+            return page["extract"].strip()
+    return None
 
 def is_english_word(text):
     if re.fullmatch(r'[a-zA-Z]+', text):
@@ -44,7 +94,7 @@ def is_english_word(text):
         return 0
     else:
         return 0
-        
+
 def extract_unit(s: str) -> str:
     pattern = r'\d+(?:\.\d+)?\s*([a-zA-Z]+)'
     match = re.search(pattern, s)
@@ -420,18 +470,118 @@ for l in range(len(meta)):
         
 #sys.exit()
 
+#print("load?(y/n)=",end="")
+#ld=input()
+
+
+def get_key(s):
+    pos=0
+    for i in range(len(s)):
+        if s[i]=="@":
+            pos=i
+    key=""
+    for i in range(pos):
+        key+=str(s[i])
+    return key
+
+def get_val(s):
+    pos=0
+    for i in range(len(s)):
+        if s[i]=="@":
+            pos=i
+    val=""
+    for i in range(pos+1,len(s)):
+        val+=str(s[i])
+    return val
+
 for l in range(len(meta)):
 
-    docs=docs+1
+    reading=True
+
+    try:
+        with open('./datakun.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                datakun[str(key)]=int(val)
+        with open('./train.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                train[str(key)]=int(val)
+                
+        with open('./train_num.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                if str(key)!="37982@":
+                    train_num[int(key)]=str(val)
+        with open('./NoAns.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                NoAns[str(key)]=int(val)
+                
+        with open('./counter.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                counter=int(line)
+        with open('./lema.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                lema[str(key)]=str(val)        
+        train_num[37982]="@"#@が連続しているとget_keyやget_valは間違える
+    
+    except Exception:
+        reading=False
+
+    if reading==True:
+        print("reading_ok")
+        break
+
+    #if ld=='y':
+        #nksize=0
+        #nextkey=[]
+        #nextvalue=[]
+        #try:
+            #with open('./nextkey.txt') as f:
+                #for line in f:
+                    #nksize+=1
+                    #line.rstrip('\n')
+                    #nextkey.append(str(line))
+            #with open('./nextvalue.txt') as f:
+                #for line in f:
+                    #line.rstrip('\n')
+                    #nextvalue.append(str(line))
+            #for i in range(nksize):
+                #datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
+        #except FileNotFoundError:
+            #print("fileNoExist")
+        #break
 
     strr=""
     
     title = meta[l]
-    
-    with open("./"+title+".txt") as f:
-        for line in f:
-            strr=strr+line
 
+    if l<=10040:
+        docs=docs+1
+        with open("./"+title+".txt") as f:
+            for line in f:
+                strr=strr+line
+    elif l<70000:
+        docs=docs+1
+        with open("./getdata/"+title+".txt") as f:
+            for line in f:
+                strr=strr+line
+    else:
+        break
+        
     if str(title)=="300000kms":
         title="300000km/s"
     strr2=""
@@ -470,14 +620,14 @@ for l in range(len(meta)):
         tmp5 = str(title)+","+str(c)
         tmp6 = str(c)+","+str(title)
         if tmp5 in datakun:
-            datakun[tmp5]+=2
+            datakun[tmp5]+=4#2
         else:
-            datakun[tmp5]=2
+            datakun[tmp5]=4#2
 
         if tmp6 in datakun:
-            datakun[tmp6]+=2
+            datakun[tmp6]+=4#2
         else:
-            datakun[tmp6]=2   
+            datakun[tmp6]=4#2
 
 #for c in range(counter-2):
 #    tmp = str(train_num[c+1])+","+str(train_num[c+2])
@@ -492,27 +642,49 @@ for l in range(len(meta)):
             #if train_num[c+1]=="206":
                 #print(tmp)
             if tmp in datakun:
-                datakun[tmp]+=1
-                #if str(train_num[c+1])=="Empiricism":
-                    #print(str(tmp)+"="+str(datakun[tmp]))
+                datakun[tmp]+=2#1
             else:
-                datakun[tmp]=1
+                datakun[tmp]=2#1
             tmp3 = str(train_num[c2+1])+","+str(train_num[c+1])
             if tmp3 in datakun:
-                datakun[tmp3]+=1
+                datakun[tmp3]+=2#1
             else:
-                datakun[tmp3]=1
+                datakun[tmp3]=2#1
                 
 
     if (l+1)%100 == 0 or (l+1)==len(meta):
-        print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
-        #b = sys.getsizeof(datakun)
-        #b += sum(map(sys.getsizeof, datakun.values())) + sum(map(sys.getsizeof, datakun.keys()))
-        #kb = b / 1024
-        #mb = kb / 1024
-        #gb = mb / 1024
-        #gb2 = format(gb, '.2f')
-        #print("params="+str(len(datakun))+","+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
+        #print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
+        b = sys.getsizeof(datakun)
+        b += sum(map(sys.getsizeof, datakun.values())) + sum(map(sys.getsizeof, datakun.keys()))
+        kb = b / 1024
+        mb = kb / 1024
+        gb = mb / 1024
+        gb2 = format(gb, '.2f')
+        print("params="+str(len(datakun))+",mem="+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
+        #if (l+1)%100==0:
+            #cot = 0
+            #for key, value in datakun.items():
+                #if float(value) >=0.9 and float(value) <= 1.1:
+                    #cot += 1
+            #print("count="+str(cot))
+
+#nk_w=""
+#nv_w=""
+#siz=0
+
+#for key, value in datakun.items():
+    #sr1=str(key)+'\n'
+    #sr2=str(value)+'\n'
+    #nk_w+=sr1
+    #nv_w+=sr2
+    #if siz % 1000 == 0:
+        #with open("nextkey.txt", mode="a", encoding="utf-8") as f:
+            #f.write(nk_w)
+        #with open("nextvalue.txt", mode="a", encoding="utf-8") as f:
+            #f.write(nv_w)
+        #nk_w=""
+        
+    #siz+=1
 
 ok=0
 ng=0
@@ -521,9 +693,10 @@ mode=""
 print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 
 mode=input()
+#mode="3"
 
 if mode=="3":
-    PROBLEM=90
+    PROBLEM=116
 else:
     PROBLEM=1
 
@@ -568,7 +741,26 @@ def quiz_solve(loop,o,add,q):
     quiz=quiz3
     if len(add)>0:
         quiz+=add
-    quiz2 = quiz.split()
+    #quiz2 = quiz.split()
+    dc = nlp(quiz.lower())
+    tokens = [e for e in dc]
+    q5=""
+
+    for i in range(len(tokens)):
+        if str(tokens[i]) in lema:
+            if is_sp(str(tokens[i]))>0:
+                q5+=" "+lema[str(tokens[i])]+" "
+            else:
+                q5+=lema[str(tokens[i])]+" "
+        else:
+            ad=str(tokens[i].lemma_)
+            lema[str(tokens[i])]=ad
+            if is_sp(str(ad))>0:
+                q5+=" "+ad+" "
+            else:
+                q5+=ad+" "
+
+    quiz2=q5.split()
 
     #for i in range(len(quiz2)):
         #quiz2[i]=str(quiz2[i]).lower()
@@ -607,6 +799,25 @@ def quiz_solve(loop,o,add,q):
     include=dict()
 
     printed = [False] * 15
+
+    ngram = dict()
+
+    for k1 in range(len(quiz2)):
+        if k1+2 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])+str(quiz2[k1+2])
+            ngram[str(kt).lower()]=1
+
+    for k1 in range(len(quiz2)):
+        if k1+1 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])
+            ngram[str(kt).lower()]=1
+            
+    #for ib in range(len(quiz2)):
+        #if ib > 4:
+            #break
+        #if str(quiz2[ib]) in NoAns:
+            #if NoAns[str(quiz2[ib])] <= TABOO:
+                #print("type="+str(quiz2[ib]))
 
     for xx in range(counter-1):
         per=xx/(counter+1)
@@ -683,7 +894,9 @@ def quiz_solve(loop,o,add,q):
         if xx == counter-2:
             print("complete")
         sum=1.0
-        if NoAns[train_num[xx+1]] > TABOO:
+        if len(train_num[xx+1])==0:
+            continue
+        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water":
             continue
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
@@ -691,6 +904,10 @@ def quiz_solve(loop,o,add,q):
             sum=float(pow(2,maxhit-1))
             #if str(train_num[xx+1])=="IrreversibleProcess":
                 #print("sum="+str(sum))
+        strl=str(train_num[xx+1]).lower()
+        if strl in ngram:
+            sum=1.0
+            continue
         for xxx in quiz2:
             cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
@@ -722,14 +939,14 @@ def quiz_solve(loop,o,add,q):
                     weight=3.0
                 sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
                 if NoAns[xxx] > TABOO:
-                    if xxx != "water":
-                        sum/=(weight*datakun[tmp2])#float(datakun[tmp2]+cnt)   
+                    if str(xxx).lower() != "water":
+                        sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
                 if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
                     sum*=3.0
                 #else:
-                    #if str(train_num[xx+1])=="MortalityRate":
+                    #if str(train_num[xx+1])=="Neanderthal":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="MortalityRate":
+                #if str(train_num[xx+1])=="Apostrophe":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Metaphysics":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -764,11 +981,12 @@ def quiz_solve(loop,o,add,q):
     print(g)
     ans_ja=""
     if y_all[0] < 1.01:
-        ans="Unknown"    
+        ans="Unknown"
     try:
         ans_ja = translator.translate(str(ans), src='en', dest='ja').text
     except Exception:
         pass
+        
     print("Answer_ja:"+ans_ja)    
     print("Answer_en:"+str(ans))
     if mode == "3":
@@ -786,13 +1004,13 @@ def quiz_solve(loop,o,add,q):
             print("Truth:"+str(truth))
     score=maxsum/(len(quiz2)+1)
     print("Score:"+'{:.3f}'.format(score))
-    if score < 1.0:
+    if score < 100.0:
         print("Eval:F") 
     else:
-        if score < 10.0:
+        if score < 10000.0:
             print("Eval:C")
         else:
-            if score < 100.0:
+            if score < 1000000.0:
                 print("Eval:A")
             else:
                 if mode=="4":
@@ -812,6 +1030,24 @@ def quiz_solve(loop,o,add,q):
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
     print("Docs:"+str(docs))
+    query1=quiz.split()
+    query2=quiz
+    for ir in range(len(query1)):
+        if str(query1[ir]) in NoAns:
+            if NoAns[str(query1[ir])] > TABOO:
+               query2=query2.replace(str(query1[ir]),"") 
+    try:
+        results = googlesearch.search(query2, num_results=5)
+        for url in results:
+            if "wikipedia" in url:
+                s_en=str(get_ansi(url))
+                s_ja = translator.translate(str(get_ansi(url)), src='en', dest='ja').text
+                print("GoogleAnswer_ja:"+str(s_ja))
+                print("GoogleAnswer_en:"+str(s_en))
+                break
+    except Exception:
+        pass        
+    
     if mode=="2":
         plt.figure(figsize= (15,6))
         plt.bar(x_all, y_all)
@@ -849,7 +1085,6 @@ elif mode=="3":
                 print("ReThinking...")
                 o=False
                 add+=" "+str(b)
-
 elif mode=="1":
     o=True
     add=""
