@@ -578,7 +578,7 @@ for l in range(len(meta)):
         if is_sp(strr[k]) > 0:
             strr2+=" "+strr[k]+" "
         else:
-            strr2+=strr[k]
+            strr2+=strr[k]+" "
     
     talk = strr2.split()
 
@@ -725,7 +725,7 @@ def quiz_solve(loop,o,add,q):
         if is_sp(quiz[k]) > 0:
             quiz3+=" "+quiz[k]+" "
         else:
-            quiz3+=quiz[k]
+            quiz3+=quiz[k]+" "
     quiz=quiz3
     if len(add)>0:
         quiz+=add
