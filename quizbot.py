@@ -739,12 +739,13 @@ def quiz_solve(loop,o,add,q):
         else:
             quiz3+=quiz[k]
     quiz=quiz3
-    if len(add)>0:
-        quiz+=add
     #quiz2 = quiz.split()
     dc = nlp(quiz.lower())
     tokens = [e for e in dc]
     q5=""
+    if len(add)>0:
+        quiz+=add+" "
+        q5+=add+" "
 
     for i in range(len(tokens)):
         if str(tokens[i]) in lema:
@@ -1071,7 +1072,7 @@ if mode=="2":
 
 elif mode=="3":
 
-    for l in range(PROBLEM):
+    for l in range(PROBLEM):#koko1
         print("------------------------------------------------------------------")
         print(str("Problem:")+str(l+1)+"/"+str(PROBLEM))
         o=True
