@@ -493,34 +493,34 @@ for l in range(len(meta)):
     reading=True
 
     try:
-        with open('./datakun.txt') as f:
+        with open('./datakun2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
                 val=get_val(str(line))
                 datakun[str(key)]=int(val)
-        with open('./train.txt') as f:
+        with open('./train2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
                 val=get_val(str(line))
                 train[str(key)]=int(val)
                 
-        with open('./train_num.txt') as f:
+        with open('./train_num2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
                 val=get_val(str(line))
                 if str(key)!="54233@":
                     train_num[int(key)]=str(val)
-        with open('./NoAns.txt') as f:
+        with open('./NoAns2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
                 val=get_val(str(line))
                 NoAns[str(key)]=int(val)
                 
-        with open('./counter.txt') as f:
+        with open('./counter2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 counter=int(line)
@@ -728,7 +728,7 @@ def quiz_solve(loop,o,add,q):
             quiz3+=quiz[k]
     quiz=quiz3
     if len(add)>0:
-        quiz+=add
+        quiz+=add+" "
     quiz2 = quiz.split()
 
     #for i in range(len(quiz2)):
