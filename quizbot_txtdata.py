@@ -865,8 +865,8 @@ def quiz_solve(loop,o,add,q):
         sum=1.0
         if len(train_num[xx+1])==0:
             continue
-        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water":
-            continue
+        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1])!="1":
+            continue    
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
         if tmp in datakun:
@@ -915,13 +915,13 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="Neanderthal":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="Apostrophe":
+                #if str(train_num[xx+1])=="1":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Metaphysics":
+                #if str(train_num[xx+1])=="Proton":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Ones'Complement":
+                #if str(train_num[xx+1])=="PortraitofaYoungWoman(BotticelliFrankfurt)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="PhilosophyOfLogic":
+                #if str(train_num[xx+1])=="MonaLisa":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
         dic2[str(train_num[xx+1])]=round(sum,2)
         if sum>maxsum:
