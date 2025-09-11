@@ -897,7 +897,7 @@ def quiz_solve(loop,o,add,q):
         sum=1.0
         if len(train_num[xx+1])==0:
             continue
-        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water":
+        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1])!="1":
             continue
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
