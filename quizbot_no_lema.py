@@ -1,3 +1,4 @@
+
 import math
 import os
 import matplotlib.pyplot as plt
@@ -1019,7 +1020,8 @@ def quiz_solve(loop,o,add,q):
     
     if mode=="2":
         plt.figure(figsize= (15,6))
-        plt.bar(x_all, y_all)
+        plt.barh(x_all, y_all)
+        plt.gca().invert_yaxis()
         plt.show()
 
     return 0,"end"
