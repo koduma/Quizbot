@@ -10,7 +10,7 @@ wrii = ""
 
 for l in range(len(meta)):
     title = meta[l]
-    if l <= 10040:
+    if l < 70000:
         wrii += str(title) + " "
 
 folder = "./getdata"
