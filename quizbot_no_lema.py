@@ -1,4 +1,3 @@
-
 import math
 import os
 import matplotlib.pyplot as plt
@@ -30,13 +29,15 @@ with open("./metadata2.txt") as f:
 
 meta=meta.split()
 
+print(len(meta))
+
 counter=1
 now=[1]
 WA=[]
 
 PROBLEM = 116
-TABOO = 7000
-RARE = 400
+TABOO = 20000
+RARE = 1200
 docs = 0
 
 translator = Translator()
