@@ -30,7 +30,7 @@ with open("./metadata2.txt") as f:
 meta=meta.split()
 
 counter=1
-now=[1]
+now=[]
 WA=[]
 
 PROBLEM = 116
@@ -519,6 +519,8 @@ with open('./counter2.txt') as f:
         counter=int(line)
         train_num[54233]="@"
 
+now.append(counter)
+
 for l in range(len(meta)):
 
     #if ld=='y':
@@ -574,15 +576,21 @@ for l in range(len(meta)):
 
     #for i in range(len(talk)):
         #talk[i]=str(talk[i]).lower()
+
+    new_key=False
+
+    nkey=[]
     
     for x in talk:
         ex=x in train.keys()
         if ex==False:
             train[x]=counter
             train_num[counter]=x
+            nkey.append(counter)
             NoAns[x]=1
             counter=counter+1
             n=counter
+            new_key=True
         else:
             NoAns[x]+=1
     now.append(n)
@@ -619,12 +627,16 @@ for l in range(len(meta)):
 #        data[tmp]+=1
 #    else:
 #        data[tmp]=1
+    #if l % 100 == 0:
+        #print(str(now[l-70000]-1)+","+str(counter-1)+","+str(l)+",new_key="+str(new_key))
+        #for element in nkey:
+            #print(str(train_num[element]))
     
-    for c in range(now[l]-1,counter-1):
+    for c in range(now[l-70000]-1,counter-1):
         for c2 in range(c+1,counter-1):
             tmp = str(train_num[c+1])+","+str(train_num[c2+1])
-            #if train_num[c+1]=="206":
-                #print(tmp)
+            #if l % 100 == 0:
+                #print(str(str(tmp)+"+Title="+str(title)))
             if tmp in datakun:
                 datakun[tmp]+=2#1
             else:
