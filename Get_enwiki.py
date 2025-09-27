@@ -38,7 +38,7 @@ def save_article(title, summary, index):
         except Exception as e:
             print(f"Error saving file {filename}: {e}")
 
-with open('enwiki_namespace_0_13.jsonl') as f:
+with open('enwiki_namespace_0_2.jsonl') as f:
     for line in f:
         counter += 1
         obj = json.loads(line)
