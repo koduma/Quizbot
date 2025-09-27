@@ -10,7 +10,7 @@ wrii = ""
 
 for l in range(len(meta)):
     title = meta[l]
-    if l < 70000:
+    if l < 288245:
         wrii += str(title) + " "
 
 folder = "./getdata"
@@ -19,7 +19,7 @@ for p in os.listdir(folder):
     if os.path.isfile(path):
         p2 = os.path.splitext(p)[0]  # 拡張子除く
         ext = os.path.splitext(p)[1]
-        if p2 in ["sc", "check", "Genmetadata", "metadata", "metadata2"]:
+        if (p2 in ["sc", "check", "Genmetadata", "metadata", "metadata2"]) or ("enwiki-latest-pages-articles-multistream" in p2):
             continue
         if str(ext)!=".txt":
             continue
@@ -33,5 +33,7 @@ for p in os.listdir(folder):
 print("書き込む内容:", wrii)
 with open("metadata2.txt", "w", encoding="utf-8") as f:
     f.write(wrii)    
+with open("./getdata2/metadata2.txt", "w", encoding="utf-8") as f:
+    f.write(wrii)
 with open("./getdata/metadata2.txt", "w", encoding="utf-8") as f:
     f.write(wrii)
