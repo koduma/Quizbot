@@ -36,8 +36,8 @@ now=[1]
 WA=[]
 
 PROBLEM = 116
-TABOO = 20000
-RARE = 1200
+TABOO = 28000
+RARE = 1600
 docs = 0
 
 translator = Translator()
@@ -868,7 +868,9 @@ def quiz_solve(loop,o,add,q):
         if len(train_num[xx+1])==0:
             continue
         if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1])!="1":
-            continue    
+            continue
+        if str(train_num[xx+1])=="Oconahua":
+            continue
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
         if tmp in datakun:
@@ -917,13 +919,13 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="Neanderthal":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="1":
+                #if str(train_num[xx+1])=="IndustrialRevolution":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Proton":
+                #if str(train_num[xx+1])=="TechnologicalUnemployment":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="PortraitofaYoungWoman(BotticelliFrankfurt)":
+                #if str(train_num[xx+1])=="ViralEnvelope":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="MonaLisa":
+                #if str(train_num[xx+1])=="Gandhism":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
         dic2[str(train_num[xx+1])]=round(sum,2)
         if sum>maxsum:
