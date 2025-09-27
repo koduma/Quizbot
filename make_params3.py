@@ -457,7 +457,7 @@ for l in range(len(meta)):
     title=title.upper()
     ex=title in looked
     if ex==True and title!="LATEX":
-        print(title)
+        print(str(title)+","+str(l))
     else:
         looked[title]=1
         
@@ -547,7 +547,7 @@ for l in range(len(meta)):
     
     title = meta[l]
 
-    if l < 70000:
+    if l < 288245:
         continue
     else:
         with open("./getdata/"+title+".txt") as f:
@@ -594,6 +594,19 @@ for l in range(len(meta)):
         else:
             NoAns[x]+=1
     now.append(n)
+
+
+    if str(title).upper() == "1982IRANIANASSEMBLYOFEXPERTSELECTIONINTEHRANPROVINCE":
+        continue
+    if str(title).upper() == "1979IRANIANCONSTITUTIONALASSEMBLYELECTIONINGILANPROVINCE":
+        continue
+    if str(title).upper() == "1979IRANIANCONSTITUTIONALASSEMBLYELECTIONINSISTANANDBALUCHESTANPROVINCE":
+        continue
+    if str(title).upper() == "1979IRANIANCONSTITUTIONALASSEMBLYELECTIONINMARKAZIPROVINCE":
+        continue
+    if str(title).upper() == "ME":
+        continue
+    
     for c in talk:
         tmp5 = str(title)+","+str(c)
         tmp6 = str(c)+","+str(title)
@@ -632,7 +645,7 @@ for l in range(len(meta)):
         #for element in nkey:
             #print(str(train_num[element]))
     
-    for c in range(now[l-70000]-1,counter-1):
+    for c in range(now[l-288245]-1,counter-1):
         for c2 in range(c+1,counter-1):
             tmp = str(train_num[c+1])+","+str(train_num[c2+1])
             #if l % 100 == 0:
