@@ -36,7 +36,7 @@ now=[1]
 WA=[]
 
 PROBLEM = 116
-TABOO = 28000
+TABOO = 15000
 RARE = 1600
 docs = 0
 
@@ -867,7 +867,7 @@ def quiz_solve(loop,o,add,q):
         sum=1.0
         if len(train_num[xx+1])==0:
             continue
-        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1])!="1":
+        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1]).lower()!="1":
             continue
         if str(train_num[xx+1])=="Oconahua":
             continue
@@ -912,7 +912,7 @@ def quiz_solve(loop,o,add,q):
                     weight=3.0
                 sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
                 if NoAns[xxx] > TABOO:
-                    if str(xxx).lower() != "water":
+                    if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
                 if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
                     sum*=3.0
@@ -1002,7 +1002,7 @@ def quiz_solve(loop,o,add,q):
     print("Words:"+str(counter))
     mem = psutil.virtual_memory() 
     print("Mem:"+str(mem.percent))
-    print("Docs:"+str(docs))
+    print("Docs:"+str(len(meta)))
     query1=quiz.split()
     query2=quiz
     for ir in range(len(query1)):
