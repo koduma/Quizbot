@@ -697,7 +697,7 @@ def cheap_score_for_candidate_on_quiz(candidate: str, quiz_tokens):
                 if NoAns[tok] > TABOO:
                     if str(tok).lower() != "water" and str(tok).lower() != "1":
                         score /= (weight * val)
-            if tok in NoAns and NoAns[tok] <= RARE and is_english_word(str(tok)) == 1:
+            if tok in NoAns and NoAns[tok] <= TABOO  and is_english_word(str(tok)) == 1 and str(tok).capitalize()==str(tok):
                 score *= 3.0
     return float(score)
 
@@ -767,7 +767,7 @@ def get_candidate_pool_from_full_eval(quiz, topk=50):
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sumv/=(weight*datakun[tmp2])
-                if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
+                if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                     sumv*=3.0
         dic2[str(train_num[xx+1])]=round(sumv,2)
         if sumv>maxsum:
@@ -859,7 +859,7 @@ def build_full_eval_and_choose(quiz_text):
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sumv/=(weight*datakun[tmp2])
-                if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
+                if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                     sumv*=3.0
         dic2[str(train_num[xx+1])]=round(sumv,2)
         if sumv>maxsum:
@@ -903,7 +903,7 @@ def beam_search_quiz(quiz, depth=2, beam_width=3, candidate_pool_topk=50, child_
     candidates_to_eval = list(beam)  # keep tuples (score, path)
 
     # deeper expansions (depth>=2)
-    for d in range(2, depth):
+    for d in range(2, depth+1):
         expansions = []
         for score_so_far, path in beam:
             for c in pool[:child_topk]:
@@ -1021,7 +1021,7 @@ def quiz_solve(loop,o,add,q):
         # fallback silently to original evaluation if beam fails
         #print("BeamSearch exception:", e)
 
-    depth = 2
+    depth = 1
     beam_width = 3
     cand_pool_topk = 60
     child_topk = 12
@@ -1238,7 +1238,7 @@ def quiz_solve(loop,o,add,q):
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
-                if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
+                if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                     sum*=3.0
                 #else:
                     #if str(train_num[xx+1])=="Neanderthal":
