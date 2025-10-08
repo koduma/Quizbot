@@ -914,19 +914,33 @@ def quiz_solve(loop,o,add,q):
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
-                if NoAns[xxx] <= RARE and is_english_word(str(xxx)) == 1:
+                if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                     sum*=3.0
                 #else:
-                    #if str(train_num[xx+1])=="Neanderthal":
+                    #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1])=="IndustrialRevolution":
+                #if str(train_num[xx+1]).lower()=="abdication":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="TechnologicalUnemployment":
+                #if str(train_num[xx+1]).lower()=="abdicate":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="ViralEnvelope":
+                #if str(train_num[xx+1]).lower()=="abscond":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Gandhism":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))    
+                #if str(train_num[xx+1]).lower()=="aural":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="benevolent":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="buttress":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Happiness":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Safety":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Evidence":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Kayak":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Reason":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx])) 
         dic2[str(train_num[xx+1])]=round(sum,2)
         if sum>maxsum:
             maxsum=sum
