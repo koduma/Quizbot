@@ -1,3 +1,7 @@
+#数学特化型LLM
+#map[過去単語,今単語]学習+ビームサーチ+強化学習
+#source .venv/bin/activate
+
 import math
 import os
 import matplotlib.pyplot as plt
@@ -919,13 +923,13 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="abdication":
+                #if str(train_num[xx+1]).lower()=="whatdoyouwantfromme":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="abdicate":
+                #if str(train_num[xx+1]).lower()=="sea":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="abscond":
+                #if str(train_num[xx+1]).lower()=="cat":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="aural":
+                #if str(train_num[xx+1]).lower()=="workinganimal":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="benevolent":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -1014,15 +1018,13 @@ def quiz_solve(loop,o,add,q):
                             datakun[tp2]=1
                 print("Eval:S")               
     print("Words:"+str(counter))
-    mem = psutil.virtual_memory() 
-    print("Mem:"+str(mem.percent))
+    mem = psutil.virtual_memory()
+    total_gb = mem.total / (1024**3)
+    print("Mem:"+str(mem.percent)+"%"+"/"+str(round(total_gb,2))+"GB")
     print("Docs:"+str(len(meta)))
+    print("Params:"+str(len(datakun)))
     query1=quiz.split()
-    query2=quiz
-    for ir in range(len(query1)):
-        if str(query1[ir]) in NoAns:
-            if NoAns[str(query1[ir])] > TABOO:
-               query2=query2.replace(str(query1[ir]),"") 
+    query2=str(x_all[0])+" "+str(x_all[1])+" "+str(x_all[2])+" "+str(x_all[3])+" "+str(x_all[4]) 
     try:
         results = googlesearch.search(query2, num_results=5)
         for url in results:
