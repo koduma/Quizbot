@@ -923,7 +923,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="whatdoyouwantfromme":
+                #if str(train_num[xx+1]).lower()=="team":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="sea":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -970,6 +970,33 @@ def quiz_solve(loop,o,add,q):
         return -1,str(x_all[0])
     print("Top5:",end="")    
     print(g)
+    for fg in range(5):
+        ht=1.0
+        ctt=-1
+        for xyy in quiz2:
+            tmpz=str(x_all[fg])+","+str(xyy)
+            ctt+=1
+            if tmpz not in datakun:
+                ht/=1.2
+            if tmpz in datakun:
+                wt=1.0
+                if ctt < 5:
+                    wt=3.0
+                ht*=wt*datakun[tmpz]#float(datakun[tmp2]+cnt)
+                if str(xyy) in NoAns:
+                    if NoAns[str(xyy)] > TABOO:
+                        if str(xyy).lower() != "water" and str(xyy).lower() != "1":
+                            ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
+                    if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
+                        ht*=3.0
+                if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
+                    print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(xyy) in NoAns:
+                    print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(x_all[fg]) in NoAns:
+                    print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
+                else:
+                    print(str(tmpz)+",score="+str(ht))
     ans_ja=""
     if y_all[0] < 1.01:
         ans="Unknown"
