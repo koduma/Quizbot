@@ -884,7 +884,7 @@ def quiz_solve(loop,o,add,q):
         strl=str(train_num[xx+1]).lower()
         if strl in ngram:
             sum=1.0
-            continue
+            continue    
         for xxx in quiz2:
             cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
@@ -919,7 +919,7 @@ def quiz_solve(loop,o,add,q):
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
                 if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
-                    sum*=3.0
+                    sum*=3.0    
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
@@ -970,6 +970,7 @@ def quiz_solve(loop,o,add,q):
         return -1,str(x_all[0])
     print("Top5:",end="")    
     print(g)
+    take=0.0
     for fg in range(5):
         ht=1.0
         ctt=-1
@@ -983,12 +984,17 @@ def quiz_solve(loop,o,add,q):
                 if ctt < 5:
                     wt=3.0
                 ht*=wt*datakun[tmpz]#float(datakun[tmp2]+cnt)
+                hr=True
                 if str(xyy) in NoAns:
                     if NoAns[str(xyy)] > TABOO:
                         if str(xyy).lower() != "water" and str(xyy).lower() != "1":
                             ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
+                            if fg == 0:
+                                hr=False                
                     if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
                         ht*=3.0
+                if fg == 0 and hr==True and (str(xyy) in NoAns):
+                    take+=1.0
                 if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
                     print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
                 elif str(xyy) in NoAns:
@@ -1020,15 +1026,20 @@ def quiz_solve(loop,o,add,q):
             ng+=1
             print("State:WA")
             print("Truth:"+str(truth))
-    score=maxsum/(len(quiz2)+1)
+    divd=1.0
+    for kd in range(len(quiz2)):
+        if str(quiz2[kd]) in NoAns:
+            if NoAns[str(quiz2[kd])] <= TABOO:
+                divd+=1.0
+    score=take/divd
     print("Score:"+'{:.3f}'.format(score))
-    if score < 100.0:
+    if score < 0.5:
         print("Eval:F") 
     else:
-        if score < 10000.0:
+        if score < 0.7:
             print("Eval:C")
         else:
-            if score < 1000000.0:
+            if score < 0.8:
                 print("Eval:A")
             else:
                 if mode=="4":
