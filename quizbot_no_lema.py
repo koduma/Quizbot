@@ -1029,11 +1029,13 @@ def quiz_solve(loop,o,add,q):
             ng+=1
             print("State:WA")
             print("Truth:"+str(truth))
-    divd=1.0
+    divd=0.0
     for kd in range(len(quiz2)):
         if str(quiz2[kd]) in NoAns:
             if NoAns[str(quiz2[kd])] <= TABOO:
                 divd+=1.0
+    if divd < 0.1:
+        divd=1.0
     score=take/divd
     print("Score:"+'{:.3f}'.format(score))
     if score < 0.5:
