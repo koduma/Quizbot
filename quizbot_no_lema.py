@@ -1,7 +1,6 @@
 #数学特化型LLM
 #map[過去単語,今単語]学習+ビームサーチ+強化学習
 #source .venv/bin/activate
-
 import math
 import os
 import matplotlib.pyplot as plt
@@ -915,6 +914,10 @@ def quiz_solve(loop,o,add,q):
                 if cnt < 5:
                     weight=3.0
                 sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
+                if xxx not in NoAns:
+                    if is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
+                        sum*=3.0
+                    continue
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
