@@ -999,9 +999,11 @@ def quiz_solve(loop,o,add,q):
                 if fg == 0 and hr==True and (str(xyy) in NoAns):
                     take+=1.0
                 if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
-                    print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
+                    if NoAns[str(xyy)] <= TABOO:
+                        print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
                 elif str(xyy) in NoAns:
-                    print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
+                    if NoAns[str(xyy)] <= TABOO:
+                        print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
                 elif str(x_all[fg]) in NoAns:
                     print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
                 else:
