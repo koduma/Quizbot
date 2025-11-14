@@ -1,3 +1,4 @@
+
 #数学特化型LLM
 #map[過去単語,今単語]学習+ビームサーチ+強化学習
 #source .venv/bin/activate
@@ -999,7 +1000,8 @@ def quiz_solve(loop,o,add,q):
                     if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
                         ht*=3.0
                 if fg == 0 and hr==True and (str(xyy) in NoAns):
-                    take+=1.0
+                    if NoAns[str(xyy)] <= TABOO:
+                        take+=1.0
                 if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
                     if NoAns[str(xyy)] <= TABOO:
                         print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
