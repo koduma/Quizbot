@@ -89,17 +89,41 @@ def get_wikipedia_intro(url: str) -> str:
             "redirects": 1
         }
         try:
-            response = requests.get(endpoint, params=params, headers=headers, timeout=3) # タイムアウト短めに
-            if response.status_code != 200: return None
+            # endpointとheadersは外側のget_wikipedia_intro関数のスコープからアクセスされる
+            response = requests.get(endpoint, params=params, headers=headers, timeout=5) # タイムアウトを3秒から5秒に変更 (安定性のため)
+            
+            if response.status_code != 200:
+                return None
+                
             data = response.json()
             pages = data.get("query", {}).get("pages", {})
-            if "-1" in pages: return None
+            
+            # "-1" はページが存在しない場合のID
+            if "-1" in pages:
+                return None
+                
             for page_id, page in pages.items():
                 if "extract" in page and page["extract"]:
-                    return page["extract"].strip()
+                    text = page["extract"].strip()
+
+                    # ======================================================
+                    # 曖昧さ回避ページの門番ロジック (Disambiguation Check)
+                    # ======================================================
+                    # テキストの最初の300文字をチェック（冒頭文の解析）
+                    check_text = text[:300].lower()
+                    
+                    if "may refer to:" in check_text or "may also refer to:" in check_text or "refer to several things" in check_text:
+                        # 曖昧さ回避ページ（SNS, Auなど）と判断し、Noneを返す
+                        return None
+                    # ======================================================
+                    
+                    return text
+        
         except Exception:
+            # ネットワークエラー、JSON解析エラーなど
             return None
-        return None
+        
+        return None # ページIDはあるが extract が空の場合などに備えて、念のためNoneを返す
 
     # --- Step 1: そのままトライ ---
     text = fetch_text_by_title(title)
@@ -1200,7 +1224,7 @@ def quiz_solve(loop,o,add,q):
                         print(str(tmpz)+",score="+str(ht))
     ans_ja=""
     if calc_flag==False:
-        final_results = apply_rrf([g, rt, rt2, rt3], weights=[5.0, 0.5, 2.0, 1.0], k=60)
+        final_results = apply_rrf([g, rt, rt2, rt3], weights=[10.0, 0.5, 2.0, 1.0], k=60)
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
             print(f"{rank}. {word} (Score: {score:.5f})")
