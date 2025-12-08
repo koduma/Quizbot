@@ -17,6 +17,8 @@ from sympy import sympify, Eq, solve
 import googlesearch
 import requests
 from bs4 import BeautifulSoup
+from rank_bm25 import BM25Okapi
+import string
 
 strr=""
 meta=""
@@ -64,27 +66,94 @@ def get_ansi(tk):
     return fret
 
 def get_wikipedia_intro(url: str) -> str:
-    title = url.rsplit('/', 1)[-1]
+    # 1. 入力の正規化
+    if "wikipedia.org" in url:
+        title = url.rsplit('/', 1)[-1]
+    else:
+        title = url
 
     endpoint = "https://en.wikipedia.org/w/api.php"
-
-    params = {
-        "action": "query",
-        "format": "json",
-        "prop": "extracts",
-        "exintro": True,
-        "explaintext": True,
-        "titles": title,
-        "redirects": 1
+    headers = {
+        "User-Agent": "QuizBot/2.1 (your_email@example.com)" 
     }
 
-    response = requests.get(endpoint, params=params)
-    data = response.json()
+    # --- 内部関数: 指定タイトルでテキスト取得 ---
+    def fetch_text_by_title(target_title):
+        params = {
+            "action": "query",
+            "format": "json",
+            "prop": "extracts",
+            "exintro": True,
+            "explaintext": True,
+            "titles": target_title,
+            "redirects": 1
+        }
+        try:
+            response = requests.get(endpoint, params=params, headers=headers, timeout=3) # タイムアウト短めに
+            if response.status_code != 200: return None
+            data = response.json()
+            pages = data.get("query", {}).get("pages", {})
+            if "-1" in pages: return None
+            for page_id, page in pages.items():
+                if "extract" in page and page["extract"]:
+                    return page["extract"].strip()
+        except Exception:
+            return None
+        return None
 
-    pages = data.get("query", {}).get("pages", {})
-    for page_id, page in pages.items():
-        if "extract" in page:
-            return page["extract"].strip()
+    # --- Step 1: そのままトライ ---
+    text = fetch_text_by_title(title)
+    if text: return text
+
+    # --- Step 2: CamelCase分割 & 一般的な連結語の分割 ---
+    # "ElonMusk" -> "Elon Musk"
+    split_title = re.sub(r'(?<!^)(?=[A-Z])', ' ', title)
+    # "Listofvideogames" -> "List of video games" 対策 (簡易版)
+    # 一般的な接続詞の周りに強制的にスペースを入れる
+    split_title = re.sub(r'(of|the|vs|and|feat)', r' \1 ', split_title, flags=re.IGNORECASE)
+    
+    if split_title != title:
+        text = fetch_text_by_title(split_title.strip())
+        if text: return text
+
+    # --- Step 3: Wikipedia Search API ---
+    # Wikipedia内の検索機能を使う
+    try:
+        search_params = {
+            "action": "query", "format": "json", "list": "search",
+            "srsearch": title, "srlimit": 1
+        }
+        search_resp = requests.get(endpoint, params=search_params, headers=headers, timeout=3)
+        search_results = search_resp.json().get("query", {}).get("search", [])
+        if search_results:
+            text = fetch_text_by_title(search_results[0]["title"])
+            if text: return text
+    except Exception:
+        pass
+
+    # --- Step 4: Google Search Fallback (最終手段) ---
+    # "Listofvideogames..." のような難物はGoogleに聞くのが一番早い
+    try:
+        # "site:en.wikipedia.org" をつけて検索
+        query = f"site:en.wikipedia.org {title}"
+        # google検索は外部ライブラリ依存なのでtryで囲む
+        results = googlesearch.search(query, num_results=1)
+        
+        for result_url in results:
+            if "wikipedia.org/wiki/" in result_url:
+                # URLからタイトルを抽出 (例: .../wiki/Elon_Musk -> Elon_Musk)
+                new_title = result_url.split("/wiki/")[-1]
+                # URLデコード (例えば %20 をスペースに戻すなど)
+                new_title = requests.utils.unquote(new_title)
+                
+                print(f"Google Fallback: {title} -> {new_title}") # 動作確認用ログ
+                text = fetch_text_by_title(new_title)
+                if text: return text
+    except Exception as e:
+        # Google検索のエラー（レートリミットなど）は無視してNoneを返す
+        # print(f"Google Search Error: {e}") 
+        pass
+
     return None
 
 def is_english_word(text):
@@ -495,6 +564,73 @@ def get_val(s):
     for i in range(pos+1,len(s)):
         val+=str(s[i])
     return val
+
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    words = text.split()
+    meaningful_words = []
+    for w in words:
+        if NoAns.get(w, 0) >= TABOO:
+            continue
+        meaningful_words.append(w)
+        
+    return meaningful_words
+
+def calculate_jaccard(s, t):
+    words_s = set(preprocess_text(s))
+    words_t = set(preprocess_text(t))
+    
+    if len(words_s) == 0 or len(words_t) == 0:
+        return 0.0
+        
+    intersection = words_s & words_t
+    union = words_s | words_t
+    score = len(intersection) / len(union)
+    
+    return score
+
+def calculate_order_score(s, t):
+    words_s = preprocess_text(s)
+    words_t = preprocess_text(t)
+    score=1.0
+    tx=0
+    for i in range(len(words_s)):
+        hit=False
+        for j in range(len(words_t)):
+            if str(words_s[i])==str(words_t[j]):
+                score*=float(abs(i-j))+1.0
+                tx+=1
+                hit=True
+                break
+        if hit == False:
+            score*=100.0
+    if tx==0:
+        return 0.0
+    return 1.0/score
+
+def apply_rrf(rankings_lists, weights=None, k=60):
+    """
+    rankings_lists: [BoWリスト, Jaccardリスト, Orderリスト, BM25リスト]
+    weights: [BoW重み, Jaccard重み, Order重み, BM25重み]
+    """
+    rrf_scores = {}
+    
+    if weights is None:
+        weights = [1.0] * len(rankings_lists)
+    
+    for rank_list, weight in zip(rankings_lists, weights):
+        for i, (word, score) in enumerate(rank_list):
+            rank = i + 1
+            if word not in rrf_scores:
+                rrf_scores[word] = 0.0
+            
+            # 重みをランクスコアに掛ける
+            # weightが高い指標（BoWなど）の上位にある単語ほどスコアが跳ね上がる
+            rrf_scores[word] += weight * (1.0 / (k + rank))
+            
+    final_ranking = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    return final_ranking
 
 for l in range(len(meta)):
 
@@ -958,6 +1094,7 @@ def quiz_solve(loop,o,add,q):
     tmp_quiz=quiz        
     tmp_quiz2=fix_expression(tmp_quiz)
     i1,i2=calculator(tmp_quiz2)
+    calc_flag = False
     #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
     if i1>=2:
         sco=0.0
@@ -970,51 +1107,107 @@ def quiz_solve(loop,o,add,q):
         if sco>maxsum:
             maxsum=round(sco,2)
             ans=str(i2)
-    g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:5]
+            calc_flag = True
+    g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:15]
     x_all, y_all = zip(*g)
     if str(x_all[0]) in include:
         return -1,str(x_all[0])
-    print("Top5:",end="")    
-    print(g)
-    take=0.0
-    for fg in range(5):
-        ht=1.0
-        ctt=-1
-        for xyy in quiz2:
-            tmpz=str(x_all[fg])+","+str(xyy)
-            ctt+=1
-            if tmpz not in datakun:
-                ht/=1.2
-            if tmpz in datakun:
-                wt=1.0
-                if ctt < 5:
-                    wt=3.0
-                ht*=wt*datakun[tmpz]#float(datakun[tmp2]+cnt)
-                hr=True
-                if str(xyy) in NoAns:
-                    if NoAns[str(xyy)] > TABOO:
-                        if str(xyy).lower() != "water" and str(xyy).lower() != "1":
-                            ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
-                            if fg == 0:
+    if calc_flag==False:
+        print("\n")
+        print("BoW_Top5:",end="")
+        print(g[:5])
+        candidate_texts = []
+        valid_candidates = []
+        
+        for cxt in range(15):
+            word = str(x_all[cxt])
+            wiki_text = get_wikipedia_intro(word)
+            
+            if wiki_text is None:
+                wiki_text = ""
+            
+            candidate_texts.append(wiki_text)
+            valid_candidates.append(word)
+            
+        tokenized_corpus = [preprocess_text(doc) for doc in candidate_texts]
+        tokenized_query = preprocess_text(quiz)
+        bm25 = BM25Okapi(tokenized_corpus)
+        bm25_scores = bm25.get_scores(tokenized_query)
+        
+        jaccard_rank = dict()
+        order_rank = dict()
+        bm25_rank = dict()
+        
+        for i in range(15):
+            word = valid_candidates[i]
+            text = candidate_texts[i]
+            
+            cok = calculate_jaccard(str(quiz), str(text))
+            jaccard_rank[word] = cok
+            
+            bok = calculate_order_score(str(quiz), str(text))
+            order_rank[word] = bok
+            bm25_rank[word] = bm25_scores[i]
+            
+        rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+        rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+        rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+        
+        print("Jaccard_Top5:",end="")
+        print(rt[:5])
+        print("Order_Top5:",end="")
+        print(rt2[:5])
+        print("BM25_Top5:",end="")
+        print(rt3[:5])
+        print("\n")
+        take=dict()
+        for fg in range(15):
+            ht=1.0
+            ctt=-1
+            for xyy in quiz2:
+                tmpz=str(x_all[fg])+","+str(xyy)
+                ctt+=1
+                if tmpz not in datakun:
+                    ht/=1.2
+                if tmpz in datakun:
+                    wt=1.0
+                    if ctt < 5:
+                        wt=3.0
+                    ht*=wt*datakun[tmpz]
+                    hr=True
+                    if str(xyy) in NoAns:
+                        if NoAns[str(xyy)] > TABOO:
+                            if str(xyy).lower() != "water" and str(xyy).lower() != "1":
+                                ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
                                 hr=False                
-                    if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
-                        ht*=3.0
-                if fg == 0 and hr==True and (str(xyy) in NoAns):
-                    if NoAns[str(xyy)] <= TABOO:
-                        take+=1.0
-                if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
-                    if NoAns[str(xyy)] <= TABOO:
-                        print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
-                elif str(xyy) in NoAns:
-                    if NoAns[str(xyy)] <= TABOO:
-                        print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
-                elif str(x_all[fg]) in NoAns:
-                    print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
-                else:
-                    print(str(tmpz)+",score="+str(ht))
+                        if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
+                            ht*=3.0
+                    if hr==True and (str(xyy) in NoAns):
+                        if NoAns[str(xyy)] <= TABOO:
+                            if str(x_all[fg]) in take:
+                                take[str(x_all[fg])]+=1.0
+                            else:
+                                take[str(x_all[fg])]=1.0
+                    if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
+                        if NoAns[str(xyy)] <= TABOO:
+                            print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
+                    elif str(xyy) in NoAns:
+                        if NoAns[str(xyy)] <= TABOO:
+                            print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
+                    elif str(x_all[fg]) in NoAns:
+                        print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
+                    else:
+                        print(str(tmpz)+",score="+str(ht))
     ans_ja=""
-    if y_all[0] < 1.01:
-        ans="Unknown"
+    if calc_flag==False:
+        final_results = apply_rrf([g, rt, rt2, rt3], weights=[5.0, 0.5, 2.0, 1.0], k=60)
+        print("Final RRF Ranking:")
+        for rank, (word, score) in enumerate(final_results, 1):
+            print(f"{rank}. {word} (Score: {score:.5f})")
+        if final_results:
+            ans = final_results[0][0]
+            if y_all[0] < 1.01:
+                ans="Unknown"
     try:
         ans_ja = translator.translate(str(ans), src='en', dest='ja').text
     except Exception:
@@ -1042,8 +1235,11 @@ def quiz_solve(loop,o,add,q):
                 divd+=1.0
     if divd < 0.1:
         divd=1.0
-    score=take/divd
-    print("Score:"+'{:.3f}'.format(score))
+    if str(ans) in take:
+        score=take[str(ans)]/divd
+    else:
+        score=0.0
+    print("Confidence:"+'{:.3f}'.format(score))
     if score < 0.5:
         print("Eval:F") 
     else:
