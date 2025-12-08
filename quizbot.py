@@ -1225,6 +1225,7 @@ def quiz_solve(loop,o,add,q):
     ans_ja=""
     if calc_flag==False:
         final_results = apply_rrf([g, rt, rt2, rt3], weights=[10.0, 0.5, 2.0, 1.0], k=60)
+        print("\n")
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
             print(f"{rank}. {word} (Score: {score:.5f})")
@@ -1232,6 +1233,7 @@ def quiz_solve(loop,o,add,q):
             ans = final_results[0][0]
             if y_all[0] < 1.01:
                 ans="Unknown"
+        print("\n")
     try:
         ans_ja = translator.translate(str(ans), src='en', dest='ja').text
     except Exception:
