@@ -1136,109 +1136,107 @@ def quiz_solve(loop,o,add,q):
     x_all, y_all = zip(*g)
     if str(x_all[0]) in include:
         return -1,str(x_all[0])
-    if calc_flag==False:
-        print("\n")
-        print("BoW_Top5:",end="")
-        print(g[:5])
-        candidate_texts = []
-        valid_candidates = []
+    print("\n")
+    print("BoW_Top5:",end="")
+    print(g[:5])
+    candidate_texts = []
+    valid_candidates = []
         
-        for cxt in range(15):
-            word = str(x_all[cxt])
-            wiki_text = get_wikipedia_intro(word)
+    for cxt in range(15):
+        word = str(x_all[cxt])
+        wiki_text = get_wikipedia_intro(word)
             
-            if wiki_text is None:
-                wiki_text = ""
+        if wiki_text is None:
+            wiki_text = ""
             
-            candidate_texts.append(wiki_text)
-            valid_candidates.append(word)
+        candidate_texts.append(wiki_text)
+        valid_candidates.append(word)
             
-        tokenized_corpus = [preprocess_text(doc) for doc in candidate_texts]
-        tokenized_query = preprocess_text(quiz)
-        bm25 = BM25Okapi(tokenized_corpus)
-        bm25_scores = bm25.get_scores(tokenized_query)
+    tokenized_corpus = [preprocess_text(doc) for doc in candidate_texts]
+    tokenized_query = preprocess_text(quiz)
+    bm25 = BM25Okapi(tokenized_corpus)
+    bm25_scores = bm25.get_scores(tokenized_query)
         
-        jaccard_rank = dict()
-        order_rank = dict()
-        bm25_rank = dict()
+    jaccard_rank = dict()
+    order_rank = dict()
+    bm25_rank = dict()
         
-        for i in range(15):
-            word = valid_candidates[i]
-            text = candidate_texts[i]
+    for i in range(15):
+        word = valid_candidates[i]
+        text = candidate_texts[i]
             
-            cok = calculate_jaccard(str(quiz), str(text))
-            jaccard_rank[word] = cok
+        cok = calculate_jaccard(str(quiz), str(text))
+        jaccard_rank[word] = cok
             
-            bok = calculate_order_score(str(quiz), str(text))
-            order_rank[word] = bok
-            bm25_rank[word] = bm25_scores[i]
+        bok = calculate_order_score(str(quiz), str(text))
+        order_rank[word] = bok
+        bm25_rank[word] = bm25_scores[i]
             
-        rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:15]
-        rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
-        rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+    rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+    rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+    rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
         
-        print("Jaccard_Top5:",end="")
-        print(rt[:5])
-        print("Order_Top5:",end="")
-        print(rt2[:5])
-        print("BM25_Top5:",end="")
-        print(rt3[:5])
-        print("\n")
-        take=dict()
-        for fg in range(15):
-            ht=1.0
-            ctt=-1
-            for xyy in quiz2:
-                tmpz=str(x_all[fg])+","+str(xyy)
-                ctt+=1
-                if tmpz not in datakun:
-                    ht/=1.2
-                if tmpz in datakun:
-                    wt=1.0
-                    if ctt < 5:
-                        wt=3.0
-                    ht*=wt*datakun[tmpz]
-                    hr=True
-                    if str(xyy) in NoAns:
-                        if NoAns[str(xyy)] > TABOO:
-                            if str(xyy).lower() != "water" and str(xyy).lower() != "1":
-                                ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
-                                hr=False                
-                        if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
-                            ht*=3.0
-                    if hr==True and (str(xyy) in NoAns):
-                        if NoAns[str(xyy)] <= TABOO:
-                            if str(x_all[fg]) in take:
-                                take[str(x_all[fg])]+=1.0
-                            else:
-                                take[str(x_all[fg])]=1.0
-                    if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
-                        if NoAns[str(xyy)] <= TABOO:
-                            print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
-                    elif str(xyy) in NoAns:
-                        if NoAns[str(xyy)] <= TABOO:
-                            print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
-                    elif str(x_all[fg]) in NoAns:
-                        print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
-                    else:
-                        print(str(tmpz)+",score="+str(ht))
+    print("Jaccard_Top5:",end="")
+    print(rt[:5])
+    print("Order_Top5:",end="")
+    print(rt2[:5])
+    print("BM25_Top5:",end="")
+    print(rt3[:5])
+    print("\n")
+    take=dict()
+    for fg in range(15):
+        ht=1.0
+        ctt=-1
+        for xyy in quiz2:
+            tmpz=str(x_all[fg])+","+str(xyy)
+            ctt+=1
+            if tmpz not in datakun:
+                ht/=1.2
+            if tmpz in datakun:
+                wt=1.0
+                if ctt < 5:
+                    wt=3.0
+                ht*=wt*datakun[tmpz]
+                hr=True
+                if str(xyy) in NoAns:
+                    if NoAns[str(xyy)] > TABOO:
+                        if str(xyy).lower() != "water" and str(xyy).lower() != "1":
+                            ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
+                            hr=False                
+                    if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
+                        ht*=3.0
+                if hr==True and (str(xyy) in NoAns):
+                    if NoAns[str(xyy)] <= TABOO:
+                        if str(x_all[fg]) in take:
+                            take[str(x_all[fg])]+=1.0
+                        else:
+                            take[str(x_all[fg])]=1.0
+                if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
+                    if NoAns[str(xyy)] <= TABOO:
+                        print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(xyy) in NoAns:
+                    if NoAns[str(xyy)] <= TABOO:
+                        print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(x_all[fg]) in NoAns:
+                    print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
+                else:
+                    print(str(tmpz)+",score="+str(ht))
     ans_ja=""
     if calc_flag==False:
-        final_results = apply_rrf([g, rt, rt2, rt3], weights=[10.0, 0.5, 2.0, 1.0], k=60)
+        final_results = apply_rrf([g, rt, rt2, rt3], weights=[10.0, 0.1, 0.1, 0.1], k=60)
         print("\n")
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
             print(f"{rank}. {word} (Score: {score:.5f})")
-        if final_results:
-            ans = final_results[0][0]
-            if y_all[0] < 1.01:
-                ans="Unknown"
-        print("\n")
+            if final_results:
+                ans = final_results[0][0]
+                if y_all[0] < 1.01:
+                    ans="Unknown"
     try:
         ans_ja = translator.translate(str(ans), src='en', dest='ja').text
     except Exception:
         pass
-        
+    print("\n")    
     print("Answer_ja:"+ans_ja)    
     print("Answer_en:"+str(ans))
     if mode == "3":
@@ -1255,6 +1253,7 @@ def quiz_solve(loop,o,add,q):
             print("State:WA")
             print("Truth:"+str(truth))
     divd=0.0
+    sz=0.0
     for kd in range(len(quiz2)):
         if str(quiz2[kd]) in NoAns:
             if NoAns[str(quiz2[kd])] <= TABOO:
@@ -1262,17 +1261,19 @@ def quiz_solve(loop,o,add,q):
     if divd < 0.1:
         divd=1.0
     if str(ans) in take:
-        score=take[str(ans)]/divd
+        sz=take[str(ans)]/divd
     else:
-        score=0.0
-    print("Confidence:"+'{:.3f}'.format(score))
-    if score < 0.5:
+        sz=0.0
+    if calc_flag ==True:
+        sz=1.0
+    print("Confidence:"+'{:.3f}'.format(sz))
+    if sz < 0.5:
         print("Eval:F") 
     else:
-        if score < 0.7:
+        if sz < 0.7:
             print("Eval:C")
         else:
-            if score < 0.8:
+            if sz < 0.8:
                 print("Eval:A")
             else:
                 if mode=="4":
