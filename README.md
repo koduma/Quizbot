@@ -3,6 +3,7 @@
 ## 単語とその説明文を288245記事収録
 # Quizbot動かす前に、source .venv/bin/activate
 # 新pcに引っ越しするとき
+### ステップ0:旧pcのvenv上で、pip freeze > requirements.txt
 ### ステップ1:mkdir Quizbot
 ### ステップ2:cd Quizbot
 ### ステップ3:requirements.txtをQuizbotに置く
