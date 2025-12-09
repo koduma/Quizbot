@@ -2,7 +2,7 @@
 ## 日本語と英語に対応してます。
 ## 単語とその説明文を280000記事収録
 # Quizbot動かす前に、source .venv/bin/activate
-# 新pcに引っ越し時するとき
+# 新pcに引っ越しするとき
 ### ステップ1:mkdir Quizbot
 ### ステップ2:cd Quizbot
 ### ステップ3:requirements.txtをQuizbotに置く
