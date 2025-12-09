@@ -19,6 +19,9 @@ import requests
 from bs4 import BeautifulSoup
 from rank_bm25 import BM25Okapi
 import string
+import difflib
+from sentence_transformers import SentenceTransformer, util
+import torch
 
 strr=""
 meta=""
@@ -28,6 +31,7 @@ train_num = dict()
 datakun = dict()
 NoAns = dict()
 
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
 with open("./metadata2.txt") as f:
     for line in f:
@@ -614,24 +618,11 @@ def calculate_jaccard(s, t):
     
     return score
 
-def calculate_order_score(s, t):
-    words_s = preprocess_text(s)
-    words_t = preprocess_text(t)
-    score=1.0
-    tx=0
-    for i in range(len(words_s)):
-        hit=False
-        for j in range(len(words_t)):
-            if str(words_s[i])==str(words_t[j]):
-                score*=float(abs(i-j))+1.0
-                tx+=1
-                hit=True
-                break
-        if hit == False:
-            score*=100.0
-    if tx==0:
-        return 0.0
-    return 1.0/score
+def calculate_order_score(s, t):#s=クイズ文文字列,t=enwiki説明文文字列
+    text1 = preprocess_text(s)#リスト化とストップワードカット
+    text2 = preprocess_text(t)
+    matcher = difflib.SequenceMatcher(None, text1, text2)
+    return matcher.ratio()
 
 def apply_rrf(rankings_lists, weights=None, k=60):
     """
@@ -1141,6 +1132,19 @@ def quiz_solve(loop,o,add,q):
     print(g[:5])
     candidate_texts = []
     valid_candidates = []
+    quiz_embedding = model.encode(quiz, convert_to_tensor=True)
+    candidate_embeddings = model.encode(x_all, convert_to_tensor=True) 
+    cosine_scores = util.cos_sim(quiz_embedding, candidate_embeddings)[0]
+    rlts = []
+    for i, sre in enumerate(cosine_scores):
+        rlts.append((x_all[i], sre.item()))
+        
+    rlts.sort(key=lambda x: x[1], reverse=True)
+
+    cos_rank = dict()
+    
+    for name, scol in rlts:
+        cos_rank[str(name)]=scol
         
     for cxt in range(15):
         word = str(x_all[cxt])
@@ -1175,13 +1179,15 @@ def quiz_solve(loop,o,add,q):
     rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:15]
     rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
     rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
-        
+    rt4 = sorted(cos_rank.items(), key=lambda x: x[1], reverse=True)[:15]    
     print("Jaccard_Top5:",end="")
     print(rt[:5])
     print("Order_Top5:",end="")
     print(rt2[:5])
     print("BM25_Top5:",end="")
     print(rt3[:5])
+    print("Cos_Top5:",end="")
+    print(rt4[:5])
     print("\n")
     take=dict()
     for fg in range(15):
@@ -1223,7 +1229,7 @@ def quiz_solve(loop,o,add,q):
                     print(str(tmpz)+",score="+str(ht))
     ans_ja=""
     if calc_flag==False:
-        final_results = apply_rrf([g, rt, rt2, rt3], weights=[10.0, 0.1, 0.1, 0.1], k=60)
+        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1,0.1], k=60)
         print("\n")
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
