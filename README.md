@@ -1,6 +1,6 @@
 # Quizbotです。
 ## 日本語と英語に対応してます。
-## 単語とその説明文を288245記事収録
+## 単語とその説明文を295899記事収録
 # Quizbot動かす前に、source .venv/bin/activate
 # 新pcに引っ越しするとき
 ### ステップ0:旧pcのvenv上で、pip freeze > requirements.txt
