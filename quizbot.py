@@ -1,7 +1,6 @@
-
-#数学特化型LLM
 #map[過去単語,今単語]学習+ビームサーチ+強化学習
 #source .venv/bin/activate
+#venv上でpip install -r requirements.txt
 import math
 import os
 import matplotlib.pyplot as plt
@@ -626,8 +625,8 @@ def calculate_order_score(s, t):#s=クイズ文文字列,t=enwiki説明文文字
 
 def apply_rrf(rankings_lists, weights=None, k=60):
     """
-    rankings_lists: [BoWリスト, Jaccardリスト, Orderリスト, BM25リスト]
-    weights: [BoW重み, Jaccard重み, Order重み, BM25重み]
+    rankings_lists: [BoWリスト, Jaccardリスト, Orderリスト, BM25リスト, SentenceTransformerリスト]
+    weights: [BoW重み, Jaccard重み, Order重み, BM25重み,SentenceTransformer重み]
     """
     rrf_scores = {}
     
