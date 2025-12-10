@@ -6,7 +6,8 @@ import os
 import matplotlib.pyplot as plt
 import psutil
 import Levenshtein
-from googletrans import Translator
+#from googletrans import Translator
+from deep_translator import GoogleTranslator
 import re
 import sys
 import random
@@ -49,7 +50,7 @@ TABOO = 15000
 RARE = 1600
 docs = 0
 
-translator = Translator()
+#translator = Translator()
 
 warnings.simplefilter('ignore')
 
@@ -869,10 +870,12 @@ def quiz_solve(loop,o,add,q):
 
     try:
         if is_ja(quiz) == False:
-            quiz_ja = translator.translate(quiz, src='en', dest='ja').text
+            # src -> source, dest -> target に変わります
+            # .text は不要です
+            quiz_ja = GoogleTranslator(source='en', target='ja').translate(quiz)
         else:
             quiz_ja=quiz
-            quiz=translator.translate(quiz_ja, src='ja', dest='en').text
+            quiz = GoogleTranslator(source='ja', target='en').translate(quiz_ja)
 
     except Exception:
         pass
@@ -1238,7 +1241,7 @@ def quiz_solve(loop,o,add,q):
                 if y_all[0] < 1.01:
                     ans="Unknown"
     try:
-        ans_ja = translator.translate(str(ans), src='en', dest='ja').text
+        ans_ja = GoogleTranslator(source='en', target='ja').translate(str(ans))
     except Exception:
         pass
     print("\n")    
@@ -1307,7 +1310,7 @@ def quiz_solve(loop,o,add,q):
         for url in results:
             if "wikipedia" in url:
                 s_en=str(get_ansi(url))
-                s_ja = translator.translate(str(get_ansi(url)), src='en', dest='ja').text
+                s_ja = GoogleTranslator(source='en', target='ja').translate(str(get_ansi(url)))
                 print("GoogleAnswer_ja:"+str(s_ja))
                 print("GoogleAnswer_en:"+str(s_en))
                 break
