@@ -1,0 +1,1504 @@
+#map[過去単語,今単語]学習+ビームサーチ+強化学習
+#source .venv/bin/activate
+#venv上でpip install -r requirements.txt
+import sqlite3
+import math
+import os
+import matplotlib.pyplot as plt
+import psutil
+import Levenshtein
+#from googletrans import Translator
+from deep_translator import GoogleTranslator
+import re
+import sys
+import random
+import warnings
+import sympy
+from sympy import sympify, Eq, solve
+import googlesearch
+import requests
+from bs4 import BeautifulSoup
+from rank_bm25 import BM25Okapi
+import string
+import difflib
+from sentence_transformers import SentenceTransformer, util
+import torch
+import gc
+from collections import defaultdict
+
+strr=""
+meta=""
+
+train = dict()
+train_num = dict()
+datakun = dict()
+NoAns = dict()
+
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+with open("./metadata2.txt") as f:
+    for line in f:
+        meta=meta+line
+
+meta=meta.split()
+
+print(len(meta))
+
+counter=1
+now=[1]
+WA=[]
+AC_ex=[]
+WA_ex=[]
+
+PROBLEM = 116
+TABOO = 15000
+RARE = 1600
+docs = 0
+
+#translator = Translator()
+
+warnings.simplefilter('ignore')
+
+def get_ansi(tk):
+
+    ret=""
+    if len(tk)>0:
+        for i in range(len(tk)):
+            if tk[len(tk)-i-1]=="/":
+                break
+            ret+=tk[len(tk)-i-1]
+    fret=""
+    if len(ret)>0:
+        for i in range(len(ret)):
+            fret+=ret[len(ret)-i-1]
+        
+    return fret
+
+def get_wikipedia_intro(url: str) -> str:
+    # 1. 入力の正規化
+    if "wikipedia.org" in url:
+        title = url.rsplit('/', 1)[-1]
+    else:
+        title = url
+
+    endpoint = "https://en.wikipedia.org/w/api.php"
+    headers = {
+        "User-Agent": "QuizBot/2.1 (your_email@example.com)" 
+    }
+
+    # --- 内部関数: 指定タイトルでテキスト取得 ---
+    def fetch_text_by_title(target_title):
+        params = {
+            "action": "query",
+            "format": "json",
+            "prop": "extracts",
+            "exintro": True,
+            "explaintext": True,
+            "titles": target_title,
+            "redirects": 1
+        }
+        try:
+            # endpointとheadersは外側のget_wikipedia_intro関数のスコープからアクセスされる
+            response = requests.get(endpoint, params=params, headers=headers, timeout=5) # タイムアウトを3秒から5秒に変更 (安定性のため)
+            
+            if response.status_code != 200:
+                return None
+                
+            data = response.json()
+            pages = data.get("query", {}).get("pages", {})
+            
+            # "-1" はページが存在しない場合のID
+            if "-1" in pages:
+                return None
+                
+            for page_id, page in pages.items():
+                if "extract" in page and page["extract"]:
+                    text = page["extract"].strip()
+
+                    # ======================================================
+                    # 曖昧さ回避ページの門番ロジック (Disambiguation Check)
+                    # ======================================================
+                    # テキストの最初の300文字をチェック（冒頭文の解析）
+                    check_text = text[:300].lower()
+                    
+                    if "may refer to:" in check_text or "may also refer to:" in check_text or "refer to several things" in check_text:
+                        # 曖昧さ回避ページ（SNS, Auなど）と判断し、Noneを返す
+                        return None
+                    # ======================================================
+                    
+                    return text
+        
+        except Exception:
+            # ネットワークエラー、JSON解析エラーなど
+            return None
+        
+        return None # ページIDはあるが extract が空の場合などに備えて、念のためNoneを返す
+
+    # --- Step 1: そのままトライ ---
+    text = fetch_text_by_title(title)
+    if text: return text
+
+    # --- Step 2: CamelCase分割 & 一般的な連結語の分割 ---
+    # "ElonMusk" -> "Elon Musk"
+    split_title = re.sub(r'(?<!^)(?=[A-Z])', ' ', title)
+    # "Listofvideogames" -> "List of video games" 対策 (簡易版)
+    # 一般的な接続詞の周りに強制的にスペースを入れる
+    split_title = re.sub(r'(of|the|vs|and|feat)', r' \1 ', split_title, flags=re.IGNORECASE)
+    
+    if split_title != title:
+        text = fetch_text_by_title(split_title.strip())
+        if text: return text
+
+    # --- Step 3: Wikipedia Search API ---
+    # Wikipedia内の検索機能を使う
+    try:
+        search_params = {
+            "action": "query", "format": "json", "list": "search",
+            "srsearch": title, "srlimit": 1
+        }
+        search_resp = requests.get(endpoint, params=search_params, headers=headers, timeout=3)
+        search_results = search_resp.json().get("query", {}).get("search", [])
+        if search_results:
+            text = fetch_text_by_title(search_results[0]["title"])
+            if text: return text
+    except Exception:
+        pass
+
+    # --- Step 4: Google Search Fallback (最終手段) ---
+    # "Listofvideogames..." のような難物はGoogleに聞くのが一番早い
+    try:
+        # "site:en.wikipedia.org" をつけて検索
+        query = f"site:en.wikipedia.org {title}"
+        # google検索は外部ライブラリ依存なのでtryで囲む
+        results = googlesearch.search(query, num_results=1)
+        
+        for result_url in results:
+            if "wikipedia.org/wiki/" in result_url:
+                # URLからタイトルを抽出 (例: .../wiki/Elon_Musk -> Elon_Musk)
+                new_title = result_url.split("/wiki/")[-1]
+                # URLデコード (例えば %20 をスペースに戻すなど)
+                new_title = requests.utils.unquote(new_title)
+                
+                print(f"Google Fallback: {title} -> {new_title}") # 動作確認用ログ
+                text = fetch_text_by_title(new_title)
+                if text: return text
+    except Exception as e:
+        # Google検索のエラー（レートリミットなど）は無視してNoneを返す
+        # print(f"Google Search Error: {e}") 
+        pass
+
+    return None
+
+def is_english_word(text):
+    if re.fullmatch(r'[a-zA-Z]+', text):
+        return 1
+    elif re.fullmatch(r'[0-9]+', text):
+        return 0
+    else:
+        return 0
+
+def extract_unit(s: str) -> str:
+    pattern = r'\d+(?:\.\d+)?\s*([a-zA-Z]+)'
+    match = re.search(pattern, s)
+    return match.group(1) if match else ""
+
+def fix_expression(s: str) -> str:
+    s = re.sub(r'(\d)\s*\.\s*(\d)', r'\1.\2', s)
+    s = re.sub(r'\s*([*/+\-^])\s*', r'\1', s)
+    s = re.sub(r'(?<!\d)\s*\.\s*(?!\d)', r' . ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    
+    return s
+
+def calculator(s):
+    ev = 0
+    ret = ""
+    ans = None
+
+    
+    safe_globals = {
+        "__builtins__": None,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "log": math.log,
+        "log10": math.log10,
+        "sqrt": math.sqrt,
+        "pi": math.pi,
+        "e": math.e,
+        "abs": abs
+    }
+
+    lower_s = s.lower()
+    lower_s = lower_s.replace('wide', 'width')
+    lower_s = lower_s.replace('high', 'height')
+    lower_s = lower_s.replace('sizes', 'size')
+    lower_s = lower_s.replace('diameters', 'diameter')
+
+    pattern = r"((?:\d+\.\d+)|(?:\d+/\d+)|(?:\d+))(?:\s*(cm|m))?"
+
+    matches = re.findall(pattern, s)
+
+    xx=0
+
+    if all(word in lower_s for word in ["rectangle", "area", "height", "width"]) or all(word in lower_s for word in ["rectangle", "area","size"]):
+        if matches:
+            xx=1
+        
+    if all(word in lower_s for word in ["rectangle", "perimeter", "height", "width"]) or all(word in lower_s for word in ["rectangle", "perimeter", "size"]):
+        if matches:
+            xx=2
+
+    if all(word in lower_s for word in ["circle", "area", "diameter"]):
+        if matches:
+            xx=3
+
+    if all(word in lower_s for word in ["circle", "area", "radius"]):
+        if matches:
+            xx=4
+
+    if all(word in lower_s for word in ["circle", "circumference", "radius"]):
+        if matches:
+            xx=5
+
+    if all(word in lower_s for word in ["circle", "circumference", "diameter"]):
+        if matches:
+            xx=6
+
+    meter=False
+    centimeter=False
+    ls=lower_s.split()
+    for i in range(len(ls)):
+        if ls[i]=='meters':
+            meter=True
+        if ls[i]=='meter':
+            meter=True
+        if ls[i]=='metre':
+            meter=True
+        if ls[i]=='metres':
+            meter=True
+        if ls[i]=='centimeters':
+            centimeter=True
+        if ls[i]=='centimeter':
+            centimeter=True
+        if ls[i]=='centimetre':
+            centimeter=True
+        if ls[i]=='centimetres':
+            centimeter=True 
+    if xx ==1 or xx==2:
+        first_match = matches[0]
+        second_match = matches[1]
+        number1, unit1 = first_match[0], first_match[1]
+        number2, unit2 = second_match[0], second_match[1]
+        n1 = eval(number1, safe_globals, {})
+        n2 = eval(number2, safe_globals, {})
+        number1=float(n1)
+        number2=float(n2)
+        if unit1=='cm':
+            number1=number1/100.0
+        if unit2=='cm':
+            number2=number2/100.0
+        ca=0
+        if xx == 1:
+            ca=number1*number2
+            if meter==True:
+                return len(s), f"{ca} m^2"
+            elif centimeter==True:
+                return len(s), f"{ca*10000.0} cm^2"
+            else:
+                return len(s),f"{ca}"
+        if xx == 2:
+            ca=2.0*(number1+number2)
+            if meter==True:
+                return len(s), f"{ca} m"
+            elif centimeter==True:
+                return len(s), f"{ca*100.0} cm"
+            else:
+                return len(s),f"{ca}"
+    if xx == 3 or xx == 4:            
+        first_match = matches[0]
+        number1, unit1 = first_match[0], first_match[1]
+        n1 = eval(number1, safe_globals, {})
+        number1=float(n1)
+        if unit1=='cm':
+            number1=number1/100.0
+        ca=0    
+        if xx == 3:
+            ca=(1.0/2.0)*(number1)*(1.0/2.0)*(number1)
+        if xx == 4:
+            ca=number1*number1
+        if meter==True:
+            return len(s), f"{ca}π m^2"
+        elif centimeter==True:
+            return len(s), f"{ca*10000.0}π cm^2"
+        else:
+            return len(s),f"{ca}π"
+
+    if xx == 5 or xx == 6:            
+        first_match = matches[0]
+        number1, unit1 = first_match[0], first_match[1]
+        n1 = eval(number1, safe_globals, {})
+        number1=float(n1)
+        if unit1=='cm':
+            number1=number1/100.0
+        ca=0    
+        if xx == 5:
+            ca=2.0*number1
+        if xx == 6:
+            ca=number1
+        if meter==True:
+            return len(s), f"{ca}π m"
+        elif centimeter==True:
+            return len(s), f"{ca*100.0}π cm"
+        else:
+            return len(s),f"{ca}π"
+    
+    #print(s)
+
+    pt=0
+
+    if 'of' in s:
+        s = s.replace('of','*')
+    if 'divisible' in s:
+        s = s.replace('divisible','%')
+        pt=1
+    if 'by' in s:
+        s = s.replace('by',' ')
+    if 'divided' in s:
+        s = s.replace('divided','*1.0/')
+    unit=extract_unit(s)
+    if unit in s and len(unit)>0:
+        s = s.replace(unit,'')
+
+    for i in range(len(s)):
+        st = s[i]
+        for j in range(i+1, len(s)):
+            add=""
+            if s[j]=='%':
+                add="/100.0"
+            else:
+                add=s[j]    
+            st += add    
+            try:
+                if "=" in st:
+                    parts = st.split("=")
+                    if len(parts) != 2:
+                        if ans == None:
+                            ans="False"
+                        continue
+
+                    left_expr = parts[0].strip()
+                    right_expr = parts[1].strip()
+
+                    if not left_expr or not right_expr:
+                        continue
+                        
+                    try:
+                        left_sym = sympify(left_expr)
+                        right_sym = sympify(right_expr)
+                        free_vars = left_sym.free_symbols.union(right_sym.free_symbols)
+                        if not free_vars:
+                            try:
+                                left_val = float(left_sym.evalf())
+                                right_val = float(right_sym.evalf())
+                                if j - i >= ev:
+                                    ev = j - i
+                                    ret = st
+                                    if abs(left_val - right_val) < 1e-9:
+                                        ans = "True"
+                                    else:
+                                        ans = "False"
+                            except Exception:
+                                pass
+                        else:
+                            eq = Eq(left_sym, right_sym)
+                            try:
+                                sol = solve(eq, list(free_vars))
+                                if j - i >= ev:
+                                    ev = j - i
+                                    ret = st
+                                    if isinstance(sol, list):
+                                        ans = sol[0]
+                                    else:
+                                        ans = sol
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    left_val = eval(left_expr, safe_globals, {})
+                    right_val = eval(right_expr, safe_globals, {})
+
+                    if isinstance(left_val, (int, float)) and isinstance(right_val, (int, float)):
+                        #print("l="+str(left_expr)+",r="+str(right_expr))
+                        if abs(left_val - right_val) < 1e-9:
+                            if j - i >= ev:
+                                ev = j - i
+                                ret = st
+                                if ans != "False":
+                                    ans = "True"
+                        else:
+                            if j - i >= ev:
+                                ev = j - i
+                                ret = st
+                                ans = "False"                
+                else:
+                    result = eval(st, safe_globals, {})
+                    if isinstance(result, (int, float, complex)):
+                        #print("st="+str(st)+",result="+str(result)+",j-i="+str(j-i)+",pt="+str(pt))
+                        if j - i >= ev:
+                            ev = j - i
+                            ret = st
+                            if pt==0:
+                                #print(str("st=")+str(st)+",result="+str(result))
+                                ans = result
+                            else:
+                                if result==0:
+                                    ans="True"
+                                else:
+                                    ans="False"
+            except Exception:
+                continue
+
+    ans=str(ans)
+    if len(unit)>0:
+        ans+=str(unit)
+    return ev, ans
+def is_ja(s):
+    return True if re.search(r'[ぁ-んァ-ン]', s) else False
+
+def is_include(s,t):
+    #if s!="SolarSystem":
+        #return False
+    if s not in NoAns or t not in NoAns:
+        #print(str(0)+",s="+s+",t="+t)
+        return False
+    if NoAns[s]>TABOO or NoAns[t]>TABOO:
+        #print(str(1)+",s="+s+",t="+t)
+        return False
+    if (s+","+t) not in datakun or (t+","+s) not in datakun:
+        #print(str(2)+",s="+s+",t="+t)
+        return False        
+    if datakun[s+","+t] >5 or datakun[t+","+s]>5:
+        if len(s)>=len(t):
+            #print(str(3)+",s="+s+",t="+t)
+            return (t.upper() in s.upper())
+        else:
+            #print(str(4)+",s="+s+",t="+t)
+            return (s.upper() in t.upper())
+    #print(str(5)+",s="+s+",t="+t)
+    return False
+
+def is_sp(s):
+
+    sp=0
+    
+    if s == ".":
+        sp=1
+    elif s == ",":
+        sp=1 
+    elif s == "?":
+        sp=1            
+    elif s == '"':
+        sp=1        
+    elif s == "'":
+        sp=1
+    elif s == "[":
+        sp=1
+    elif s == "]":
+        sp=1
+    elif s == "(":
+        sp=1            
+    elif s == ")":
+        sp=1            
+    elif s == ":":
+        sp=1            
+    elif s == ";":
+        sp=1            
+    elif s == "/":
+        sp=1
+    elif s == "!":
+        sp=1
+    elif s == "#":
+        sp=1            
+    elif s == "&":
+        sp=1
+    elif s == "$":
+        sp=1
+    elif s == "%":
+        sp=1
+    elif s == "-":
+        sp=1
+    elif s == "{":
+        sp=1
+    elif s == "}":
+        sp=1
+    elif s=="“":
+        sp=1
+    elif s=="’":
+        sp=1
+    elif s=="”":
+        sp=1
+    elif s==">":
+        sp=1
+    elif s=="<":
+        sp=1
+    elif s=="+":
+        sp=1
+    elif s=="*":
+        sp=1
+    elif s=="|":
+        sp=1
+    elif s=="¥":
+        sp=1
+    elif s=="@":
+        sp=1
+    elif s=="=":
+        sp=1
+    elif s=="^":
+        sp=1
+    elif s=="—":
+        sp=1
+    return sp
+
+looked = dict()
+
+for l in range(len(meta)):
+    title = meta[l]
+    title=title.upper()
+    ex=title in looked
+    if ex==True and title!="LATEX":
+        print(title)
+    else:
+        looked[title]=1
+        
+#sys.exit()
+
+#print("load?(y/n)=",end="")
+#ld=input()
+
+
+def get_key(s):
+    pos=0
+    for i in range(len(s)):
+        if s[i]=="@":
+            pos=i
+    key=""
+    for i in range(pos):
+        key+=str(s[i])
+    return key
+
+def get_val(s):
+    pos=0
+    for i in range(len(s)):
+        if s[i]=="@":
+            pos=i
+    val=""
+    for i in range(pos+1,len(s)):
+        val+=str(s[i])
+    return val
+
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    words = text.split()
+    meaningful_words = []
+    for w in words:
+        if str(w).lower() == "water" or str(w).lower()=="1":    
+            meaningful_words.append(w)
+            continue
+        if str(w)=="Oconahua":
+            continue
+        if NoAns.get(w, 0) > TABOO:
+            continue
+        meaningful_words.append(w)
+        
+    return meaningful_words
+
+def calculate_jaccard(s, t):
+    words_s = set(preprocess_text(s))
+    words_t = set(preprocess_text(t))
+    
+    if len(words_s) == 0 or len(words_t) == 0:
+        return 0.0
+        
+    intersection = words_s & words_t
+    union = words_s | words_t
+    score = len(intersection) / len(union)
+    
+    return score
+
+def calculate_order_score(s, t):#s=クイズ文文字列,t=enwiki説明文文字列
+    text1 = preprocess_text(s)#リスト化とストップワードカット
+    text2 = preprocess_text(t)
+    matcher = difflib.SequenceMatcher(None, text1, text2)
+    return matcher.ratio()
+
+def apply_rrf(rankings_lists, weights=None, k=60):
+    """
+    rankings_lists: [BoWリスト, Jaccardリスト, Orderリスト, BM25リスト, SentenceTransformerリスト]
+    weights: [BoW重み, Jaccard重み, Order重み, BM25重み,SentenceTransformer重み]
+    """
+    rrf_scores = {}
+    
+    if weights is None:
+        weights = [1.0] * len(rankings_lists)
+    
+    for rank_list, weight in zip(rankings_lists, weights):
+        for i, (word, score) in enumerate(rank_list):
+            rank = i + 1
+            if word not in rrf_scores:
+                rrf_scores[word] = 0.0
+            
+            # 重みをランクスコアに掛ける
+            # weightが高い指標（BoWなど）の上位にある単語ほどスコアが跳ね上がる
+            rrf_scores[word] += weight * (1.0 / (k + rank))
+            
+    final_ranking = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    return final_ranking
+
+for l in range(len(meta)):
+
+    reading=True
+
+    try:
+        with open('./datakun2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                datakun[str(key)]=int(val)
+        with open('./train2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                train[str(key)]=int(val)
+                
+        with open('./train_num2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                if str(key)!="54233@":
+                    train_num[int(key)]=str(val)
+        with open('./NoAns2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=get_val(str(line))
+                NoAns[str(key)]=int(val)
+                
+        with open('./counter2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                counter=int(line)
+        train_num[54233]="@"#@が連続しているとget_keyやget_valは間違える
+    
+    except Exception:
+        reading=False
+
+    if reading==True:
+        print("reading_ok")
+        break
+
+    #if ld=='y':
+        #nksize=0
+        #nextkey=[]
+        #nextvalue=[]
+        #try:
+            #with open('./nextkey.txt') as f:
+                #for line in f:
+                    #nksize+=1
+                    #line.rstrip('\n')
+                    #nextkey.append(str(line))
+            #with open('./nextvalue.txt') as f:
+                #for line in f:
+                    #line.rstrip('\n')
+                    #nextvalue.append(str(line))
+            #for i in range(nksize):
+                #datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
+        #except FileNotFoundError:
+            #print("fileNoExist")
+        #break
+
+    strr=""
+    
+    title = meta[l]
+
+    if l<=10040:
+        docs=docs+1
+        with open("./"+title+".txt") as f:
+            for line in f:
+                strr=strr+line
+    elif l<70000:
+        docs=docs+1
+        with open("./getdata/"+title+".txt") as f:
+            for line in f:
+                strr=strr+line
+    else:
+        break
+        
+    if str(title)=="300000kms":
+        title="300000km/s"
+    strr2=""
+
+    for k in range(len(strr)):   
+        if is_sp(strr[k]) > 0:
+            strr2+=" "+strr[k]+" "
+        else:
+            strr2+=strr[k]
+    
+    talk = strr2.split()
+
+    n=0
+
+    train[title]=counter
+    train_num[counter]=title
+    NoAns[title]=0
+    counter+=1
+    n=counter
+
+    #for i in range(len(talk)):
+        #talk[i]=str(talk[i]).lower()
+    
+    for x in talk:
+        ex=x in train.keys()
+        if ex==False:
+            train[x]=counter
+            train_num[counter]=x
+            NoAns[x]=1
+            counter=counter+1
+            n=counter
+        else:
+            NoAns[x]+=1
+    now.append(n)
+    for c in talk:
+        tmp5 = str(title)+","+str(c)
+        tmp6 = str(c)+","+str(title)
+        if tmp5 in datakun:
+            datakun[tmp5]+=4#2
+        else:
+            datakun[tmp5]=4#2
+
+        if tmp6 in datakun:
+            datakun[tmp6]+=4#2
+        else:
+            datakun[tmp6]=4#2
+
+#for c in range(counter-2):
+#    tmp = str(train_num[c+1])+","+str(train_num[c+2])
+#    if tmp in data:
+#        data[tmp]+=1
+#    else:
+#        data[tmp]=1
+    
+    for c in range(now[l]-1,counter-1):
+        for c2 in range(c+1,counter-1):
+            tmp = str(train_num[c+1])+","+str(train_num[c2+1])
+            #if train_num[c+1]=="206":
+                #print(tmp)
+            if tmp in datakun:
+                datakun[tmp]+=2#1
+            else:
+                datakun[tmp]=2#1
+            tmp3 = str(train_num[c2+1])+","+str(train_num[c+1])
+            if tmp3 in datakun:
+                datakun[tmp3]+=2#1
+            else:
+                datakun[tmp3]=2#1
+                
+
+    if (l+1)%100 == 0 or (l+1)==len(meta):
+        #print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
+        b = sys.getsizeof(datakun)
+        b += sum(map(sys.getsizeof, datakun.values())) + sum(map(sys.getsizeof, datakun.keys()))
+        kb = b / 1024
+        mb = kb / 1024
+        gb = mb / 1024
+        gb2 = format(gb, '.2f')
+        print("params="+str(len(datakun))+",mem="+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
+        #if (l+1)%100==0:
+            #cot = 0
+            #for key, value in datakun.items():
+                #if float(value) >=0.9 and float(value) <= 1.1:
+                    #cot += 1
+            #print("count="+str(cot))
+
+#nk_w=""
+#nv_w=""
+#siz=0
+
+#for key, value in datakun.items():
+    #sr1=str(key)+'\n'
+    #sr2=str(value)+'\n'
+    #nk_w+=sr1
+    #nv_w+=sr2
+    #if siz % 1000 == 0:
+        #with open("nextkey.txt", mode="a", encoding="utf-8") as f:
+            #f.write(nk_w)
+        #with open("nextvalue.txt", mode="a", encoding="utf-8") as f:
+            #f.write(nv_w)
+        #nk_w=""
+        
+    #siz+=1
+
+def calc_vocab(s):
+    items = s.split(',')
+    if len(items) >= 3 or len(items) < 2:
+        return "", ""
+    return str(items[0]), str(items[1])
+
+def process_and_transfer(datakun):
+    result_multimap = defaultdict(list)
+    count = 0
+
+    while datakun:
+        raw_key, _ = datakun.popitem()
+        parent, child = calc_vocab(raw_key)
+        
+        if parent != "":
+            result_multimap[parent].append(child)
+        count += 1
+        if count % 1000000 == 0:
+            gc.collect()
+        if count % 10000 == 0:
+            print("datakun_size="+str(len(datakun)))
+
+    del datakun
+    gc.collect()
+    
+    return result_multimap
+
+new_map = process_and_transfer(datakun)
+
+def collect_children_from_sentence(s, new_map):
+    result_list = []
+    
+    words = s.split()
+    
+    for word in words:
+        if word in new_map:
+            result_list.extend(new_map[word])
+            
+    return result_list
+
+
+rtt = collect_children_from_sentence("Apple Banana Orange Grape", new_map)
+
+print("num="+str(len(rtt)))#koko
+print(rtt)#koko
+
+sys.exit(1)#koko
+
+ok=0
+ng=0
+mode=""
+
+print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
+
+mode=input()
+#mode="3"
+
+if mode=="3":
+    PROBLEM=116
+else:
+    PROBLEM=1
+
+def quiz_solve(loop,o,add,q):
+
+    global ok,ng
+    
+    quiz=""
+
+    if mode=="3":
+        with open('./testcase/quiz'+str(loop+1)+'.txt') as f:
+            for line in f:
+                quiz=quiz+line
+    elif mode=="2":
+        with open('./quiz.txt') as f:
+            for line in f:
+                quiz=quiz+line
+    elif mode=="1" or mode=="4":
+        quiz=q
+    if len(quiz)==0:
+        sys.exit()
+
+    quiz_ja=""
+
+    try:
+        if is_ja(quiz) == False:
+            # src -> source, dest -> target に変わります
+            # .text は不要です
+            quiz_ja = GoogleTranslator(source='en', target='ja').translate(quiz)
+        else:
+            quiz_ja=quiz
+            quiz = GoogleTranslator(source='ja', target='en').translate(quiz_ja)
+
+    except Exception:
+        pass
+
+    quiz3=""
+    
+    for k in range(len(quiz)):   
+        if is_sp(quiz[k]) > 0:
+            quiz3+=" "+quiz[k]+" "
+        else:
+            quiz3+=quiz[k]
+    quiz=quiz3
+    if len(add)>0:
+        quiz+=add+" "
+    quiz2 = quiz.split()
+
+    #for i in range(len(quiz2)):
+        #quiz2[i]=str(quiz2[i]).lower()
+    
+    if o==True:
+        print("Quiz_ja:\n"+quiz_ja)
+        print("\n")
+        print("Quiz_en:\n"+quiz)
+        print("\n")
+    sumsum=0
+    maxsum=0
+    ans=""
+    dic2 = dict()
+
+    hint=""
+    maxhit=1
+
+    #rtt = collect_children_from_sentence(quiz, new_map)
+
+    rtt2 = []
+
+    for cq in range(len(rtt)):
+        if str(rtt[cq])=="Oconahua":
+            continue
+        if str(rtt[cq]) in NoAns:
+            if NoAns[str(rtt[cq])]<=TABOO or str(rtt[cq]).lower() == "water" or str(rtt[cq]).lower()=="1":
+                rtt2.append(train[str(rtt[cq])])
+
+    for xxx in range(len(quiz2)):
+        hit=0
+        if len(quiz2[xxx])>1:
+            for x in range(len(quiz2)):
+                if quiz2[xxx] in quiz2[x]:
+                    if quiz2[xxx] in NoAns:
+                        if NoAns[quiz2[xxx]] <= TABOO:
+                            hit+=1            
+        if hit>maxhit:
+            maxhit=hit
+            hint=quiz2[xxx]
+    #print("hint="+str(hint)+",maxhit="+str(maxhit))
+
+    include=dict()
+
+    printed = [False] * 15
+
+    ngram = dict()
+
+    for k1 in range(len(quiz2)):
+        if k1+2 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])+str(quiz2[k1+2])
+            ngram[str(kt).lower()]=1
+
+    for k1 in range(len(quiz2)):
+        if k1+1 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])
+            ngram[str(kt).lower()]=1
+            
+    #for ib in range(len(quiz2)):
+        #if ib > 4:
+            #break
+        #if str(quiz2[ib]) in NoAns:
+            #if NoAns[str(quiz2[ib])] <= TABOO:
+                #print("type="+str(quiz2[ib]))
+
+    for xx in range(counter-1):
+        
+        per=xx/(counter+1)
+        if per < 0.1:
+            idx = 0
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.2:
+            idx = 1
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.3:
+            idx = 2
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.4:
+            idx = 3
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.5:
+            idx = 4
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.6:
+            idx = 5
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.7:
+            idx = 6
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.8:
+            idx = 7
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        elif per < 0.9:
+            idx = 8
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        else:
+            idx = 9
+            if printed[idx]==False:
+                per*=100.0
+                per=round(per,1)
+                print("thinking..."+str(per)+"%")
+                printed[idx]=True
+        if xx == counter-2:
+            print("complete")
+        sum=1.0
+        if len(train_num[xx+1])==0:
+            continue
+        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1]).lower()!="1":
+            continue
+        if str(train_num[xx+1])=="Oconahua":
+            continue
+        if (xx+1) not in rtt2:
+            continue    
+        cnt=-1
+        tmp=str(train_num[xx+1])+","+str(hint)
+        if tmp in datakun:
+            sum=float(pow(2,maxhit-1))
+            #if str(train_num[xx+1])=="IrreversibleProcess":
+                #print("sum="+str(sum))
+        strl=str(train_num[xx+1]).lower()
+        if strl in ngram:
+            sum=1.0
+            continue    
+        for xxx in quiz2:
+            cnt+=1
+            if str(xxx)=="?" or str(xxx)=="!":
+                continue
+            dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
+            if dist < 1:
+                sum=1.0
+                break
+            bbb=False
+            if is_include(str(train_num[xx+1]),str(xxx))==True:
+                #include[str(train_num[xx+1])]=True
+                for w1 in range(len(quiz2)):
+                    if bbb==True:
+                        break
+                    for w2 in range(w1+1,len(quiz2)):
+                        w3=str(quiz2[w1])+str(quiz2[w2])
+                        w4=str(quiz2[w2])+str(quiz2[w1])
+                        d1=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w3).upper())
+                        d2=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w4).upper())
+                        if d1 <=1 or d2 <=1:
+                            include[str(train_num[xx+1])]=True
+                            bbb=True                
+            tmp2=str(train_num[xx+1])+","+str(xxx)
+            if tmp2 not in datakun:
+                sum/=1.2
+            if tmp2 in datakun:
+                weight=1.0
+                if cnt < 5:
+                    weight=3.0
+                sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
+                if xxx not in NoAns:
+                    if is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
+                        sum*=3.0
+                    continue
+                if NoAns[xxx] > TABOO:
+                    if str(xxx).lower() != "water" and str(xxx).lower() != "1":
+                        sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
+                if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
+                    sum*=3.0    
+                #else:
+                    #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
+                        #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
+                #if str(train_num[xx+1]).lower()=="titan":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="louispasteur":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="kumbhalgarhfort":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="workinganimal":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="benevolent":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="buttress":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Happiness":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Safety":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Evidence":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Kayak":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Reason":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx])) 
+        dic2[str(train_num[xx+1])]=round(sum,2)
+        if sum>maxsum:
+            maxsum=sum
+            ans=train_num[xx+1]
+    tmp_quiz=quiz        
+    tmp_quiz2=fix_expression(tmp_quiz)
+    i1,i2=calculator(tmp_quiz2)
+    calc_flag = False
+    #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
+    if i1>=2:
+        sco=0.0
+        if float(i1/len(tmp_quiz2))<0.1:
+            sco=float(pow(2.0,i1*10/len(tmp_quiz2)))
+        else:
+            sco=float(pow(2.0,i1*100/len(tmp_quiz2)))
+        dic2[str(i2)]=round(sco,2)
+        #print("i2="+str(i2)+",i1="+str(i1)+",len="+str(len(quiz))+",sco="+str(sco))
+        if sco>maxsum:
+            maxsum=round(sco,2)
+            ans=str(i2)
+            calc_flag = True
+    g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:15]
+    x_all, y_all = zip(*g)
+    if str(x_all[0]) in include:
+        return -1,str(x_all[0])
+    print("\n")
+    #print("BoW_Top5:",end="")
+    #print(g[:5])
+    candidate_texts = []
+    valid_candidates = []
+    quiz_embedding = model.encode(quiz, convert_to_tensor=True)
+    candidate_embeddings = model.encode(x_all, convert_to_tensor=True) 
+    cosine_scores = util.cos_sim(quiz_embedding, candidate_embeddings)[0]
+    rlts = []
+    for i, sre in enumerate(cosine_scores):
+        rlts.append((x_all[i], sre.item()))
+        
+    rlts.sort(key=lambda x: x[1], reverse=True)
+
+    cos_rank = dict()
+    
+    for name, scol in rlts:
+        cos_rank[str(name)]=scol
+        
+    for cxt in range(15):
+        word = str(x_all[cxt])
+        wiki_text = get_wikipedia_intro(word)
+            
+        if wiki_text is None:
+            wiki_text = ""
+            
+        candidate_texts.append(wiki_text)
+        valid_candidates.append(word)
+            
+    tokenized_corpus = [preprocess_text(doc) for doc in candidate_texts]
+    tokenized_query = preprocess_text(quiz)
+    bm25 = BM25Okapi(tokenized_corpus)
+    bm25_scores = bm25.get_scores(tokenized_query)
+        
+    jaccard_rank = dict()
+    order_rank = dict()
+    bm25_rank = dict()
+        
+    for i in range(15):
+        word = valid_candidates[i]
+        text = candidate_texts[i]
+            
+        cok = calculate_jaccard(str(quiz), str(text))
+        jaccard_rank[word] = cok
+            
+        bok = calculate_order_score(str(quiz), str(text))
+        order_rank[word] = bok
+        bm25_rank[word] = bm25_scores[i]
+            
+    rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+    rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+    rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+    rt4 = sorted(cos_rank.items(), key=lambda x: x[1], reverse=True)[:15]    
+    #print("Jaccard_Top5:",end="")
+    #print(rt[:5])
+    #print("Order_Top5:",end="")
+    #print(rt2[:5])
+    #print("BM25_Top5:",end="")
+    #print(rt3[:5])
+    #print("Cos_Top5:",end="")
+    #print(rt4[:5])
+    # ループで整形して表示
+    metrics = [
+    ("BoW_Top5", g),
+    ("Jaccard_Top5", rt),
+    ("Order_Top5", rt2),
+    ("BM25_Top5", rt3),
+    ("Cos_Top5", rt4)
+    ]
+    for label, data in metrics:
+        formatted_items = [f"('{name}', {score:.4g})" for name, score in data[:5]]
+        print(f"{label}:[{', '.join(formatted_items)}]")
+    print("\n")
+    take=dict()
+    for fg in range(15):
+        ht=1.0
+        ctt=-1
+        for xyy in quiz2:
+            tmpz=str(x_all[fg])+","+str(xyy)
+            ctt+=1
+            if tmpz not in datakun:
+                ht/=1.2
+            if tmpz in datakun:
+                wt=1.0
+                if ctt < 5:
+                    wt=3.0
+                ht*=wt*datakun[tmpz]
+                hr=True
+                if str(xyy) in NoAns:
+                    if NoAns[str(xyy)] > TABOO:
+                        if str(xyy).lower() != "water" and str(xyy).lower() != "1":
+                            ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
+                            hr=False                
+                    if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
+                        ht*=3.0
+                if hr==True and (str(xyy) in NoAns):
+                    if NoAns[str(xyy)] <= TABOO:
+                        if str(x_all[fg]) in take:
+                            take[str(x_all[fg])]+=1.0
+                        else:
+                            take[str(x_all[fg])]=1.0
+                if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
+                    if NoAns[str(xyy)] <= TABOO:
+                        print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(xyy) in NoAns:
+                    if NoAns[str(xyy)] <= TABOO:
+                        print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(x_all[fg]) in NoAns:
+                    print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
+                else:
+                    print(str(tmpz)+",score="+str(ht))
+    ans_ja=""
+    if calc_flag==False:
+        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1,0.1], k=60)
+        print("\n")
+        print("Final RRF Ranking:")
+        for rank, (word, score) in enumerate(final_results, 1):
+            print(f"{rank}. {word} (Score: {score:.5f})")
+            if final_results:
+                ans = final_results[0][0]
+                if y_all[0] < 1.01:
+                    ans="Unknown"
+    try:
+        ans_ja = GoogleTranslator(source='en', target='ja').translate(str(ans))
+    except Exception:
+        pass
+    print("\n")    
+    print("Answer_ja:"+ans_ja)    
+    print("Answer_en:"+str(ans))
+    if mode == "3":
+        truth=""
+        with open('./testcase/ans'+str(loop+1)+'.txt') as f:
+            for line in f:
+                truth=truth+line
+        if str(truth).lower()==str(ans).lower():
+            ok+=1
+            print("State:AC")
+        else:
+            AC_ex.append(str(truth))
+            WA_ex.append(str(ans))
+            WA.append(loop+1)
+            ng+=1
+            print("State:WA")
+            print("Truth:"+str(truth))
+    divd=0.0
+    sz=0.0
+    for kd in range(len(quiz2)):
+        if str(quiz2[kd]) in NoAns:
+            if NoAns[str(quiz2[kd])] <= TABOO:
+                divd+=1.0
+    if divd < 0.1:
+        divd=1.0
+    if str(ans) in take:
+        sz=take[str(ans)]/divd
+    else:
+        sz=0.0
+    if calc_flag ==True:
+        sz=1.0
+    print("Confidence:"+'{:.3f}'.format(sz))
+    if sz < 0.5:
+        print("Eval:F") 
+    else:
+        if sz < 0.7:
+            print("Eval:C")
+        else:
+            if sz < 0.8:
+                print("Eval:A")
+            else:
+                if mode=="4":
+                    for yyy in quiz2:
+                        tp1 = str(ans)+","+str(yyy)
+                        tp2 = str(yyy)+","+str(ans)
+                        if tp1 in datakun:
+                            datakun[tp1]+=1
+                        else:
+                            datakun[tp1]=1
+                        if tp2 in datakun:
+                            datakun[tp2]+=1
+                        else:
+                            datakun[tp2]=1
+                print("Eval:S")               
+    print("Words:"+str(counter))
+    mem = psutil.virtual_memory()
+    total_gb = mem.total / (1024**3)
+    print("Mem:"+str(mem.percent)+"%"+"/"+str(round(total_gb,2))+"GB")
+    print("Docs:"+str(len(meta)))
+    print("Params:"+str(len(datakun)))
+    query1=quiz.split()
+    query2=str(x_all[0])+" "+str(x_all[1])+" "+str(x_all[2])+" "+str(x_all[3])+" "+str(x_all[4]) 
+    try:
+        results = googlesearch.search(query2, num_results=5)
+        for url in results:
+            if "wikipedia" in url:
+                s_en=str(get_ansi(url))
+                s_ja = GoogleTranslator(source='en', target='ja').translate(str(get_ansi(url)))
+                print("GoogleAnswer_ja:"+str(s_ja))
+                print("GoogleAnswer_en:"+str(s_en))
+                break
+    except Exception:
+        pass        
+    
+    if mode=="2":
+        plt.figure(figsize= (15,6))
+        plt.barh(x_all, y_all)
+        plt.gca().invert_yaxis()
+        plt.show()
+
+    return 0,"end"
+
+
+if mode=="2":
+    o=True
+    add=""
+    q=""
+    while True:
+        a,b=quiz_solve(0,o,add,q)
+        if a==0:
+            break
+        else:
+            print("ReThinking...")
+            o=False
+            add+=" "+str(b)
+
+elif mode=="3":
+
+    for l in range(PROBLEM):
+        print("------------------------------------------------------------------")
+        print(str("Problem:")+str(l+1)+"/"+str(PROBLEM))
+        o=True
+        add=""
+        q=""
+        while True:
+            a,b=quiz_solve(l,o,add,q)
+            if a==0:
+                break
+            else:
+                print("ReThinking...")
+                o=False
+                add+=" "+str(b)
+elif mode=="1":
+    o=True
+    add=""
+    qz=""
+    while True:
+        q=""
+        if o==True:
+            print("------------------------------------------------------------------")
+            print("Input_Quiz:")
+            while True:
+                q2 = input()
+                if "@@@" in q2:
+                    q2 = q2.replace("@@@", "")
+                    q+=q2+" "
+                    break
+                q+=q2+" "        
+        q = q.replace("@@@", "")
+        if o == False:
+            q=qz
+        qz=q    
+        a,b=quiz_solve(0,o,add,q)
+        if a!=0:
+            print("ReThinking...")
+            o=False
+            add+=" "+str(b)
+        else:
+            o=True
+            add=""
+            
+elif mode=="4":
+    o=True
+    add=""
+    while True:
+        if o==True:
+            print("------------------------------------------------------------------")
+            q=""
+            d=dict()
+            c=0
+            while True:
+                if c >=10:
+                    break
+                r=random.randint(0, len(meta)-1)
+                if r not in d:
+                    q+=meta[r]+" "
+                    d[r]=1
+                    c+=1
+            print("Input_Quiz:")
+            print(q)
+        a,b=quiz_solve(0,o,add,q)
+        if a!=0:
+            print("ReThinking...")
+            o=False
+            add+=" "+str(b)
+        else:
+            o=True
+            add=""            
+
+
+if mode=="3":
+    print(str("AC=")+str(ok)+",WA="+str(ng))
+    if len(WA)!=0:
+        print("WA_Problem:",end="")
+        for i in range(len(WA)-1):
+            print(str(WA[i])+",",end="")
+        print(str(WA[len(WA)-1]))
+        for i in range(len(WA)):
+            print("Truth:"+str(AC_ex[i])+",WA:"+str(WA_ex[i]))
