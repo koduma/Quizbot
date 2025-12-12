@@ -50,6 +50,7 @@ WA=[]
 AC_ex=[]
 WA_ex=[]
 
+LIMIT_P = 18000000
 PROBLEM = 116
 TABOO = 15000
 RARE = 1600
@@ -671,8 +672,8 @@ for l in range(len(meta)):
                 datakun[str(key)]=int(val)
                 cck+=1
                 if cck%10000==0:
-                    print("datakun:"+str(cck)+"/42000000")
-                if cck >20000000:
+                    print("MakeParams1/2:"+str(cck)+"/"+str(LIMIT_P))
+                if cck > LIMIT_P:
                     break
         with open('./train2.txt') as f:
             for line in f:
@@ -866,7 +867,7 @@ def process_and_transfer(datakun):
             result_multimap[parent].append(child)
         count += 1
         if count % 10000 == 0:
-            print("datakun:"+str(count)+"/"+str(len(datakun)))
+            print("MakeParams2/2:"+str(count)+"/"+str(len(datakun)))
     
     return result_multimap
 
@@ -884,13 +885,6 @@ def collect_children_from_sentence(s, new_map):
     return result_list
 
 
-rtt = collect_children_from_sentence("Apple Banana Orange Grape", new_map)
-
-print("num="+str(len(rtt)))#koko
-print(rtt)#koko
-
-sys.exit(1)#koko
-
 ok=0
 ng=0
 mode=""
@@ -904,6 +898,15 @@ if mode=="3":
     PROBLEM=116
 else:
     PROBLEM=1
+
+def remove_duplicates_sorted(lst):
+    if not lst:
+        return []
+    relt = [lst[0]]
+    for i in range(1, len(lst)):
+        if lst[i] != lst[i-1]:
+            relt.append(lst[i])
+    return relt
 
 def quiz_solve(loop,o,add,q):
 
@@ -966,16 +969,19 @@ def quiz_solve(loop,o,add,q):
     hint=""
     maxhit=1
 
-    #rtt = collect_children_from_sentence(quiz, new_map)
+    rtt = collect_children_from_sentence(quiz, new_map)
 
     rtt2 = []
+
 
     for cq in range(len(rtt)):
         if str(rtt[cq])=="Oconahua":
             continue
         if str(rtt[cq]) in NoAns:
             if NoAns[str(rtt[cq])]<=TABOO or str(rtt[cq]).lower() == "water" or str(rtt[cq]).lower()=="1":
-                rtt2.append(train[str(rtt[cq])])
+                if str(rtt[cq]) in train:
+                    rtt2.append(train[str(rtt[cq])])
+                    #print(str(rtt[cq])+":"+str(zi)+":"+str(train_num[zi]))
 
     for xxx in range(len(quiz2)):
         hit=0
@@ -1005,15 +1011,18 @@ def quiz_solve(loop,o,add,q):
         if k1+1 < len(quiz2):
             kt=str(quiz2[k1])+str(quiz2[k1+1])
             ngram[str(kt).lower()]=1
-            
-    #for ib in range(len(quiz2)):
-        #if ib > 4:
-            #break
-        #if str(quiz2[ib]) in NoAns:
-            #if NoAns[str(quiz2[ib])] <= TABOO:
-                #print("type="+str(quiz2[ib]))
+    
+    rtt2.sort()
+
+    rtt2=remove_duplicates_sorted(rtt2)
+
+    ph=0
 
     for xx in range(counter-1):
+
+        if ph >= len(rtt2):
+            print("complete")
+            break
         
         per=xx/(counter+1)
         if per < 0.1:
@@ -1089,14 +1098,16 @@ def quiz_solve(loop,o,add,q):
         if xx == counter-2:
             print("complete")
         sum=1.0
+        if (xx+1) != rtt2[ph]:
+            continue
+        else:
+            ph+=1
         if len(train_num[xx+1])==0:
             continue
         if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1]).lower()!="1":
             continue
         if str(train_num[xx+1])=="Oconahua":
             continue
-        if (xx+1) not in rtt2:
-            continue    
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
         if tmp in datakun:
@@ -1215,7 +1226,7 @@ def quiz_solve(loop,o,add,q):
     for name, scol in rlts:
         cos_rank[str(name)]=scol
         
-    for cxt in range(15):
+    for cxt in range(len(x_all)):
         word = str(x_all[cxt])
         wiki_text = get_wikipedia_intro(word)
             
@@ -1234,7 +1245,7 @@ def quiz_solve(loop,o,add,q):
     order_rank = dict()
     bm25_rank = dict()
         
-    for i in range(15):
+    for i in range(len(x_all)):
         word = valid_candidates[i]
         text = candidate_texts[i]
             
@@ -1270,7 +1281,7 @@ def quiz_solve(loop,o,add,q):
         print(f"{label}:[{', '.join(formatted_items)}]")
     print("\n")
     take=dict()
-    for fg in range(15):
+    for fg in range(len(x_all)):
         ht=1.0
         ctt=-1
         for xyy in quiz2:
@@ -1384,7 +1395,12 @@ def quiz_solve(loop,o,add,q):
     print("Docs:"+str(len(meta)))
     print("Params:"+str(len(datakun)))
     query1=quiz.split()
-    query2=str(x_all[0])+" "+str(x_all[1])+" "+str(x_all[2])+" "+str(x_all[3])+" "+str(x_all[4]) 
+    query2=""
+    zz=len(x_all)
+    if len(x_all) > 5:
+        zz=5
+    for mk in range(zz):
+        query2+=str(x_all[mk])+" " 
     try:
         results = googlesearch.search(query2, num_results=5)
         for url in results:
@@ -1399,7 +1415,7 @@ def quiz_solve(loop,o,add,q):
     
     if mode=="2":
         plt.figure(figsize= (15,6))
-        plt.barh(x_all, y_all)
+        plt.barh(x_all[:5], y_all[:5])
         plt.gca().invert_yaxis()
         plt.show()
 
@@ -1494,6 +1510,7 @@ elif mode=="4":
 
 
 if mode=="3":
+    print("------------------------------------------------------------------")
     print(str("AC=")+str(ok)+",WA="+str(ng))
     if len(WA)!=0:
         print("WA_Problem:",end="")
