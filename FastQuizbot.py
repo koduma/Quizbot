@@ -662,12 +662,18 @@ for l in range(len(meta)):
     reading=True
 
     try:
+        cck=0
         with open('./datakun2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
                 val=get_val(str(line))
                 datakun[str(key)]=int(val)
+                cck+=1
+                if cck%10000==0:
+                    print("datakun:"+str(cck)+"/42000000")
+                if cck >20000000:
+                    break
         with open('./train2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
