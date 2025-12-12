@@ -22,6 +22,8 @@ import string
 import difflib
 from sentence_transformers import SentenceTransformer, util
 import torch
+import gc
+from collections import defaultdict
 
 strr=""
 meta=""
@@ -44,7 +46,10 @@ print(len(meta))
 counter=1
 now=[1]
 WA=[]
+AC_ex=[]
+WA_ex=[]
 
+LIMIT_P = 36750000
 PROBLEM = 116
 TABOO = 15000
 RARE = 1600
@@ -652,12 +657,18 @@ for l in range(len(meta)):
     reading=True
 
     try:
+        cck=0
         with open('./datakun2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
                 val=get_val(str(line))
                 datakun[str(key)]=int(val)
+                cck+=1
+                if cck%10000==0:
+                    print("MakeParams:"+str(cck)+"/"+str(LIMIT_P))
+                if cck > LIMIT_P:
+                    break
         with open('./train2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
@@ -1130,8 +1141,8 @@ def quiz_solve(loop,o,add,q):
     if str(x_all[0]) in include:
         return -1,str(x_all[0])
     print("\n")
-    print("BoW_Top5:",end="")
-    print(g[:5])
+    #print("BoW_Top5:",end="")
+    #print(g[:5])
     candidate_texts = []
     valid_candidates = []
     quiz_embedding = model.encode(quiz, convert_to_tensor=True)
@@ -1148,7 +1159,7 @@ def quiz_solve(loop,o,add,q):
     for name, scol in rlts:
         cos_rank[str(name)]=scol
         
-    for cxt in range(15):
+    for cxt in range(len(x_all)):
         word = str(x_all[cxt])
         wiki_text = get_wikipedia_intro(word)
             
@@ -1167,7 +1178,7 @@ def quiz_solve(loop,o,add,q):
     order_rank = dict()
     bm25_rank = dict()
         
-    for i in range(15):
+    for i in range(len(x_all)):
         word = valid_candidates[i]
         text = candidate_texts[i]
             
@@ -1182,17 +1193,28 @@ def quiz_solve(loop,o,add,q):
     rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
     rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
     rt4 = sorted(cos_rank.items(), key=lambda x: x[1], reverse=True)[:15]    
-    print("Jaccard_Top5:",end="")
-    print(rt[:5])
-    print("Order_Top5:",end="")
-    print(rt2[:5])
-    print("BM25_Top5:",end="")
-    print(rt3[:5])
-    print("Cos_Top5:",end="")
-    print(rt4[:5])
+    #print("Jaccard_Top5:",end="")
+    #print(rt[:5])
+    #print("Order_Top5:",end="")
+    #print(rt2[:5])
+    #print("BM25_Top5:",end="")
+    #print(rt3[:5])
+    #print("Cos_Top5:",end="")
+    #print(rt4[:5])
+    # ループで整形して表示
+    metrics = [
+    ("BoW_Top5", g),
+    ("Jaccard_Top5", rt),
+    ("Order_Top5", rt2),
+    ("BM25_Top5", rt3),
+    ("Cos_Top5", rt4)
+    ]
+    for label, data in metrics:
+        formatted_items = [f"('{name}', {score:.4g})" for name, score in data[:5]]
+        print(f"{label}:[{', '.join(formatted_items)}]")
     print("\n")
     take=dict()
-    for fg in range(15):
+    for fg in range(len(x_all)):
         ht=1.0
         ctt=-1
         for xyy in quiz2:
@@ -1256,6 +1278,8 @@ def quiz_solve(loop,o,add,q):
             ok+=1
             print("State:AC")
         else:
+            AC_ex.append(str(truth))
+            WA_ex.append(str(ans))
             WA.append(loop+1)
             ng+=1
             print("State:WA")
@@ -1304,7 +1328,12 @@ def quiz_solve(loop,o,add,q):
     print("Docs:"+str(len(meta)))
     print("Params:"+str(len(datakun)))
     query1=quiz.split()
-    query2=str(x_all[0])+" "+str(x_all[1])+" "+str(x_all[2])+" "+str(x_all[3])+" "+str(x_all[4]) 
+    query2=""
+    zz=len(x_all)
+    if len(x_all) > 5:
+        zz=5
+    for mk in range(zz):
+        query2+=str(x_all[mk])+" "  
     try:
         results = googlesearch.search(query2, num_results=5)
         for url in results:
@@ -1319,7 +1348,7 @@ def quiz_solve(loop,o,add,q):
     
     if mode=="2":
         plt.figure(figsize= (15,6))
-        plt.barh(x_all, y_all)
+        plt.barh(x_all[:5], y_all[:5])
         plt.gca().invert_yaxis()
         plt.show()
 
@@ -1414,9 +1443,12 @@ elif mode=="4":
 
 
 if mode=="3":
+    print("------------------------------------------------------------------")
     print(str("AC=")+str(ok)+",WA="+str(ng))
     if len(WA)!=0:
         print("WA_Problem:",end="")
         for i in range(len(WA)-1):
             print(str(WA[i])+",",end="")
         print(str(WA[len(WA)-1]))
+        for i in range(len(WA)):
+            print("Truth:"+str(AC_ex[i])+",WA:"+str(WA_ex[i]))
