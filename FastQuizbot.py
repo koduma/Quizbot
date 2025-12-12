@@ -853,20 +853,14 @@ def process_and_transfer(datakun):
     result_multimap = defaultdict(list)
     count = 0
 
-    while datakun:
-        raw_key, _ = datakun.popitem()
-        parent, child = calc_vocab(raw_key)
+    for key, value in datakun.items():
+        parent, child = calc_vocab(key)
         
         if parent != "":
             result_multimap[parent].append(child)
         count += 1
-        if count % 1000000 == 0:
-            gc.collect()
         if count % 10000 == 0:
-            print("datakun_size="+str(len(datakun)))
-
-    del datakun
-    gc.collect()
+            print("datakun:"+str(count)+"/"+str(len(datakun)))
     
     return result_multimap
 
