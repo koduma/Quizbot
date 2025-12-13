@@ -926,6 +926,14 @@ def quiz_solve(loop,o,add,q):
     
     rtt2.sort()
 
+    uniq = dict()
+
+    for ix in range(len(rtt2)):
+        if rtt2[ix] not in uniq:
+            uniq[rtt2[ix]]=1.0
+        else:
+            uniq[rtt2[ix]]*=2.0
+
     rtt2=remove_duplicates_sorted(rtt2)
 
     ph=0
@@ -1009,7 +1017,7 @@ def quiz_solve(loop,o,add,q):
                 printed[idx]=True
         if xx == counter-2:
             print("complete")
-        sum=1.0
+        sum=1.0    
         if (xx+1) != rtt2[ph]:
             continue
         else:
@@ -1025,12 +1033,13 @@ def quiz_solve(loop,o,add,q):
         wq = get_weight_fast(str(train_num[xx+1]), str(hint))
         if wq!=0:
             sum=float(pow(2,maxhit-1))
-            #if str(train_num[xx+1])=="IrreversibleProcess":
-                #print("sum="+str(sum))
+            sum*=uniq[xx+1]
+        else:
+            sum=uniq[xx+1]
         strl=str(train_num[xx+1]).lower()
         if strl in ngram:
             sum=1.0
-            continue    
+            continue
         for xxx in quiz2:
             cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
@@ -1118,6 +1127,26 @@ def quiz_solve(loop,o,add,q):
             ans=str(i2)
             calc_flag = True
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:15]
+    if len(g) == 0:
+        print("Answer_ja:未知")
+        print("Answer_en:Unknown")
+        if mode == "3":
+            trut=""
+            ans="Unknown"
+            with open('./testcase/ans'+str(loop+1)+'.txt') as f:
+                for line in f:
+                    trut=trut+line
+            if str(trut).lower()==str(ans).lower():
+                ok+=1
+                print("State:AC")
+            else:
+                AC_ex.append(str(trut))
+                WA_ex.append(str(ans))
+                WA.append(loop+1)
+                ng+=1
+                print("State:WA")
+                print("Truth:"+str(trut))
+        return 0,"end"
     x_all, y_all = zip(*g)
     if str(x_all[0]) in include:
         return -1,str(x_all[0])
