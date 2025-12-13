@@ -25,6 +25,8 @@ from sentence_transformers import SentenceTransformer, util
 import torch
 import gc
 from collections import defaultdict
+from bisect import bisect_left
+from functools import lru_cache
 
 strr=""
 meta=""
@@ -50,11 +52,18 @@ WA=[]
 AC_ex=[]
 WA_ex=[]
 
-LIMIT_P = 18000000
+LIMIT_P = 40000000
 PROBLEM = 116
 TABOO = 15000
 RARE = 1600
 docs = 0
+
+offsets = []
+indices = []
+w_data = []
+
+current_index = 0 
+last_p_id = -1
 
 #translator = Translator()
 
@@ -468,28 +477,6 @@ def calculator(s):
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
 
-def is_include(s,t):
-    #if s!="SolarSystem":
-        #return False
-    if s not in NoAns or t not in NoAns:
-        #print(str(0)+",s="+s+",t="+t)
-        return False
-    if NoAns[s]>TABOO or NoAns[t]>TABOO:
-        #print(str(1)+",s="+s+",t="+t)
-        return False
-    if (s+","+t) not in datakun or (t+","+s) not in datakun:
-        #print(str(2)+",s="+s+",t="+t)
-        return False        
-    if datakun[s+","+t] >5 or datakun[t+","+s]>5:
-        if len(s)>=len(t):
-            #print(str(3)+",s="+s+",t="+t)
-            return (t.upper() in s.upper())
-        else:
-            #print(str(4)+",s="+s+",t="+t)
-            return (s.upper() in t.upper())
-    #print(str(5)+",s="+s+",t="+t)
-    return False
-
 def is_sp(s):
 
     sp=0
@@ -663,18 +650,21 @@ for l in range(len(meta)):
     reading=True
 
     try:
-        cck=0
-        with open('./datakun2.txt') as f:
+        with open("datakun3.txt", "r") as f:
             for line in f:
-                line=line.replace('\n',"")
-                key=get_key(str(line))
-                val=get_val(str(line))
-                datakun[str(key)]=int(val)
-                cck+=1
-                if cck%10000==0:
-                    print("MakeParams1/2:"+str(cck)+"/"+str(LIMIT_P))
-                if cck > LIMIT_P:
+                p_id, c_id, weight = map(int, line.strip().split(','))
+                if p_id != last_p_id:
+                    while len(offsets) <= p_id:
+                        offsets.append(current_index)
+                    last_p_id = p_id
+                indices.append(c_id)
+                w_data.append(weight)
+                current_index += 1
+                if current_index >= LIMIT_P:
                     break
+                if current_index % 100000==0:
+                    print("idx="+str(current_index)+"/"+str(LIMIT_P))
+        offsets.append(current_index)
         with open('./train2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
@@ -709,146 +699,47 @@ for l in range(len(meta)):
         print("reading_ok")
         break
 
-    #if ld=='y':
-        #nksize=0
-        #nextkey=[]
-        #nextvalue=[]
-        #try:
-            #with open('./nextkey.txt') as f:
-                #for line in f:
-                    #nksize+=1
-                    #line.rstrip('\n')
-                    #nextkey.append(str(line))
-            #with open('./nextvalue.txt') as f:
-                #for line in f:
-                    #line.rstrip('\n')
-                    #nextvalue.append(str(line))
-            #for i in range(nksize):
-                #datakun[str(nextkey[i]).rstrip('\n')]=float(nextvalue[i].rstrip('\n'))
-        #except FileNotFoundError:
-            #print("fileNoExist")
-        #break
-
-    strr=""
+@lru_cache(maxsize=100000)
+def get_weight_fast(parent_word, child_word):
+    global train, offsets, indices, w_data
     
-    title = meta[l]
-
-    if l<=10040:
-        docs=docs+1
-        with open("./"+title+".txt") as f:
-            for line in f:
-                strr=strr+line
-    elif l<70000:
-        docs=docs+1
-        with open("./getdata/"+title+".txt") as f:
-            for line in f:
-                strr=strr+line
-    else:
-        break
+    p_id = train.get(parent_word)
+    c_id = train.get(child_word)
+    
+    if p_id is None or c_id is None:
+        return 0
+    if p_id + 1 >= len(offsets):
+        return 0
         
-    if str(title)=="300000kms":
-        title="300000km/s"
-    strr2=""
-
-    for k in range(len(strr)):   
-        if is_sp(strr[k]) > 0:
-            strr2+=" "+strr[k]+" "
-        else:
-            strr2+=strr[k]
-    
-    talk = strr2.split()
-
-    n=0
-
-    train[title]=counter
-    train_num[counter]=title
-    NoAns[title]=0
-    counter+=1
-    n=counter
-
-    #for i in range(len(talk)):
-        #talk[i]=str(talk[i]).lower()
-    
-    for x in talk:
-        ex=x in train.keys()
-        if ex==False:
-            train[x]=counter
-            train_num[counter]=x
-            NoAns[x]=1
-            counter=counter+1
-            n=counter
-        else:
-            NoAns[x]+=1
-    now.append(n)
-    for c in talk:
-        tmp5 = str(title)+","+str(c)
-        tmp6 = str(c)+","+str(title)
-        if tmp5 in datakun:
-            datakun[tmp5]+=4#2
-        else:
-            datakun[tmp5]=4#2
-
-        if tmp6 in datakun:
-            datakun[tmp6]+=4#2
-        else:
-            datakun[tmp6]=4#2
-
-#for c in range(counter-2):
-#    tmp = str(train_num[c+1])+","+str(train_num[c+2])
-#    if tmp in data:
-#        data[tmp]+=1
-#    else:
-#        data[tmp]=1
-    
-    for c in range(now[l]-1,counter-1):
-        for c2 in range(c+1,counter-1):
-            tmp = str(train_num[c+1])+","+str(train_num[c2+1])
-            #if train_num[c+1]=="206":
-                #print(tmp)
-            if tmp in datakun:
-                datakun[tmp]+=2#1
-            else:
-                datakun[tmp]=2#1
-            tmp3 = str(train_num[c2+1])+","+str(train_num[c+1])
-            if tmp3 in datakun:
-                datakun[tmp3]+=2#1
-            else:
-                datakun[tmp3]=2#1
-                
-
-    if (l+1)%100 == 0 or (l+1)==len(meta):
-        #print("params="+str(len(datakun))+",train="+str(l+1)+"/"+str(len(meta)))
-        b = sys.getsizeof(datakun)
-        b += sum(map(sys.getsizeof, datakun.values())) + sum(map(sys.getsizeof, datakun.keys()))
-        kb = b / 1024
-        mb = kb / 1024
-        gb = mb / 1024
-        gb2 = format(gb, '.2f')
-        print("params="+str(len(datakun))+",mem="+str(gb2)+"GB"+",train="+str(l+1)+"/"+str(len(meta)))
-        #if (l+1)%100==0:
-            #cot = 0
-            #for key, value in datakun.items():
-                #if float(value) >=0.9 and float(value) <= 1.1:
-                    #cot += 1
-            #print("count="+str(cot))
-
-#nk_w=""
-#nv_w=""
-#siz=0
-
-#for key, value in datakun.items():
-    #sr1=str(key)+'\n'
-    #sr2=str(value)+'\n'
-    #nk_w+=sr1
-    #nv_w+=sr2
-    #if siz % 1000 == 0:
-        #with open("nextkey.txt", mode="a", encoding="utf-8") as f:
-            #f.write(nk_w)
-        #with open("nextvalue.txt", mode="a", encoding="utf-8") as f:
-            #f.write(nv_w)
-        #nk_w=""
+    start_index = offsets[p_id]
+    end_index = offsets[p_id + 1]
+    idx = bisect_left(indices, c_id, lo=start_index, hi=end_index)
+    if idx < end_index and indices[idx] == c_id:
+        return w_data[idx]
         
-    #siz+=1
+    return 0
+
+def is_include(s, t):
+    global train, offsets, indices, w_data, NoAns, TABOO
+
+    if s not in NoAns or t not in NoAns:
+        return False
+    if NoAns[s] > TABOO or NoAns[t] > TABOO:
+        return False
+        
+    w_st = get_weight_fast(s, t)
+    w_ts = get_weight_fast(t, s)
+
+    if w_st == 0 or w_ts == 0:
+        return False
+        
+    if w_st > 5 or w_ts > 5:
+        if len(s) >= len(t):
+            return (t.upper() in s.upper())
+        else:
+            return (s.upper() in t.upper())
+
+    return False
 
 def calc_vocab(s):
     items = s.split(',')
@@ -856,33 +747,54 @@ def calc_vocab(s):
         return "", ""
     return str(items[0]), str(items[1])
 
-def process_and_transfer(datakun):
-    result_multimap = defaultdict(list)
-    count = 0
-
-    for key, value in datakun.items():
-        parent, child = calc_vocab(key)
-        
-        if parent != "":
-            result_multimap[parent].append(child)
-        count += 1
-        if count % 10000 == 0:
-            print("MakeParams2/2:"+str(count)+"/"+str(len(datakun)))
+def collect_children_from_sentence(s):
+    global train, train_num, offsets, indices
     
-    return result_multimap
-
-new_map = process_and_transfer(datakun)
-
-def collect_children_from_sentence(s, new_map):
     result_list = []
-    
     words = s.split()
     
     for word in words:
-        if word in new_map:
-            result_list.extend(new_map[word])
+        if word not in train:
+            continue
+        p_id = train[str(word)]
+        
+        if p_id + 1 >= len(offsets):
+            continue
             
+        start = offsets[p_id]
+        end = offsets[p_id + 1]
+        
+        for i in range(start, end):
+            c_id = indices[i]
+            
+            if c_id in train_num:
+                child_word = train_num[c_id]
+                result_list.append(child_word)
+                
     return result_list
+
+def check_exists(x):
+    global train, offsets, indices
+    
+    try:
+        parent_str, child_str = x.split(',', 1)
+    except ValueError:
+        return False
+    if parent_str not in train or child_str not in train:
+        return False
+        
+    p_id = train[parent_str]
+    c_id = train[child_str]
+    
+    if p_id + 1 >= len(offsets):
+        return False
+    start = offsets[p_id]
+    end = offsets[p_id + 1]
+    
+    for i in range(start, end):
+        if indices[i] == c_id:
+            return True
+    return False
 
 
 ok=0
@@ -969,7 +881,7 @@ def quiz_solve(loop,o,add,q):
     hint=""
     maxhit=1
 
-    rtt = collect_children_from_sentence(quiz, new_map)
+    rtt = collect_children_from_sentence(quiz)
 
     rtt2 = []
 
@@ -1110,7 +1022,8 @@ def quiz_solve(loop,o,add,q):
             continue
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
-        if tmp in datakun:
+        wq = get_weight_fast(str(train_num[xx+1]), str(hint))
+        if wq!=0:
             sum=float(pow(2,maxhit-1))
             #if str(train_num[xx+1])=="IrreversibleProcess":
                 #print("sum="+str(sum))
@@ -1141,20 +1054,21 @@ def quiz_solve(loop,o,add,q):
                             include[str(train_num[xx+1])]=True
                             bbb=True                
             tmp2=str(train_num[xx+1])+","+str(xxx)
-            if tmp2 not in datakun:
+            wqz = get_weight_fast(str(train_num[xx+1]), str(xxx))
+            if wqz==0:
                 sum/=1.2
-            if tmp2 in datakun:
+            if wqz!=0:
                 weight=1.0
                 if cnt < 5:
                     weight=3.0
-                sum*=weight*datakun[tmp2]#float(datakun[tmp2]+cnt)
+                sum*=weight*get_weight_fast(str(train_num[xx+1]),str(xxx))
                 if xxx not in NoAns:
                     if is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                         sum*=3.0
                     continue
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
-                        sum/=(weight*datakun[tmp2])#(weight*datakun[tmp2])
+                        sum/=weight*get_weight_fast(str(train_num[xx+1]),str(xxx))
                 if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                     sum*=3.0    
                 #else:
@@ -1287,18 +1201,19 @@ def quiz_solve(loop,o,add,q):
         for xyy in quiz2:
             tmpz=str(x_all[fg])+","+str(xyy)
             ctt+=1
-            if tmpz not in datakun:
+            wqi = get_weight_fast(str(x_all[fg]), str(xyy))
+            if wqi==0:
                 ht/=1.2
-            if tmpz in datakun:
+            if wqi!=0:
                 wt=1.0
                 if ctt < 5:
                     wt=3.0
-                ht*=wt*datakun[tmpz]
+                ht*=wt*get_weight_fast(str(x_all[fg]),str(xyy))
                 hr=True
                 if str(xyy) in NoAns:
                     if NoAns[str(xyy)] > TABOO:
                         if str(xyy).lower() != "water" and str(xyy).lower() != "1":
-                            ht/=(wt*datakun[tmpz])#(weight*datakun[tmp2])
+                            ht/=(wt*get_weight_fast(str(x_all[fg]),str(xyy)))
                             hr=False                
                     if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
                         ht*=3.0
@@ -1375,25 +1290,13 @@ def quiz_solve(loop,o,add,q):
             if sz < 0.8:
                 print("Eval:A")
             else:
-                if mode=="4":
-                    for yyy in quiz2:
-                        tp1 = str(ans)+","+str(yyy)
-                        tp2 = str(yyy)+","+str(ans)
-                        if tp1 in datakun:
-                            datakun[tp1]+=1
-                        else:
-                            datakun[tp1]=1
-                        if tp2 in datakun:
-                            datakun[tp2]+=1
-                        else:
-                            datakun[tp2]=1
                 print("Eval:S")               
     print("Words:"+str(counter))
     mem = psutil.virtual_memory()
     total_gb = mem.total / (1024**3)
     print("Mem:"+str(mem.percent)+"%"+"/"+str(round(total_gb,2))+"GB")
     print("Docs:"+str(len(meta)))
-    print("Params:"+str(len(datakun)))
+    print("Params:"+str(len(w_data)))
     query1=quiz.split()
     query2=""
     zz=len(x_all)
