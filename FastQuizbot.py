@@ -27,6 +27,8 @@ import gc
 from collections import defaultdict
 from bisect import bisect_left
 from functools import lru_cache
+import nltk
+from nltk.corpus import wordnet as wn
 
 strr=""
 meta=""
@@ -796,7 +798,6 @@ def check_exists(x):
             return True
     return False
 
-
 ok=0
 ng=0
 mode=""
@@ -819,6 +820,42 @@ def remove_duplicates_sorted(lst):
         if lst[i] != lst[i-1]:
             relt.append(lst[i])
     return relt
+
+def get_top_3_synonyms(word):
+    synonyms = []
+    seen = set()
+    clean_word = word.lower()
+    
+    seen.add(clean_word)
+
+    synsets = wn.synsets(word)
+    
+    for syn in synsets:
+        for lemma in syn.lemmas():
+            synonym = lemma.name().lower().replace('_', ' ')
+            
+            if synonym not in seen:
+                synonyms.append(synonym)
+                seen.add(synonym)
+                
+                if len(synonyms) >= 3:
+                    return synonyms
+
+    return synonyms
+
+def get_one_synonym(word):
+    synsets = wn.synsets(word)
+    
+    clean_word = word.lower()
+
+    for syn in synsets:
+        for lemma in syn.lemmas():
+            synonym = lemma.name().lower().replace('_', ' ')
+            
+            if synonym != clean_word:
+                return synonym
+                
+    return None
 
 def quiz_solve(loop,o,add,q):
 
@@ -1040,14 +1077,26 @@ def quiz_solve(loop,o,add,q):
         if strl in ngram:
             sum=1.0
             continue
+        syn = get_one_synonym(str(train_num[xx+1]))
+        found_syn=False
+        go_syn=False
+        if syn:
+            found_syn=True
         for xxx in quiz2:
             cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
                 continue
-            dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())                
+            dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())
             if dist < 1:
-                sum=1.0
-                break
+                if found_syn == False:
+                    sum=1.0
+                    break
+                go_syn=True
+            if found_syn==True:
+                dist2 = Levenshtein.distance(str(syn).upper(), str(xxx).upper())
+                if dist2 < 1:
+                    go_syn=False
+                    sum*=100.0
             bbb=False
             if is_include(str(train_num[xx+1]),str(xxx))==True:
                 #include[str(train_num[xx+1])]=True
@@ -1083,7 +1132,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="titan":
+                #if str(train_num[xx+1]).lower()=="love":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="louispasteur":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -1104,8 +1153,11 @@ def quiz_solve(loop,o,add,q):
                 #if str(train_num[xx+1])=="Kayak":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1])=="Reason":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx])) 
-        dic2[str(train_num[xx+1])]=round(sum,2)
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+        if go_syn==False:
+            dic2[str(train_num[xx+1])]=round(sum,2)
+        else:
+            dic2[str(syn)]=round(sum,2)
         if sum>maxsum:
             maxsum=sum
             ans=train_num[xx+1]
