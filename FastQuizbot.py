@@ -843,7 +843,7 @@ def get_top_3_synonyms(word):
 
     return synonyms
 
-def get_one_synonym(word):
+def get_one_synonym(word,quiz_xxx):
     synsets = wn.synsets(word)
     
     clean_word = word.lower()
@@ -853,7 +853,8 @@ def get_one_synonym(word):
             synonym = lemma.name().lower().replace('_', ' ')
             
             if synonym != clean_word:
-                return synonym
+                if str(synonym) not in quiz_xxx:
+                    return synonym
                 
     return None
 
@@ -901,6 +902,11 @@ def quiz_solve(loop,o,add,q):
     if len(add)>0:
         quiz+=add+" "
     quiz2 = quiz.split()
+
+    quiz_xxx=[]
+
+    for i in range(len(quiz2)):
+        quiz_xxx.append(str(quiz2[i]).lower())
 
     #for i in range(len(quiz2)):
         #quiz2[i]=str(quiz2[i]).lower()
@@ -1077,7 +1083,7 @@ def quiz_solve(loop,o,add,q):
         if strl in ngram:
             sum=1.0
             continue
-        syn = get_one_synonym(str(train_num[xx+1]))
+        syn = get_one_synonym(str(train_num[xx+1]),quiz_xxx)
         found_syn=False
         go_syn=False
         if syn:
@@ -1132,7 +1138,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="love":
+                #if str(train_num[xx+1]).lower()=="henryford":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="louispasteur":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
