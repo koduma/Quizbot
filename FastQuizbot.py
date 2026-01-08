@@ -651,9 +651,7 @@ def apply_rrf(rankings_lists, weights=None, k=60):
     return final_ranking
 
 for l in range(len(meta)):
-
     reading=True
-
     try:
         with open("datakun3.txt", "r") as f:
             for line in f:
@@ -670,35 +668,66 @@ for l in range(len(meta)):
                 if current_index % 100000==0:
                     print("idx="+str(current_index)+"/"+str(LIMIT_P))
         offsets.append(current_index)
+    except Exception as e:
+        print("datakun3 load error:", e)
+        reading=False
+        # 重大エラーなのでループ抜ける（再読み込みを防ぐ）
+        break
+
+    try:
         with open('./train2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
-                key=get_key(str(line))
+                key=sys.intern(get_key(str(line)))
                 val=get_val(str(line))
                 train[str(key)]=int(val)
-                
+    except Exception as e:
+        print("train2 load error:", e)
+        reading=False
+        break
+
+    try:
         with open('./train_num2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
-                val=get_val(str(line))
+                val=sys.intern(get_val(line))
                 if str(key)!="54233@":
                     train_num[int(key)]=str(val)
+    except Exception as e:
+        print("train_num2 load error:", e)
+        reading=False
+        break
+
+    try:
         with open('./NoAns2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 key=get_key(str(line))
-                val=get_val(str(line))
-                NoAns[str(key)]=int(val)
-                
+                val_str=get_val(str(line))
+                try:
+                    val_int = int(val_str)
+                except ValueError:
+                    # skip malformed line
+                    continue
+                if val_int <= TABOO or key.lower() in ("water","1"):
+                    NoAns[sys.intern(key)] = val_int
+    except Exception as e:
+        print("NoAns2 load error:", e)
+        reading=False
+        break
+
+    try:
         with open('./counter2.txt') as f:
             for line in f:
                 line=line.replace('\n',"")
                 counter=int(line)
-        train_num[54233]="@"#@が連続しているとget_keyやget_valは間違える
-    
-    except Exception:
+    except Exception as e:
+        print("counter2 load error:", e)
         reading=False
+        break
+
+    train_num[54233]="@"#@が連続しているとget_keyやget_valは間違える
 
     if reading==True:
         print("reading_ok")
