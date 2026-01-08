@@ -1,6 +1,7 @@
 #map[過去単語,今単語]学習+ビームサーチ+強化学習
 #source .venv/bin/activate
 #venv上でpip install -r requirements.txt
+from array import array
 import sqlite3
 import math
 import os
@@ -60,9 +61,9 @@ TABOO = 15000
 RARE = 1600
 docs = 0
 
-offsets = []
-indices = []
-w_data = []
+offsets = array('I')
+indices = array('I')
+w_data = array('H')
 
 current_index = 0 
 last_p_id = -1
@@ -702,6 +703,7 @@ for l in range(len(meta)):
     if reading==True:
         print("reading_ok")
         break
+
 
 @lru_cache(maxsize=100000)
 def get_weight_fast(parent_word, child_word):
