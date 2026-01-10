@@ -1122,12 +1122,12 @@ def quiz_solve(loop,o,add,q):
         if syn:
             found_syn=True
         for xxx in quiz2:
-            cnt+=1
             if str(xxx) in NoAns:
                 if NoAns[str(xxx)] > TABOO:
                     continue
             else:
                 continue
+            cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
                 continue
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())
