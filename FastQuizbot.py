@@ -1123,6 +1123,11 @@ def quiz_solve(loop,o,add,q):
             found_syn=True
         for xxx in quiz2:
             cnt+=1
+            if str(xxx) in NoAns:
+                if NoAns[str(xxx)] > TABOO:
+                    continue
+            else:
+                continue
             if str(xxx)=="?" or str(xxx)=="!":
                 continue
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())
@@ -1316,9 +1321,31 @@ def quiz_solve(loop,o,add,q):
     print("\n")
     take=dict()
     for fg in range(len(x_all)):
-        ht=1.0
+        target_word = str(x_all[fg])
+        if target_word in train:
+            target_id = train[target_word]
+        else:
+            target_id = -1 
+            
+        ht = 1.0
+        wqa = get_weight_fast(target_word, str(hint))
+        
+        if target_id != -1:
+            if wqa != 0:
+                ht = float(pow(2, maxhit-1))
+                # uniq配列の参照も正しいIDで！
+                if target_id in uniq:
+                    ht *= uniq[target_id]
+            else:
+                if target_id in uniq:
+                    ht = uniq[target_id]
         ctt=-1
         for xyy in quiz2:
+            if str(xyy) in NoAns:
+                if NoAns[str(xyy)] > TABOO:
+                    continue
+            else:
+                continue
             tmpz=str(x_all[fg])+","+str(xyy)
             ctt+=1
             wqi = get_weight_fast(str(x_all[fg]), str(xyy))
