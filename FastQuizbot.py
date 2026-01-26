@@ -1098,6 +1098,8 @@ def quiz_solve(loop,o,add,q):
             continue
         else:
             ph+=1
+        if (xx + 1) not in train_num:
+            continue
         if len(train_num[xx+1])==0:
             continue
         if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1]).lower()!="1":
