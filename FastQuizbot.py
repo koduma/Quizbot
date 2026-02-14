@@ -22,7 +22,8 @@ from bs4 import BeautifulSoup
 from rank_bm25 import BM25Okapi
 import string
 import difflib
-from sentence_transformers import SentenceTransformer, util
+# ==== 変更点: CrossEncoderをインポート ====
+from sentence_transformers import CrossEncoder
 import torch
 import gc
 from collections import defaultdict
@@ -39,7 +40,8 @@ train_num = dict()
 datakun = dict()
 NoAns = dict()
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
+# ==== 変更点: 高速・高精度なCross-encoderモデルをロード ====
+model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
 with open("./metadata2.txt") as f:
     for line in f:
@@ -629,8 +631,8 @@ def calculate_order_score(s, t):#s=クイズ文文字列,t=enwiki説明文文字
 
 def apply_rrf(rankings_lists, weights=None, k=60):
     """
-    rankings_lists: [BoWリスト, Jaccardリスト, Orderリスト, BM25リスト, SentenceTransformerリスト]
-    weights: [BoW重み, Jaccard重み, Order重み, BM25重み,SentenceTransformer重み]
+    rankings_lists: [BoWリスト, Jaccardリスト, Orderリスト, BM25リスト, CrossEncoderリスト]
+    weights: [BoW重み, Jaccard重み, Order重み, BM25重み,CrossEncoder重み]
     """
     rrf_scores = {}
     
@@ -1178,7 +1180,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="henryford":
+                #if str(train_num[xx+1]).lower()=="vegetable":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="louispasteur":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -1251,22 +1253,11 @@ def quiz_solve(loop,o,add,q):
     print("\n")
     #print("BoW_Top5:",end="")
     #print(g[:5])
+    
+    # ==== 変更点: Wikipediaデータ取得を先に実行し、Cross-encoder用テキストを準備 ====
     candidate_texts = []
     valid_candidates = []
-    quiz_embedding = model.encode(quiz, convert_to_tensor=True)
-    candidate_embeddings = model.encode(x_all, convert_to_tensor=True) 
-    cosine_scores = util.cos_sim(quiz_embedding, candidate_embeddings)[0]
-    rlts = []
-    for i, sre in enumerate(cosine_scores):
-        rlts.append((x_all[i], sre.item()))
-        
-    rlts.sort(key=lambda x: x[1], reverse=True)
-
-    cos_rank = dict()
     
-    for name, scol in rlts:
-        cos_rank[str(name)]=scol
-        
     for cxt in range(len(x_all)):
         word = str(x_all[cxt])
         wiki_text = get_wikipedia_intro(word)
@@ -1276,7 +1267,21 @@ def quiz_solve(loop,o,add,q):
             
         candidate_texts.append(wiki_text)
         valid_candidates.append(word)
-            
+        
+    # ==== 変更点: Cross-encoderによる精密評価 ====
+    # 質問文と、Wikipediaテキスト（空なら単語自体）をペアにして推論
+    # （※テキストが長すぎるとメモリ・処理を食うため、先頭1000文字程度に制限）
+    pairs = []
+    for i in range(len(valid_candidates)):
+        text_for_cross = candidate_texts[i][:1000] if candidate_texts[i] else valid_candidates[i]
+        pairs.append([quiz, text_for_cross])
+        
+    cross_scores = model.predict(pairs)
+    
+    cross_rank = dict()
+    for i in range(len(valid_candidates)):
+        cross_rank[valid_candidates[i]] = float(cross_scores[i])
+        
     tokenized_corpus = [preprocess_text(doc) for doc in candidate_texts]
     tokenized_query = preprocess_text(quiz)
     bm25 = BM25Okapi(tokenized_corpus)
@@ -1300,27 +1305,23 @@ def quiz_solve(loop,o,add,q):
     rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:15]
     rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
     rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
-    rt4 = sorted(cos_rank.items(), key=lambda x: x[1], reverse=True)[:15]    
-    #print("Jaccard_Top5:",end="")
-    #print(rt[:5])
-    #print("Order_Top5:",end="")
-    #print(rt2[:5])
-    #print("BM25_Top5:",end="")
-    #print(rt3[:5])
-    #print("Cos_Top5:",end="")
-    #print(rt4[:5])
+    
+    # ==== 変更点: Cross_Top5 を用意 ====
+    rt4 = sorted(cross_rank.items(), key=lambda x: x[1], reverse=True)[:15]    
+
     # ループで整形して表示
     metrics = [
     ("BoW_Top5", g),
     ("Jaccard_Top5", rt),
     ("Order_Top5", rt2),
     ("BM25_Top5", rt3),
-    ("Cos_Top5", rt4)
+    ("Cross_Top5", rt4) # ラベル変更
     ]
     for label, data in metrics:
         formatted_items = [f"('{name}', {score:.4g})" for name, score in data[:5]]
         print(f"{label}:[{', '.join(formatted_items)}]")
     print("\n")
+    
     take=dict()
     for fg in range(len(x_all)):
         target_word = str(x_all[fg])
@@ -1384,7 +1385,7 @@ def quiz_solve(loop,o,add,q):
                     print(str(tmpz)+",score="+str(ht))
     ans_ja=""
     if calc_flag==False:
-        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1,0.1], k=60)
+        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1, 0.1], k=60)
         print("\n")
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
@@ -1439,7 +1440,7 @@ def quiz_solve(loop,o,add,q):
             if sz < 0.8:
                 print("Eval:A")
             else:
-                print("Eval:S")               
+                print("Eval:S")                
     print("Words:"+str(counter))
     mem = psutil.virtual_memory()
     total_gb = mem.total / (1024**3)
