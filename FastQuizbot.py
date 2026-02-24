@@ -31,6 +31,7 @@ from bisect import bisect_left
 from functools import lru_cache
 import nltk
 from nltk.corpus import wordnet as wn
+import wps
 
 strr=""
 meta=""
@@ -58,7 +59,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 116
+PROBLEM = 118
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -843,7 +844,7 @@ mode=input()
 #mode="3"
 
 if mode=="3":
-    PROBLEM=116
+    PROBLEM=118
 else:
     PROBLEM=1
 
@@ -1212,7 +1213,7 @@ def quiz_solve(loop,o,add,q):
     tmp_quiz=quiz        
     tmp_quiz2=fix_expression(tmp_quiz)
     i1,i2=calculator(tmp_quiz2)
-    calc_flag = False
+    calc_flag = 0#0=クイズ、1=計算、2=算数文章題
     #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
     if i1>=2:
         sco=0.0
@@ -1225,7 +1226,16 @@ def quiz_solve(loop,o,add,q):
         if sco>maxsum:
             maxsum=round(sco,2)
             ans=str(i2)
-            calc_flag = True
+            calc_flag = 1
+    if calc_flag==0:
+        is_wp=wps.check_wp(quiz)
+        if is_wp==True:
+            calc_flag=2
+            bt=wps.solve_math_problem(quiz)
+            if bt == None:
+                calc_flag=0
+            else:
+                ans=str(bt)
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:15]
     if len(g) == 0:
         print("Answer_ja:未知")
@@ -1384,7 +1394,7 @@ def quiz_solve(loop,o,add,q):
                 else:
                     print(str(tmpz)+",score="+str(ht))
     ans_ja=""
-    if calc_flag==False:
+    if calc_flag==0:
         final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1, 0.1], k=60)
         print("\n")
         print("Final RRF Ranking:")
@@ -1428,7 +1438,7 @@ def quiz_solve(loop,o,add,q):
         sz=take[str(ans)]/divd
     else:
         sz=0.0
-    if calc_flag ==True:
+    if calc_flag > 0:
         sz=1.0
     print("Confidence:"+'{:.3f}'.format(sz))
     if sz < 0.5:
