@@ -32,6 +32,7 @@ from functools import lru_cache
 import nltk
 from nltk.corpus import wordnet as wn
 import wps
+import time
 
 strr=""
 meta=""
@@ -735,7 +736,6 @@ for l in range(len(meta)):
     if reading==True:
         print("reading_ok")
         break
-
 
 @lru_cache(maxsize=100000)
 def get_weight_fast(parent_word, child_word):
@@ -1533,7 +1533,9 @@ elif mode=="1":
         q = q.replace("@@@", "")
         if o == False:
             q=qz
-        qz=q    
+        qz=q
+        if add=="":
+            start_time = time.time()
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
             print("ReThinking...")
@@ -1542,6 +1544,9 @@ elif mode=="1":
         else:
             o=True
             add=""
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"CalcTime: {elapsed_time:.3f} sec")
             
 elif mode=="4":
     o=True
