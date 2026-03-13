@@ -1395,15 +1395,19 @@ def quiz_solve(loop,o,add,q):
                     print(str(tmpz)+",score="+str(ht))
     ans_ja=""
     if calc_flag==0:
-        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1, 0.1], k=60)
+        top_cross_word, top_cross_score = rt4[0]
+        if top_cross_score >= 3.0:
+            final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[0.1, 0.1, 0.1, 0.1, 10.0], k=60)
+        else:
+            final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1, 0.1], k=60)
         print("\n")
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
             print(f"{rank}. {word} (Score: {score:.5f})")
-            if final_results:
-                ans = final_results[0][0]
-                if y_all[0] < 1.01:
-                    ans="Unknown"
+        if final_results:
+            ans = final_results[0][0]
+            if y_all[0] < 1.01:
+                ans="Unknown"
     try:
         ans_ja = GoogleTranslator(source='en', target='ja').translate(str(ans))
     except Exception:
