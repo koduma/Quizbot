@@ -64,6 +64,7 @@ PROBLEM = 118
 TABOO = 15000
 RARE = 1600
 docs = 0
+pick = 15
 
 offsets = array('I')
 indices = array('I')
@@ -1236,7 +1237,7 @@ def quiz_solve(loop,o,add,q):
                 calc_flag=0
             else:
                 ans=str(bt)
-    g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:15]
+    g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:pick]
     if len(g) == 0:
         print("Answer_ja:未知")
         print("Answer_en:Unknown")
@@ -1312,12 +1313,12 @@ def quiz_solve(loop,o,add,q):
         order_rank[word] = bok
         bm25_rank[word] = bm25_scores[i]
             
-    rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:15]
-    rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:15]
-    rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:15]
+    rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:pick]
+    rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:pick]
+    rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:pick]
     
     # ==== 変更点: Cross_Top5 を用意 ====
-    rt4 = sorted(cross_rank.items(), key=lambda x: x[1], reverse=True)[:15]    
+    rt4 = sorted(cross_rank.items(), key=lambda x: x[1], reverse=True)[:pick]    
 
     # ループで整形して表示
     metrics = [
@@ -1397,9 +1398,14 @@ def quiz_solve(loop,o,add,q):
     if calc_flag==0:
         top_cross_word, top_cross_score = rt4[0]
         if top_cross_score >= 3.0:
-            final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[0.1, 0.1, 0.1, 0.1, 10.0], k=60)
+            weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#cross=10.0
+        elif top_cross_score >= 2.0:
+            weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,cross=10.0
+        elif top_cross_score >= 1.0:
+            weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,cross=2.0
         else:
-            final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=[10.0, 0.1, 0.1, 0.1, 0.1], k=60)
+            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
+        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
         print("\n")
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
