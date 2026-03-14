@@ -1556,7 +1556,7 @@ elif mode=="1":
             add=""
             end_time = time.time()
             elapsed_time = end_time - start_time
-            print(f"CalcTime: {elapsed_time:.3f} sec")
+            print(f"CalcTime: {elapsed_time:.0f} sec")
             
 elif mode=="4":
     o=True
