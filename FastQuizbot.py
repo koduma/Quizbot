@@ -1,3 +1,4 @@
+
 #map[過去単語,今単語]学習+ビームサーチ+強化学習
 #source .venv/bin/activate
 #venv上でpip install -r requirements.txt
@@ -1442,6 +1443,8 @@ def quiz_solve(loop,o,add,q):
         if str(quiz2[kd]) in NoAns:
             if NoAns[str(quiz2[kd])] <= TABOO:
                 divd+=1.0
+        else:
+            divd+=1.0
     if divd < 0.1:
         divd=1.0
     if str(ans) in take:
