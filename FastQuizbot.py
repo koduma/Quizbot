@@ -739,8 +739,8 @@ for l in range(len(meta)):
         break
 
 @lru_cache(maxsize=100000)
-def get_weight_fast(parent_word, child_word):
-    global train, offsets, indices, w_data
+def get_weight_fast(parent_word, child_word, raw=False):
+    global train, offsets, indices, w_data, NoAns
     
     p_id = train.get(parent_word)
     c_id = train.get(child_word)
@@ -753,8 +753,25 @@ def get_weight_fast(parent_word, child_word):
     start_index = offsets[p_id]
     end_index = offsets[p_id + 1]
     idx = bisect_left(indices, c_id, lo=start_index, hi=end_index)
+    
     if idx < end_index and indices[idx] == c_id:
-        return w_data[idx]
+        raw_weight = w_data[idx]
+        
+        # is_include 等から呼ばれた場合は、生の重みを返す
+        if raw:
+            return raw_weight
+            
+        # --- 変更点: 対数(log)を使った安全なIDF計算 ---
+        # 辞書にない場合は出現回数1(最もレア)として扱う
+        freq = max(1.0, float(NoAns.get(str(child_word), 1)))
+        
+        # log10(15000/1) ≒ 4.17倍。 
+        # 線形(15000倍)のように爆発せず、1.0倍 〜 約5.1倍 の間でマイルドに重み付けされる
+        need = math.log10(float(TABOO) / freq) + 1.0
+
+        need = max(1.0,need)
+        
+        return raw_weight * need
         
     return 0
 
@@ -766,8 +783,8 @@ def is_include(s, t):
     if NoAns[s] > TABOO or NoAns[t] > TABOO:
         return False
         
-    w_st = get_weight_fast(s, t)
-    w_ts = get_weight_fast(t, s)
+    w_st = get_weight_fast(s, t,raw=True)
+    w_ts = get_weight_fast(t, s,raw=True)
 
     if w_st == 0 or w_ts == 0:
         return False
