@@ -320,19 +320,19 @@ def calculator(s):
         if xx == 1:
             ca=number1*number2
             if meter==True:
-                return len(s), f"{ca} m^2"
+                return len(s), f"{ca:g} m^2"
             elif centimeter==True:
-                return len(s), f"{ca*10000.0} cm^2"
+                return len(s), f"{ca*10000.0:g} cm^2"
             else:
-                return len(s),f"{ca}"
+                return len(s),f"{ca:g}"
         if xx == 2:
             ca=2.0*(number1+number2)
             if meter==True:
-                return len(s), f"{ca} m"
+                return len(s), f"{ca:g} m"
             elif centimeter==True:
-                return len(s), f"{ca*100.0} cm"
+                return len(s), f"{ca*100.0:g} cm"
             else:
-                return len(s),f"{ca}"
+                return len(s),f"{ca:g}"
     if xx == 3 or xx == 4:            
         first_match = matches[0]
         number1, unit1 = first_match[0], first_match[1]
@@ -346,11 +346,11 @@ def calculator(s):
         if xx == 4:
             ca=number1*number1
         if meter==True:
-            return len(s), f"{ca}π m^2"
+            return len(s), f"{ca:g}π m^2"
         elif centimeter==True:
-            return len(s), f"{ca*10000.0}π cm^2"
+            return len(s), f"{ca*10000.0:g}π cm^2"
         else:
-            return len(s),f"{ca}π"
+            return len(s),f"{ca:g}π"
 
     if xx == 5 or xx == 6:            
         first_match = matches[0]
@@ -365,11 +365,11 @@ def calculator(s):
         if xx == 6:
             ca=number1
         if meter==True:
-            return len(s), f"{ca}π m"
+            return len(s), f"{ca:g}π m"
         elif centimeter==True:
-            return len(s), f"{ca*100.0}π cm"
+            return len(s), f"{ca*100.0:g}π cm"
         else:
-            return len(s),f"{ca}π"
+            return len(s),f"{ca:g}π"
     
     #print(s)
 
@@ -478,10 +478,16 @@ def calculator(s):
             except Exception:
                 continue
 
-    ans=str(ans)
+    if isinstance(ans, float):
+        ans = f"{ans:g}"
+    else:
+        ans = str(ans)
+        
     if len(unit)>0:
         ans+=str(unit)
     return ev, ans
+
+
 def is_ja(s):
     return True if re.search(r'[ぁ-んァ-ン]', s) else False
 
