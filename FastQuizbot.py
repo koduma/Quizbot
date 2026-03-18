@@ -60,7 +60,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 123
+PROBLEM = 124
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -868,7 +868,7 @@ mode=input()
 #mode="3"
 
 if mode=="3":
-    PROBLEM=123
+    PROBLEM=124
 else:
     PROBLEM=1
 
