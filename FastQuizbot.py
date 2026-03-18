@@ -42,6 +42,8 @@ train_num = dict()
 datakun = dict()
 NoAns = dict()
 
+x_all_list=[]
+
 # ==== 変更点: 高速・高精度なCross-encoderモデルをロード ====
 model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
@@ -867,7 +869,7 @@ print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
 mode=input()
 #mode="3"
 
-if mode=="3":
+if mode=="3" or mode=="4":
     PROBLEM=124
 else:
     PROBLEM=1
@@ -1517,7 +1519,11 @@ def quiz_solve(loop,o,add,q):
         plt.barh(x_all[:5], y_all[:5])
         plt.gca().invert_yaxis()
         plt.show()
-
+    if mode=="4":
+        x_all_list.clear()
+        for ik in range(5):
+            x_all_list.append(str(x_all[ik]))
+            
     return 0,"end"
 
 
@@ -1587,21 +1593,29 @@ elif mode=="1":
 elif mode=="4":
     o=True
     add=""
+    nxt=""
+    roo=random.randint(0, PROBLEM-1)
+    with open('./testcase/quiz'+str(roo+1)+'.txt') as f:
+        for line in f:
+            nxt=nxt+line
+    q0=""
+    for k in range(len(nxt)):   
+        if is_sp(nxt[k]) > 0:
+            q0+=" "+nxt[k]+" "
+        else:
+            q0+=nxt[k]
+    cnt2=0
     while True:
         if o==True:
             print("------------------------------------------------------------------")
             q=""
-            d=dict()
-            c=0
-            while True:
-                if c >=10:
-                    break
-                r=random.randint(0, len(meta)-1)
-                if r not in d:
-                    q+=meta[r]+" "
-                    d[r]=1
-                    c+=1
             print("Input_Quiz:")
+            if cnt2 > 0:
+                for ik in range(5):
+                    q+=str(x_all_list[ik])+" "
+            else:
+                q=q0
+                cnt2=1
             print(q)
         a,b=quiz_solve(0,o,add,q)
         if a!=0:
