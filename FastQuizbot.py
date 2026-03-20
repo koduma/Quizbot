@@ -62,7 +62,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 125
+PROBLEM = 130
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -78,6 +78,28 @@ last_p_id = -1
 #translator = Translator()
 
 warnings.simplefilter('ignore')
+
+def is_same_word(s1, s2):
+    s1, s2 = s1.lower(), s2.lower()
+    
+    if s1 == s2:
+        return True
+        
+    len_s1, len_s2 = len(s1), len(s2)
+    max_len = max(len_s1, len_s2)
+    
+    if max_len <= 3:
+        return False
+        
+    if abs(len_s1 - len_s2) > max_len * 0.3:
+        return False
+        
+    ratio = difflib.SequenceMatcher(None, s1, s2).ratio()
+    
+    if max_len <= 5:
+        return ratio >= 0.85
+    else:
+        return ratio >= 0.80
 
 def get_ansi(tk):
 
@@ -870,7 +892,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=125
+    PROBLEM=130
 else:
     PROBLEM=1
 
@@ -1161,6 +1183,9 @@ def quiz_solve(loop,o,add,q):
             cnt+=1
             if str(xxx)=="?" or str(xxx)=="!":
                 continue
+            if is_same_word(str(xxx),str(train_num[xx+1]))==True:
+                sum=1.0
+                break
             dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())
             if dist < 1:
                 if found_syn == False:
