@@ -43,6 +43,7 @@ datakun = dict()
 NoAns = dict()
 
 x_all_list=[]
+ans_type=[]
 
 # ==== 変更点: 高速・高精度なCross-encoderモデルをロード ====
 model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
@@ -62,7 +63,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 130
+PROBLEM = 131
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -892,7 +893,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=130
+    PROBLEM=131
 else:
     PROBLEM=1
 
@@ -1289,6 +1290,7 @@ def quiz_solve(loop,o,add,q):
                 ans=str(bt)
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:pick]
     if len(g) == 0:
+        ans_type.append("Unknown")
         print("Answer_ja:未知")
         print("Answer_en:Unknown")
         if mode == "3":
@@ -1448,13 +1450,17 @@ def quiz_solve(loop,o,add,q):
     if calc_flag==0:
         top_cross_word, top_cross_score = rt4[0]
         if top_cross_score >= 3.0:
-            weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#cross=10.0
+            weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#Cross=10.0
+            ans_type.append("Cross=10.0")
         elif top_cross_score >= 2.0:
-            weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,cross=10.0
+            weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,Cross=10.0
+            ans_type.append("BoW=2.0,Cross=10.0")
         elif top_cross_score >= 1.0:
-            weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,cross=2.0
+            weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
+            ans_type.append("BoW=10.0,Cross=2.0")
         else:
             weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
+            ans_type.append("BoW=10.0")
         final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
         print("\n")
         print("Final RRF Ranking:")
@@ -1464,6 +1470,8 @@ def quiz_solve(loop,o,add,q):
             ans = final_results[0][0]
             if y_all[0] < 1.01:
                 ans="Unknown"
+    else:
+        ans_type.append("Calc=10.0")
     try:
         ans_ja = GoogleTranslator(source='en', target='ja').translate(str(ans))
     except Exception:
@@ -1661,4 +1669,4 @@ if mode=="3":
             print(str(WA[i])+",",end="")
         print(str(WA[len(WA)-1]))
         for i in range(len(WA)):
-            print("Truth:"+str(AC_ex[i])+",WA:"+str(WA_ex[i]))
+            print("Truth:"+str(AC_ex[i])+",WA:"+str(WA_ex[i])+",AnsType:"+str(ans_type[WA[i]-1]))
