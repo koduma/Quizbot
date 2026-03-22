@@ -80,6 +80,15 @@ last_p_id = -1
 
 warnings.simplefilter('ignore')
 
+def wilson_lower(k: float, n: float, z: float = 1.0) -> float:
+    if n <= 0:
+        return 0.0
+    p = k / n
+    denom = 1.0 + (z*z)/n
+    center = p + (z*z)/(2.0*n)
+    margin = z * math.sqrt((p*(1.0-p))/n + (z*z)/(4.0*n*n))
+    return (center - margin) / denom
+
 def is_same_word(s1, s2):
     s1, s2 = s1.lower(), s2.lower()
     
@@ -811,7 +820,7 @@ def is_include(s, t):
 
     if s not in NoAns or t not in NoAns:
         return False
-    if NoAns[s] > TABOO or NoAns[t] > TABOO:
+    if (NoAns[s] > TABOO and s.lower() not in ("water", "1")) or (NoAns[t] > TABOO and t.lower() not in ("water", "1")):
         return False
         
     w_st = get_weight_fast(s, t,raw=True)
@@ -943,6 +952,38 @@ def get_one_synonym(word,quiz_xxx):
                 
     return None
 
+def is_5W1H(t, s):
+    # t: クイズ文の単語リスト (quiz2)
+    # s: 正解候補単語 (xxx や train_num[xx+1] など)
+
+    # 1. チェックすべき疑問詞のセットを定義
+    q_words_target = {"who", "where", "when", "which", "what", "why", "how"}
+    
+    # 2. クイズ文(t)の中に、どの疑問詞が含まれているかを抽出する
+    found_q_words = set()
+    for word in t:
+        w_lower = str(word).lower()
+        if w_lower in q_words_target:
+            found_q_words.add(w_lower)
+            
+    # 3. 5W1Hがクイズ文になければ即return 1（足切りしない）
+    if len(found_q_words) == 0:
+        return 1
+        
+    # 4. クイズ文に「含まれていた疑問詞」に対してのみ、候補sとの重みを確認する
+    total_weight = 0
+    for qw in found_q_words:
+        # 大文字始まり（Who）と小文字（who）の両方のスコアを足す
+        total_weight += get_weight_fast(str(s), qw)
+        total_weight += get_weight_fast(str(s), qw.capitalize())
+        
+    # 5. クイズで聞かれている疑問詞との関連度が全く無ければ 0 を返す（足切り）
+    if total_weight < 1:
+        return 0
+        
+    return 1
+
+
 def quiz_solve(loop,o,add,q):
 
     global ok,ng
@@ -1029,7 +1070,7 @@ def quiz_solve(loop,o,add,q):
             for x in range(len(quiz2)):
                 if quiz2[xxx] in quiz2[x]:
                     if quiz2[xxx] in NoAns:
-                        if NoAns[quiz2[xxx]] <= TABOO:
+                        if NoAns[quiz2[xxx]] <= TABOO or str(quiz2[xxx]).lower() == "water" or str(quiz2[xxx]).lower()=="1":
                             hit+=1            
         if hit>maxhit:
             maxhit=hit
@@ -1158,6 +1199,8 @@ def quiz_solve(loop,o,add,q):
             continue
         if str(train_num[xx+1])=="Oconahua":
             continue
+        #if is_5W1H(quiz2, str(train_num[xx+1])) == 0:
+            #continue
         cnt=-1
         tmp=str(train_num[xx+1])+","+str(hint)
         wq = get_weight_fast(str(train_num[xx+1]), str(hint))
@@ -1177,7 +1220,7 @@ def quiz_solve(loop,o,add,q):
             found_syn=True
         for xxx in quiz2:
             if str(xxx) in NoAns:
-                if NoAns[str(xxx)] > TABOO:
+                if NoAns[str(xxx)] > TABOO and str(xxx).lower() != "water" and str(xxx).lower()!="1":
                     continue
             else:
                 continue
@@ -1408,7 +1451,7 @@ def quiz_solve(loop,o,add,q):
         ctt=-1
         for xyy in quiz2:
             if str(xyy) in NoAns:
-                if NoAns[str(xyy)] > TABOO:
+                if NoAns[str(xyy)] > TABOO and str(xyy).lower() not in ("water", "1"):
                     continue
             else:
                 continue
@@ -1431,16 +1474,16 @@ def quiz_solve(loop,o,add,q):
                     if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
                         ht*=3.0
                 if hr==True and (str(xyy) in NoAns):
-                    if NoAns[str(xyy)] <= TABOO:
+                    if (NoAns[str(xyy)] <= TABOO) or (str(xyy).lower()=="water") or (str(xyy).lower()=="1"):
                         if str(x_all[fg]) in take:
                             take[str(x_all[fg])]+=1.0
                         else:
                             take[str(x_all[fg])]=1.0
                 if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
-                    if NoAns[str(xyy)] <= TABOO:
+                    if NoAns[str(xyy)] <= TABOO or str(xyy).lower()=="water" or str(xyy).lower()=="1":
                         print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
                 elif str(xyy) in NoAns:
-                    if NoAns[str(xyy)] <= TABOO:
+                    if NoAns[str(xyy)] <= TABOO or str(xyy).lower()=="water" or str(xyy).lower()=="1":
                         print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
                 elif str(x_all[fg]) in NoAns:
                     print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
@@ -1500,25 +1543,28 @@ def quiz_solve(loop,o,add,q):
         if str(quiz2[kd]) in NoAns:
             if NoAns[str(quiz2[kd])] <= TABOO:
                 divd+=1.0
+            elif str(quiz2[kd]).lower()=="water" or str(quiz2[kd]).lower()=="1":
+                divd+=1.0
         else:
             if str(quiz2[kd]) not in train:
                 divd+=1.0
     if divd < 0.1:
-        divd=1.0
+        divd=1.0    
     if str(ans) in take:
-        sz=take[str(ans)]/divd
+        #sz=take[str(ans)]/divd
+        sz=wilson_lower(take[str(ans)], divd, z=1.0)
     else:
         sz=0.0
     if calc_flag > 0:
         sz=1.0
     print("Confidence:"+'{:.3f}'.format(sz))
-    if sz < 0.5:
+    if sz < 0.3:
         print("Eval:F") 
     else:
-        if sz < 0.7:
+        if sz < 0.45:
             print("Eval:C")
         else:
-            if sz < 0.8:
+            if sz < 0.6:
                 print("Eval:A")
             else:
                 print("Eval:S")                
