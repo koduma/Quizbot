@@ -63,7 +63,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 131
+PROBLEM = 132
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -902,7 +902,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=131
+    PROBLEM=132
 else:
     PROBLEM=1
 
@@ -1516,9 +1516,13 @@ def quiz_solve(loop,o,add,q):
     else:
         ans_type.append("Calc=10.0")
     try:
-        ans_ja = GoogleTranslator(source='en', target='ja').translate(str(ans))
+        translated = GoogleTranslator(source='en', target='ja').translate(str(ans))
+        if translated is not None:
+            ans_ja = translated
+        else:
+            ans_ja = str(ans)
     except Exception:
-        pass
+        ans_ja = str(ans)
     print("\n")    
     print("Answer_ja:"+ans_ja)    
     print("Answer_en:"+str(ans))
@@ -1600,7 +1604,8 @@ def quiz_solve(loop,o,add,q):
         plt.show()
     if mode=="4":
         x_all_list.clear()
-        for ik in range(5):
+        limit = min(5, len(x_all))
+        for ik in range(limit):
             x_all_list.append(str(x_all[ik]))
             
     return 0,"end"
@@ -1689,8 +1694,8 @@ elif mode=="4":
             print("------------------------------------------------------------------")
             q=""
             print("Input_Quiz:")
-            if cnt2 > 0:
-                for ik in range(5):
+            if cnt2 > 0 and len(x_all_list) > 0:
+                for ik in range(len(x_all_list)):
                     q+=str(x_all_list[ik])+" "
             else:
                 q=q0
