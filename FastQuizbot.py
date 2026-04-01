@@ -63,7 +63,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 132
+PROBLEM = 142
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -125,7 +125,7 @@ def get_ansi(tk):
             fret+=ret[len(ret)-i-1]
         
     return fret
-
+@lru_cache(maxsize=10000)
 def get_wikipedia_intro(url: str) -> str:
     # 1. 入力の正規化
     if "wikipedia.org" in url:
@@ -778,7 +778,7 @@ for l in range(len(meta)):
         print("reading_ok")
         break
 
-@lru_cache(maxsize=100000)
+@lru_cache(maxsize=100000)#koko
 def get_weight_fast(parent_word, child_word, raw=False):
     global train, offsets, indices, w_data, NoAns
     
@@ -902,7 +902,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=132
+    PROBLEM=142
 else:
     PROBLEM=1
 
