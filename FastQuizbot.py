@@ -63,7 +63,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 142
+PROBLEM = 143
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -902,7 +902,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=142
+    PROBLEM=143
 else:
     PROBLEM=1
 
@@ -1263,14 +1263,14 @@ def quiz_solve(loop,o,add,q):
                 weight=1.0
                 if cnt < 5:
                     weight=3.0
-                sum*=weight*get_weight_fast(str(train_num[xx+1]),str(xxx))
+                sum*=weight*wqz
                 if xxx not in NoAns:
                     if is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                         sum*=3.0
                     continue
                 if NoAns[xxx] > TABOO:
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
-                        sum/=weight*get_weight_fast(str(train_num[xx+1]),str(xxx))
+                        sum/=weight*wqz
                 if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
                     sum*=3.0    
                 #else:
@@ -1464,12 +1464,12 @@ def quiz_solve(loop,o,add,q):
                 wt=1.0
                 if ctt < 5:
                     wt=3.0
-                ht*=wt*get_weight_fast(str(x_all[fg]),str(xyy))
+                ht*=wt*wqi
                 hr=True
                 if str(xyy) in NoAns:
                     if NoAns[str(xyy)] > TABOO:
                         if str(xyy).lower() != "water" and str(xyy).lower() != "1":
-                            ht/=(wt*get_weight_fast(str(x_all[fg]),str(xyy)))
+                            ht/=(wt*wqi)
                             hr=False                
                     if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
                         ht*=3.0
