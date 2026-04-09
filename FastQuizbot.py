@@ -63,7 +63,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 143
+PROBLEM = 146
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -902,7 +902,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=143
+    PROBLEM=146
 else:
     PROBLEM=1
 
@@ -1490,6 +1490,28 @@ def quiz_solve(loop,o,add,q):
                 else:
                     print(str(tmpz)+",score="+str(ht))
     ans_ja=""
+    divd=0.0
+    sz=0.0
+    for kd in range(len(quiz2)):
+        if str(quiz2[kd]) in NoAns:
+            if NoAns[str(quiz2[kd])] <= TABOO:
+                divd+=1.0
+            elif str(quiz2[kd]).lower()=="water" or str(quiz2[kd]).lower()=="1":
+                divd+=1.0
+        else:
+            if str(quiz2[kd]) not in train:
+                divd+=1.0
+    if divd < 0.1:
+        divd=1.0
+    conf=dict()
+    for kj in range(len(x_all)):
+        if str(x_all[kj]) in take:
+            conf[str(x_all[kj])]=wilson_lower(take[str(x_all[kj])], divd, z=1.0)
+        else:
+            conf[str(x_all[kj])]=0.0
+    maxconf=0.0
+    for kn in range(len(x_all)):
+        maxconf=max(maxconf,conf[str(x_all[kn])])
     if calc_flag==0:
         top_cross_word, top_cross_score = rt4[0]
         if top_cross_score >= 3.0:
@@ -1502,8 +1524,12 @@ def quiz_solve(loop,o,add,q):
             weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
             ans_type.append("BoW=10.0,Cross=2.0")
         else:
-            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
-            ans_type.append("BoW=10.0")
+            if maxconf < 0.2:
+                weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0]#Flat
+                ans_type.append("Flat")
+            else:
+                weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
+                ans_type.append("BoW=10.0")
         final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
         print("\n")
         print("Final RRF Ranking:")
@@ -1541,21 +1567,7 @@ def quiz_solve(loop,o,add,q):
             ng+=1
             print("State:WA")
             print("Truth:"+str(truth))
-    divd=0.0
-    sz=0.0
-    for kd in range(len(quiz2)):
-        if str(quiz2[kd]) in NoAns:
-            if NoAns[str(quiz2[kd])] <= TABOO:
-                divd+=1.0
-            elif str(quiz2[kd]).lower()=="water" or str(quiz2[kd]).lower()=="1":
-                divd+=1.0
-        else:
-            if str(quiz2[kd]) not in train:
-                divd+=1.0
-    if divd < 0.1:
-        divd=1.0    
     if str(ans) in take:
-        #sz=take[str(ans)]/divd
         sz=wilson_lower(take[str(ans)], divd, z=1.0)
     else:
         sz=0.0
