@@ -63,7 +63,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 146
+PROBLEM = 150
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -902,7 +902,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=146
+    PROBLEM=150
 else:
     PROBLEM=1
 
@@ -1114,76 +1114,10 @@ def quiz_solve(loop,o,add,q):
             break
         
         per=xx/(counter+1)
-        if per < 0.1:
-            idx = 0
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.2:
-            idx = 1
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.3:
-            idx = 2
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.4:
-            idx = 3
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.5:
-            idx = 4
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.6:
-            idx = 5
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.7:
-            idx = 6
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.8:
-            idx = 7
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        elif per < 0.9:
-            idx = 8
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
-        else:
-            idx = 9
-            if printed[idx]==False:
-                per*=100.0
-                per=round(per,1)
-                print("thinking..."+str(per)+"%")
-                printed[idx]=True
+        idx = min(9, int(per * 10))
+        if not printed[idx]:
+            print(f"thinking...{idx * 10.0}%")
+            printed[idx] = True
         if xx == counter-2:
             print("complete")
         sum=1.0    
