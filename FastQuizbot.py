@@ -1676,7 +1676,7 @@ elif mode=="4":
                     wiki_text = get_wikipedia_intro(str(x_all_list[ik]))
                     if wiki_text is None:
                         wiki_text = ""
-                    elif ik > 0:
+                    else:
                         sentences = sent_tokenize(wiki_text)
                         wiki_text = " ".join(sentences[:2])
                         q=wiki_text
