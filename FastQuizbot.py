@@ -63,7 +63,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 150
+PROBLEM = 152
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -892,6 +892,36 @@ def check_exists(x):
             return True
     return False
 
+def get_children_of_word(s: str) -> list:
+    global train, train_num, offsets, indices
+    
+    result_list = []
+    
+    if s not in train:
+        return result_list
+        
+    p_id = train[s]
+    
+    if p_id + 1 >= len(offsets):
+        return result_list
+        
+    start = offsets[p_id]
+    end = offsets[p_id + 1]
+    
+    for i in range(start, end):
+        c_id = indices[i]
+        if c_id in train_num:
+            result_list.append(train_num[c_id])
+
+    sorted_list = sorted(result_list, key=str.lower)
+            
+    return sorted_list
+
+#cn = get_children_of_word("Apple")
+#cn2 = get_children_of_word("GNU")
+#print(cn)
+#print(cn2)
+
 ok=0
 ng=0
 mode=""
@@ -902,7 +932,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=150
+    PROBLEM=152
 else:
     PROBLEM=1
 
@@ -981,8 +1011,7 @@ def is_5W1H(t, s):
     if total_weight < 1:
         return 0
         
-    return 1
-
+    return 1    
 
 def quiz_solve(loop,o,add,q):
 
@@ -1210,7 +1239,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="vegetable":
+                #if str(train_num[xx+1]).lower()=="gnu":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="louispasteur":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
