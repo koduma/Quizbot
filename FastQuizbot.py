@@ -33,6 +33,7 @@ import nltk
 from nltk.corpus import wordnet as wn
 import wps
 import time
+from nltk.tokenize import sent_tokenize
 
 strr=""
 meta=""
@@ -1582,6 +1583,7 @@ def quiz_solve(loop,o,add,q):
         limit = min(5, len(x_all))
         for ik in range(limit):
             x_all_list.append(str(x_all[ik]))
+        random.shuffle(x_all_list)
             
     return 0,"end"
 
@@ -1671,7 +1673,15 @@ elif mode=="4":
             print("Input_Quiz:")
             if cnt2 > 0 and len(x_all_list) > 0:
                 for ik in range(len(x_all_list)):
-                    q+=str(x_all_list[ik])+" "
+                    wiki_text = get_wikipedia_intro(str(x_all_list[ik]))
+                    if wiki_text is None:
+                        wiki_text = ""
+                    elif ik > 0:
+                        sentences = sent_tokenize(wiki_text)
+                        wiki_text = " ".join(sentences[:2])
+                        q=wiki_text
+                        print("Theme:"+str(x_all_list[ik]))
+                        break
             else:
                 q=q0
                 cnt2=1
