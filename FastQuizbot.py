@@ -64,7 +64,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 152
+PROBLEM = 157
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -918,10 +918,46 @@ def get_children_of_word(s: str) -> list:
             
     return sorted_list
 
-#cn = get_children_of_word("Apple")
-#cn2 = get_children_of_word("GNU")
-#print(cn)
-#print(cn2)
+
+def wordev(a, b):
+    cn_a = get_children_of_word(str(a))
+    cn_b = get_children_of_word(str(b))
+    
+    if not cn_a or not cn_b:
+        return 0.0
+
+    score = 0.0
+    valid_comparisons = 0
+
+    for child in cn_a:
+        if child not in NoAns or NoAns[str(child)] > TABOO:
+            continue
+            
+        weight = get_weight_fast(str(b), str(child))
+        
+        if weight != 0:
+            score += weight
+            valid_comparisons += 1
+    for child in cn_b:
+        if child not in NoAns or NoAns[str(child)] > TABOO:
+            continue
+            
+        weight = get_weight_fast(str(a), str(child))
+        
+        if weight != 0:
+            score += weight
+            valid_comparisons += 1
+
+    if valid_comparisons > 0:
+        return score / valid_comparisons
+    else:
+        return 0.0
+
+#print("Apple,Banana:"+str(wordev("Apple","Banana")))
+#print("Apple,fruit:"+str(wordev("Apple","fruit")))
+#print("Banana,fruit:"+str(wordev("Banana","fruit")))
+#print("Apple,car:"+str(wordev("Apple","car")))
+#print("Banana,car:"+str(wordev("Banana","car")))
 
 ok=0
 ng=0
@@ -933,7 +969,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=152
+    PROBLEM=157
 else:
     PROBLEM=1
 
@@ -1242,9 +1278,9 @@ def quiz_solve(loop,o,add,q):
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
                 #if str(train_num[xx+1]).lower()=="gnu":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="louispasteur":
+                #if "entanglement" in str(train_num[xx+1]).lower():
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="kumbhalgarhfort":
+                #if str(train_num[xx+1]).lower()=="enigma":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="workinganimal":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
