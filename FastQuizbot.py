@@ -34,6 +34,7 @@ from nltk.corpus import wordnet as wn
 import wps
 import time
 from nltk.tokenize import sent_tokenize
+from collections import Counter
 
 strr=""
 meta=""
@@ -42,6 +43,7 @@ train = dict()
 train_num = dict()
 datakun = dict()
 NoAns = dict()
+delta_weights = dict()
 
 x_all_list=[]
 ans_type=[]
@@ -64,7 +66,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 157
+PROBLEM = 162
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -80,6 +82,28 @@ last_p_id = -1
 #translator = Translator()
 
 warnings.simplefilter('ignore')
+
+def load_diff_weights():
+    global delta_weights
+    if not os.path.exists('datakun3_diff.txt'):
+        return
+        
+    try:
+        with open('datakun3_diff.txt', 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(',')
+                if len(parts) == 3:
+                    p_id = int(parts[0])
+                    c_id = int(parts[1])
+                    weight_val = int(parts[2].replace('+', ''))
+                    delta_weights[(p_id, c_id)] = delta_weights.get((p_id, c_id), 0) + weight_val
+                    
+        print(f"datakun3_diff.txt loaded: {len(delta_weights)} diff weights restored.")
+    except Exception as e:
+        print("datakun3_diff.txt load error:", e)
 
 def wilson_lower(k: float, n: float, z: float = 1.0) -> float:
     if n <= 0:
@@ -774,47 +798,50 @@ for l in range(len(meta)):
         break
 
     train_num[54233]="@"#@が連続しているとget_keyやget_valは間違える
+    
+    if reading == True:
+        load_diff_weights()
 
     if reading==True:
         print("reading_ok")
         break
 
-@lru_cache(maxsize=100000)#koko
+@lru_cache(maxsize=100000)
 def get_weight_fast(parent_word, child_word, raw=False):
-    global train, offsets, indices, w_data, NoAns
+    global train, offsets, indices, w_data, NoAns, delta_weights
     
     p_id = train.get(parent_word)
     c_id = train.get(child_word)
     
     if p_id is None or c_id is None:
         return 0
-    if p_id + 1 >= len(offsets):
+        
+    raw_weight = 0
+    # 既存の静的データからの重み取得
+    if p_id + 1 < len(offsets):
+        start_index = offsets[p_id]
+        end_index = offsets[p_id + 1]
+        idx = bisect_left(indices, c_id, lo=start_index, hi=end_index)
+        
+        if idx < end_index and indices[idx] == c_id:
+            raw_weight = w_data[idx]
+            
+    # ==== 追加: 動的に学習した重み（+4など）を加算 ====
+    raw_weight += delta_weights.get((p_id, c_id), 0)
+    
+    if raw_weight == 0:
         return 0
         
-    start_index = offsets[p_id]
-    end_index = offsets[p_id + 1]
-    idx = bisect_left(indices, c_id, lo=start_index, hi=end_index)
+    # is_include 等から呼ばれた場合は、生の重みを返す
+    if raw:
+        return raw_weight
+        
+    # --- 対数(log)を使った安全なIDF計算 ---
+    freq = max(1.0, float(NoAns.get(str(child_word), 1)))
+    need = math.log10(float(TABOO) / freq) + 1.0
+    need = max(1.0, need)
     
-    if idx < end_index and indices[idx] == c_id:
-        raw_weight = w_data[idx]
-        
-        # is_include 等から呼ばれた場合は、生の重みを返す
-        if raw:
-            return raw_weight
-            
-        # --- 変更点: 対数(log)を使った安全なIDF計算 ---
-        # 辞書にない場合は出現回数1(最もレア)として扱う
-        freq = max(1.0, float(NoAns.get(str(child_word), 1)))
-        
-        # log10(15000/1) ≒ 4.17倍。 
-        # 線形(15000倍)のように爆発せず、1.0倍 〜 約5.1倍 の間でマイルドに重み付けされる
-        need = math.log10(float(TABOO) / freq) + 1.0
-
-        need = max(1.0,need)
-        
-        return raw_weight * need
-        
-    return 0
+    return raw_weight * need
 
 def is_include(s, t):
     global train, offsets, indices, w_data, NoAns, TABOO
@@ -969,7 +996,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=157
+    PROBLEM=162
 else:
     PROBLEM=1
 
@@ -1048,7 +1075,81 @@ def is_5W1H(t, s):
     if total_weight < 1:
         return 0
         
-    return 1    
+    return 1
+
+def reinforce_learning(quiz_text, truth_word):
+    global counter, train, train_num, NoAns, delta_weights
+    
+    # 1. 記号の除去（大文字を消さないように a-zA-Z としています）
+    clean_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', quiz_text)
+    raw_words = clean_text.split()
+    
+    words_to_learn = []
+    
+    for w in raw_words:
+        w_lower = w.lower()
+        
+        # --- preprocess_text のフィルター機能をここで再現 ---
+        if w_lower == "oconahua":
+            continue
+            
+        if w_lower not in ("water", "1"):
+            # 頻度(TABOO)チェック。大文字・小文字どちらかで超えていたら弾く
+            if NoAns.get(w, 0) > TABOO or NoAns.get(w_lower, 0) > TABOO:
+                continue
+        # ----------------------------------------------------
+        
+        # フィルターを生き残った単語だけ、オリジナル(大文字維持)と小文字の両方を登録
+        words_to_learn.append(w)
+        if w != w_lower:
+            words_to_learn.append(w_lower)
+
+    words_to_learn.append(truth_word)
+    if truth_word != truth_word.lower():
+        words_to_learn.append(truth_word.lower())
+
+    unique_words_to_register = list(set(words_to_learn))
+
+    # --- 以下、辞書登録と重み更新の処理は全く同じです ---
+    for w in unique_words_to_register:
+        if w not in train:
+            train[w] = counter
+            train_num[counter] = w
+            NoAns[w] = 1 
+            
+            with open('train2.txt', 'a', encoding='utf-8') as f:
+                f.write(f"{w}@{counter}\n")
+            with open('train_num2.txt', 'a', encoding='utf-8') as f:
+                f.write(f"{counter}@{w}\n")
+            with open('NoAns2.txt', 'a', encoding='utf-8') as f:
+                f.write(f"{w}@1\n")
+            
+            counter += 1
+            with open('counter2.txt', 'w', encoding='utf-8') as f:
+                f.write(str(counter) + "\n")
+
+    word_counts = Counter(words_to_learn)
+    p_id = train[truth_word]
+    diff_lines = []
+    
+    for w, count in word_counts.items():
+        c_id = train[w]
+        if p_id == c_id:
+            continue
+            
+        weight_to_add = 4 * count
+        
+        delta_weights[(p_id, c_id)] = delta_weights.get((p_id, c_id), 0) + weight_to_add
+        delta_weights[(c_id, p_id)] = delta_weights.get((c_id, p_id), 0) + weight_to_add
+        
+        diff_lines.append(f"{p_id},{c_id},+{weight_to_add}\n")
+        diff_lines.append(f"{c_id},{p_id},+{weight_to_add}\n")
+        
+    if diff_lines:
+        with open('datakun3_diff.txt', 'a', encoding='utf-8') as f:
+            f.writelines(diff_lines)
+            
+    print(f">> [Reinforcement] Learnt from WA. Updated weights for '{truth_word}'.")
 
 def quiz_solve(loop,o,add,q):
 
@@ -1278,9 +1379,9 @@ def quiz_solve(loop,o,add,q):
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
                 #if str(train_num[xx+1]).lower()=="gnu":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if "entanglement" in str(train_num[xx+1]).lower():
+                #if ("dining" in str(train_num[xx+1]).lower()) and ("philosophers" in str(train_num[xx+1]).lower())  and ("problem" in str(train_num[xx+1]).lower()):
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="enigma":
+                #if str(train_num[xx+1]).lower()=="bug(engineering)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="workinganimal":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -1352,6 +1453,7 @@ def quiz_solve(loop,o,add,q):
                 ng+=1
                 print("State:WA")
                 print("Truth:"+str(trut))
+                #reinforce_learning(quiz, str(trut))
         return 0,"end"
     x_all, y_all = zip(*g)
     if str(x_all[0]) in include:
@@ -1567,6 +1669,7 @@ def quiz_solve(loop,o,add,q):
             ng+=1
             print("State:WA")
             print("Truth:"+str(truth))
+            #reinforce_learning(quiz, str(truth))
     if str(ans) in take:
         sz=wilson_lower(take[str(ans)], divd, z=1.0)
     else:
