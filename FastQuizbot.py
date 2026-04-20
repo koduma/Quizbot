@@ -66,7 +66,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 162
+PROBLEM = 165
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -996,7 +996,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=162
+    PROBLEM=165
 else:
     PROBLEM=1
 
@@ -1381,9 +1381,11 @@ def quiz_solve(loop,o,add,q):
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if ("dining" in str(train_num[xx+1]).lower()) and ("philosophers" in str(train_num[xx+1]).lower())  and ("problem" in str(train_num[xx+1]).lower()):
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if "car" in str(train_num[xx+1]).lower():
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="bug(engineering)":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="workinganimal":
+                #if str(train_num[xx+1]).lower()=="car":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="benevolent":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -1614,6 +1616,10 @@ def quiz_solve(loop,o,add,q):
     maxconf=0.0
     for kn in range(len(x_all)):
         maxconf=max(maxconf,conf[str(x_all[kn])])
+    alp=dict()
+    RRF_A=[]
+    for ij in range(len(x_all)):
+        alp[str(x_all[ij])]=y_all[ij]
     if calc_flag==0:
         top_cross_word, top_cross_score = rt4[0]
         if top_cross_score >= 3.0:
@@ -1637,6 +1643,8 @@ def quiz_solve(loop,o,add,q):
         print("Final RRF Ranking:")
         for rank, (word, score) in enumerate(final_results, 1):
             print(f"{rank}. {word} (Score: {score:.5f})")
+            if len(RRF_A) <= 4:
+                RRF_A.append(str(word))
         if final_results:
             ans = final_results[0][0]
             if y_all[0] < 1.01:
@@ -1710,13 +1718,35 @@ def quiz_solve(loop,o,add,q):
                 print("GoogleAnswer_en:"+str(s_en))
                 break
     except Exception:
-        pass        
-    
-    if mode=="2":
-        plt.figure(figsize= (15,6))
-        plt.barh(x_all[:5], y_all[:5])
-        plt.gca().invert_yaxis()
+        pass
+    if mode == "2":
+        if len(RRF_A) != 5:
+            return 0, "end"
+        yy_all = []
+        for ij in range(len(RRF_A)):
+            yy_all.append(alp.get(str(RRF_A[ij]), 0.0001))
+        y_log = [-math.log2(y) for y in yy_all[:5]]
+        colors = ['green'] + ['red'] * (len(RRF_A[:5]) - 1)
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_facecolor('#E6F0F9')
+        fig.patch.set_facecolor('#E6F0F9')
+        y_pos = list(range(len(RRF_A[:5])))
+        for i, y in enumerate(y_pos):
+            ax.barh(y, width=abs(min(y_log)) * 1.15, left=min(y_log) * 1.15, height=0.82, color='#DDEAF6', edgecolor='#C8D7E6', linewidth=1, zorder=0)
+        ax.barh(y_pos, y_log, color=colors, height=0.35, zorder=2)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(RRF_A[:5], fontsize=20, fontweight='bold')
+        ax.invert_yaxis()
+        ax.yaxis.tick_right()
+        ax.tick_params(axis='y', length=0)
+        ax.axvline(0, color='black', linewidth=1.2, zorder=3)
+        ax.get_xaxis().set_visible(False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_xlim(min(y_log) * 1.25, 0.5)
+        plt.tight_layout()
         plt.show()
+    
     if mode=="4":
         x_all_list.clear()
         limit = min(5, len(x_all))
