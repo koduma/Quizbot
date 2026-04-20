@@ -66,7 +66,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 165
+PROBLEM = 168
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -996,7 +996,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=165
+    PROBLEM=168
 else:
     PROBLEM=1
 
@@ -1381,9 +1381,9 @@ def quiz_solve(loop,o,add,q):
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if ("dining" in str(train_num[xx+1]).lower()) and ("philosophers" in str(train_num[xx+1]).lower())  and ("problem" in str(train_num[xx+1]).lower()):
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if "car" in str(train_num[xx+1]).lower():
+                #if "interference" in str(train_num[xx+1]).lower():
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="bug(engineering)":
+                #if str(train_num[xx+1]).lower()=="rosalindfranklin":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="car":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -1735,7 +1735,7 @@ def quiz_solve(loop,o,add,q):
             ax.barh(y, width=abs(min(y_log)) * 1.15, left=min(y_log) * 1.15, height=0.82, color='#DDEAF6', edgecolor='#C8D7E6', linewidth=1, zorder=0)
         ax.barh(y_pos, y_log, color=colors, height=0.35, zorder=2)
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(RRF_A[:5], fontsize=20, fontweight='bold')
+        ax.set_yticklabels(RRF_A[:5], fontweight='bold')
         ax.invert_yaxis()
         ax.yaxis.tick_right()
         ax.tick_params(axis='y', length=0)
@@ -1744,6 +1744,12 @@ def quiz_solve(loop,o,add,q):
         for spine in ax.spines.values():
             spine.set_visible(False)
         ax.set_xlim(min(y_log) * 1.25, 0.5)
+        for label in ax.get_yticklabels():
+            if label.get_text() == str(RRF_A[0]):
+                label.set_fontsize(24)
+            else:
+                label.set_fontsize(16)
+
         plt.tight_layout()
         plt.show()
     
