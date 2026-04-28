@@ -46,7 +46,7 @@ NoAns = dict()
 delta_weights = dict()
 
 x_all_list=[]
-ans_type=[]
+ans_type={}
 
 # ==== 変更点: 高速・高精度なCross-encoderモデルをロード ====
 model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
@@ -66,7 +66,7 @@ AC_ex=[]
 WA_ex=[]
 
 LIMIT_P = 40000000
-PROBLEM = 168
+PROBLEM = 200
 TABOO = 15000
 RARE = 1600
 docs = 0
@@ -985,6 +985,10 @@ def wordev(a, b):
 #print("Banana,fruit:"+str(wordev("Banana","fruit")))
 #print("Apple,car:"+str(wordev("Apple","car")))
 #print("Banana,car:"+str(wordev("Banana","car")))
+#print(get_children_of_word("Apollo 11"))
+#print(get_children_of_word("Apollo11"))
+#print(get_children_of_word("Apollo 13"))
+#print(get_children_of_word("Apollo13"))
 
 ok=0
 ng=0
@@ -996,7 +1000,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=168
+    PROBLEM=200
 else:
     PROBLEM=1
 
@@ -1379,11 +1383,13 @@ def quiz_solve(loop,o,add,q):
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
                 #if str(train_num[xx+1]).lower()=="gnu":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if ("dining" in str(train_num[xx+1]).lower()) and ("philosophers" in str(train_num[xx+1]).lower())  and ("problem" in str(train_num[xx+1]).lower()):
+                #if "theseus" in str(train_num[xx+1]).lower():
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if ("byzantine" in str(train_num[xx+1]).lower()) and ("generals" in str(train_num[xx+1]).lower()) and ("problem" in str(train_num[xx+1]).lower()):
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if "interference" in str(train_num[xx+1]).lower():
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="rosalindfranklin":
+                #if str(train_num[xx+1]).lower()=="bloomfilter":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if str(train_num[xx+1]).lower()=="car":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
@@ -1436,7 +1442,7 @@ def quiz_solve(loop,o,add,q):
                 ans=str(bt)
     g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:pick]
     if len(g) == 0:
-        ans_type.append("Unknown")
+        ans_type[loop]="Unknown"
         print("Answer_ja:未知")
         print("Answer_en:Unknown")
         if mode == "3":
@@ -1624,20 +1630,20 @@ def quiz_solve(loop,o,add,q):
         top_cross_word, top_cross_score = rt4[0]
         if top_cross_score >= 3.0:
             weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#Cross=10.0
-            ans_type.append("Cross=10.0")
+            ans_type[loop]="Cross=10.0"
         elif top_cross_score >= 2.0:
             weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,Cross=10.0
-            ans_type.append("BoW=2.0,Cross=10.0")
+            ans_type[loop]="BoW=2.0,Cross=10.0"
         elif top_cross_score >= 1.0:
             weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
-            ans_type.append("BoW=10.0,Cross=2.0")
+            ans_type[loop]="BoW=10.0,Cross=2.0"
         else:
             if maxconf < 0.2:
                 weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0]#Flat
-                ans_type.append("Flat")
+                ans_type[loop]="Flat"
             else:
                 weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
-                ans_type.append("BoW=10.0")
+                ans_type[loop]="BoW=10.0"
         final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
         print("\n")
         print("Final RRF Ranking:")
@@ -1650,7 +1656,7 @@ def quiz_solve(loop,o,add,q):
             if y_all[0] < 1.01:
                 ans="Unknown"
     else:
-        ans_type.append("Calc=10.0")
+        ans_type[loop]="Calc=10.0"
     try:
         translated = GoogleTranslator(source='en', target='ja').translate(str(ans))
         if translated is not None:
@@ -1700,7 +1706,7 @@ def quiz_solve(loop,o,add,q):
     total_gb = mem.total / (1024**3)
     print("Mem:"+str(mem.percent)+"%"+"/"+str(round(total_gb,2))+"GB")
     print("Docs:"+str(len(meta)))
-    print("Params:"+str(len(w_data)))
+    print("Params:"+str(len(w_data)+len(delta_weights)))
     query1=quiz.split()
     query2=""
     zz=len(x_all)
