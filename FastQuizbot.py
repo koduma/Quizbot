@@ -35,6 +35,7 @@ import wps
 import time
 from nltk.tokenize import sent_tokenize
 from collections import Counter
+from nltk.corpus import stopwords
 
 strr=""
 meta=""
@@ -65,9 +66,9 @@ WA=[]
 AC_ex=[]
 WA_ex=[]
 
-LIMIT_P = 40000000
-PROBLEM = 200
-TABOO = 15000
+LIMIT_P = 1000000000
+PROBLEM = 214
+TABOO = 20000
 RARE = 1600
 docs = 0
 pick = 15
@@ -81,7 +82,32 @@ last_p_id = -1
 
 #translator = Translator()
 
+try:
+    STOP_WORDS = set(stopwords.words('english'))
+except LookupError:
+    nltk.download('stopwords', quiet=True)
+    STOP_WORDS = set(stopwords.words('english'))
+
 warnings.simplefilter('ignore')
+
+def filter_quiz_text(quiz_text):
+    global NoAns, TABOO
+    clean_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', quiz_text)
+    raw_words = clean_text.split()
+    
+    filtered_words = []
+    
+    for w in raw_words:
+        w_lower = w.lower()
+        if w_lower in STOP_WORDS:
+            continue
+        if w_lower not in ("water", "1"):
+            if NoAns.get(w, 0) > TABOO or NoAns.get(w_lower, 0) > TABOO:
+                continue
+        if w_lower == "oconahua":
+            continue
+        filtered_words.append(w)
+    return " ".join(filtered_words)
 
 def load_diff_weights():
     global delta_weights
@@ -89,6 +115,7 @@ def load_diff_weights():
         return
         
     try:
+        le=0
         with open('datakun3_diff.txt', 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
@@ -100,6 +127,9 @@ def load_diff_weights():
                     c_id = int(parts[1])
                     weight_val = int(parts[2].replace('+', ''))
                     delta_weights[(p_id, c_id)] = delta_weights.get((p_id, c_id), 0) + weight_val
+                    le+=1
+                    if le % 100000 == 0:
+                        print("idx="+str(le+len(w_data))+"/"+str(LIMIT_P))
                     
         print(f"datakun3_diff.txt loaded: {len(delta_weights)} diff weights restored.")
     except Exception as e:
@@ -1000,7 +1030,7 @@ mode=input()
 #mode="3"
 
 if mode=="3" or mode=="4":
-    PROBLEM=200
+    PROBLEM=214
 else:
     PROBLEM=1
 
@@ -1097,10 +1127,10 @@ def reinforce_learning(quiz_text, truth_word):
         if w_lower == "oconahua":
             continue
             
-        if w_lower not in ("water", "1"):
+        #if w_lower not in ("water", "1"):
             # 頻度(TABOO)チェック。大文字・小文字どちらかで超えていたら弾く
-            if NoAns.get(w, 0) > TABOO or NoAns.get(w_lower, 0) > TABOO:
-                continue
+            #if NoAns.get(w, 0) > TABOO or NoAns.get(w_lower, 0) > TABOO:
+                #continue
         # ----------------------------------------------------
         
         # フィルターを生き残った単語だけ、オリジナル(大文字維持)と小文字の両方を登録
@@ -1131,6 +1161,9 @@ def reinforce_learning(quiz_text, truth_word):
             counter += 1
             with open('counter2.txt', 'w', encoding='utf-8') as f:
                 f.write(str(counter) + "\n")
+        else:
+            if str(w) in NoAns:
+                NoAns[str(w)]+=1
 
     word_counts = Counter(words_to_learn)
     p_id = train[truth_word]
@@ -1195,7 +1228,7 @@ def quiz_solve(loop,o,add,q):
             quiz3+=" "+quiz[k]+" "
         else:
             quiz3+=quiz[k]
-    quiz=quiz3
+    quiz = filter_quiz_text(quiz3)
     if len(add)>0:
         quiz+=add+" "
     quiz2 = quiz.split()
@@ -1211,7 +1244,9 @@ def quiz_solve(loop,o,add,q):
     if o==True:
         print("Quiz_ja:\n"+quiz_ja)
         print("\n")
-        print("Quiz_en:\n"+quiz)
+        print("Quiz_en:\n"+quiz3)
+        print("\n")
+        print("Cut_en:\n"+quiz)
         print("\n")
     sumsum=0
     maxsum=0
@@ -1276,26 +1311,14 @@ def quiz_solve(loop,o,add,q):
 
     rtt2=remove_duplicates_sorted(rtt2)
 
-    ph=0
-
-    for xx in range(counter-1):
-
-        if ph >= len(rtt2):
-            print("complete")
-            break
-        
+    for cand_id in rtt2:
+        xx = cand_id - 1
         per=xx/(counter+1)
         idx = min(9, int(per * 10))
         if not printed[idx]:
             print(f"thinking...{idx * 10.0}%")
             printed[idx] = True
-        if xx == counter-2:
-            print("complete")
-        sum=1.0    
-        if (xx+1) != rtt2[ph]:
-            continue
-        else:
-            ph+=1
+        sum=1.0
         if (xx + 1) not in train_num:
             continue
         if len(train_num[xx+1])==0:
@@ -1377,7 +1400,7 @@ def quiz_solve(loop,o,add,q):
                     if str(xxx).lower() != "water" and str(xxx).lower() != "1":
                         sum/=weight*wqz
                 if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
-                    sum*=3.0    
+                    sum*=3.0
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
@@ -1414,7 +1437,8 @@ def quiz_solve(loop,o,add,q):
         if sum>maxsum:
             maxsum=sum
             ans=train_num[xx+1]
-    tmp_quiz=quiz        
+    print("complete")
+    tmp_quiz=quiz3        
     tmp_quiz2=fix_expression(tmp_quiz)
     i1,i2=calculator(tmp_quiz2)
     calc_flag = 0#0=クイズ、1=計算、2=算数文章題
@@ -1432,15 +1456,47 @@ def quiz_solve(loop,o,add,q):
             ans=str(i2)
             calc_flag = 1
     if calc_flag==0:
-        is_wp=wps.check_wp(quiz)
+        is_wp=wps.check_wp(quiz3)
         if is_wp==True:
             calc_flag=2
-            bt=wps.solve_math_problem(quiz)
+            bt=wps.solve_math_problem(quiz3)
             if bt == None:
                 calc_flag=0
             else:
                 ans=str(bt)
-    g = sorted(dic2.items(), key=lambda x: x[1], reverse=True)[:pick]
+    # 1. divd (クイズ文の有効単語数) の事前計算
+    divd2 = 0.0
+    for kd in range(len(quiz2)):
+        if str(quiz2[kd]) in NoAns:
+            if NoAns[str(quiz2[kd])] <= TABOO:
+                divd2 += 1.0
+            elif str(quiz2[kd]).lower() == "water" or str(quiz2[kd]).lower() == "1":
+                divd2 += 1.0
+        else:
+            if str(quiz2[kd]) not in train:
+                divd2 += 1.0
+    if divd2 < 0.1:
+        divd2 = 1.0
+
+    # 2. dic2 に入っている全候補の take (ヒット回数) を事前計算
+    take_all = dict()
+    for target_word in dic2.keys():
+        take_all[target_word] = 0.0
+        for xyy in quiz2:
+            if str(xyy) in NoAns:
+                if NoAns[str(xyy)] > TABOO and str(xyy).lower() not in ("water", "1"):
+                    continue
+            else:
+                continue
+            
+            if get_weight_fast(target_word, str(xyy)) != 0:
+                take_all[target_word] += 1.0
+
+    hybrid_list = []
+    for word, raw_score in dic2.items():
+        h_score = math.log2(max(1.0, raw_score)) * wilson_lower(take_all[word], divd2, z=1.0)
+        hybrid_list.append((word, h_score))
+    g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
     if len(g) == 0:
         ans_type[loop]="Unknown"
         print("Answer_ja:未知")
@@ -1628,22 +1684,22 @@ def quiz_solve(loop,o,add,q):
         alp[str(x_all[ij])]=y_all[ij]
     if calc_flag==0:
         top_cross_word, top_cross_score = rt4[0]
-        if top_cross_score >= 3.0:
-            weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#Cross=10.0
-            ans_type[loop]="Cross=10.0"
-        elif top_cross_score >= 2.0:
-            weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,Cross=10.0
-            ans_type[loop]="BoW=2.0,Cross=10.0"
-        elif top_cross_score >= 1.0:
-            weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
-            ans_type[loop]="BoW=10.0,Cross=2.0"
+        #if top_cross_score >= 3.0:
+            #weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#Cross=10.0
+            #ans_type[loop]="Cross=10.0"
+        #elif top_cross_score >= 2.0:
+            #weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,Cross=10.0
+            #ans_type[loop]="BoW=2.0,Cross=10.0"
+        #elif top_cross_score >= 1.0:
+            #weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
+            #ans_type[loop]="BoW=10.0,Cross=2.0"
+        #else:
+        if maxconf < 0.3:
+            weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0]#Flat
+            ans_type[loop]="Flat"
         else:
-            if maxconf < 0.2:
-                weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0]#Flat
-                ans_type[loop]="Flat"
-            else:
-                weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
-                ans_type[loop]="BoW=10.0"
+            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
+            ans_type[loop]="BoW=10.0"
         final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
         print("\n")
         print("Final RRF Ranking:")
@@ -1653,7 +1709,7 @@ def quiz_solve(loop,o,add,q):
                 RRF_A.append(str(word))
         if final_results:
             ans = final_results[0][0]
-            if y_all[0] < 1.01:
+            if y_all[0] < 0.2:
                 ans="Unknown"
     else:
         ans_type[loop]="Calc=10.0"
@@ -1731,7 +1787,7 @@ def quiz_solve(loop,o,add,q):
         yy_all = []
         for ij in range(len(RRF_A)):
             yy_all.append(alp.get(str(RRF_A[ij]), 0.0001))
-        y_log = [-math.log2(y) for y in yy_all[:5]]
+        y_log = [-y for y in yy_all[:5]]
         colors = ['green'] + ['red'] * (len(RRF_A[:5]) - 1)
         fig, ax = plt.subplots(figsize=(12, 6))
         ax.set_facecolor('#E6F0F9')
@@ -1879,6 +1935,9 @@ elif mode=="4":
 
 if mode=="3":
     print("------------------------------------------------------------------")
+    #with open('NoAns2.txt', 'w', encoding='utf-8') as f:
+    #for wd, cou in NoAns.items():
+        #f.write(f"{wd}@{cou}\n")
     print(str("AC=")+str(ok)+",WA="+str(ng))
     if len(WA)!=0:
         print("WA_Problem:",end="")
