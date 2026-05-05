@@ -166,6 +166,13 @@ def is_same_word(s1, s2):
     else:
         return ratio >= 0.80
 
+def is_new_word_in_quiz_ignore_case(quiz_xxx: list, word: str) -> bool:
+    new_word = re.sub(r'\(.*?\)', '', word).strip().lower()
+    
+    if not new_word:
+        return False
+    return new_word in quiz_xxx
+
 def get_ansi(tk):
 
     ret=""
@@ -1015,6 +1022,13 @@ def wordev(a, b):
 #print("Banana,fruit:"+str(wordev("Banana","fruit")))
 #print("Apple,car:"+str(wordev("Apple","car")))
 #print("Banana,car:"+str(wordev("Banana","car")))
+#print("Array(DataStructure),array:"+str(wordev("Array(DataStructure)","array")))
+#print("Anglo,AngloSaxons:"+str(wordev("Anglo","AngloSaxons")))
+#print("Saxon,AngloSaxons:"+str(wordev("Saxon","AngloSaxons")))
+#print("Anglo,Anglo-Saxons:"+str(wordev("Anglo","Anglo-Saxons")))
+#print("Saxon,Anglo-Saxons:"+str(wordev("Saxon","Anglo-Saxons")))
+#print("Anglo,England:"+str(wordev("Anglo","England")))
+#print("Saxon,England:"+str(wordev("Saxon","England")))
 #print(get_children_of_word("Apollo 11"))
 #print(get_children_of_word("Apollo11"))
 #print(get_children_of_word("Apollo 13"))
@@ -1311,6 +1325,8 @@ def quiz_solve(loop,o,add,q):
 
     rtt2=remove_duplicates_sorted(rtt2)
 
+    quizs=quiz.lower().split()
+
     for cand_id in rtt2:
         xx = cand_id - 1
         per=xx/(counter+1)
@@ -1339,6 +1355,9 @@ def quiz_solve(loop,o,add,q):
             sum=uniq[xx+1]
         strl=str(train_num[xx+1]).lower()
         if strl in ngram:
+            sum=1.0
+            continue
+        if is_new_word_in_quiz_ignore_case(quizs,str(train_num[xx+1]))==True:
             sum=1.0
             continue
         syn = get_one_synonym(str(train_num[xx+1]),quiz_xxx)
