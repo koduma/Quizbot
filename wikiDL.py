@@ -1,6 +1,7 @@
 #map[過去単語,今単語]学習+ビームサーチ+強化学習
 #source .venv/bin/activate
 #venv上でpip install -r requirements.txt
+import orjson
 import json
 from array import array
 import sqlite3
@@ -727,27 +728,6 @@ def apply_rrf(rankings_lists, weights=None, k=60):
 
 for l in range(len(meta)):
     reading=True
-    try:
-        with open("datakun3.txt", "r") as f:
-            for line in f:
-                p_id, c_id, weight = map(int, line.strip().split(','))
-                if p_id != last_p_id:
-                    while len(offsets) <= p_id:
-                        offsets.append(current_index)
-                    last_p_id = p_id
-                indices.append(c_id)
-                w_data.append(weight)
-                current_index += 1
-                if current_index >= LIMIT_P:
-                    break
-                if current_index % 100000==0:
-                    print("idx="+str(current_index)+"/"+str(LIMIT_P))
-        offsets.append(current_index)
-    except Exception as e:
-        print("datakun3 load error:", e)
-        reading=False
-        # 重大エラーなのでループ抜ける（再読み込みを防ぐ）
-        break
 
     try:
         with open('./train2.txt') as f:
@@ -999,7 +979,7 @@ ok=0
 ng=0
 mode=""
 
-print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
+print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=")
 
 mode="3"
 
@@ -1162,10 +1142,10 @@ def reinforce_learning(quiz_text, truth_word):
             
     #print(f">> [Reinforcement] Learnt from WA. Updated weights for '{truth_word}'.")
 
-wrii = ""
+wrii_list = []
 
 for l in range(len(meta)):
-    wrii += str(meta[l]) + " "
+    wrii_list.append(str(meta[l]))
 
 
 def clean_filename(title):
@@ -1173,7 +1153,7 @@ def clean_filename(title):
     return "".join(c for c in title if c in valid_chars).strip()
 
 def save_article(title, summary, index):
-    global wrii
+    global wrii_list
     valid_title = clean_filename(title)
     valid_title = valid_title.replace(" ", "")
     valid_title = valid_title.replace(".", "")
@@ -1189,17 +1169,19 @@ def save_article(title, summary, index):
                 quiz_text+=summary[k]
         reinforce_learning(str(quiz_text), str(valid_title))
         looked[str(valid_title).upper()] = 1
-        wrii+=str(valid_title)+" "
+        wrii_list.append(str(valid_title))
         return 1
     return 0
     
-maxword=10000000
+maxword=100000000
 
 ctz=1
 
-with open('enwiki_namespace_0_26.jsonl') as f:
+
+with open('enwiki_namespace_0_25.jsonl', 'rb') as f:
     for line in f:
-        obj = json.loads(line)
+        # orjson.loads にバイト列をそのまま渡す
+        obj = orjson.loads(line)
         print("Count:" + str(ctz)+"/"+str(maxword))
         #print("Name:"+str(obj.get("name", "")))
 
@@ -1240,7 +1222,7 @@ with open('enwiki_namespace_0_26.jsonl') as f:
             break
 
 with open("metadata2.txt", "w", encoding="utf-8") as f:
-    f.write(wrii)
+    f.write(" ".join(wrii_list))
 
 with open('NoAns2.txt', 'w', encoding='utf-8') as f:
     for word, count in NoAns.items():
