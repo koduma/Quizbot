@@ -53,6 +53,7 @@ murmurhash==1.0.15
 networkx==3.5
 nltk==3.9.2
 numpy==2.3.3
+orjson==3.11.8
 packaging==25.0
 pandas==2.3.3
 pillow==11.3.0
