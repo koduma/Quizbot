@@ -68,7 +68,7 @@ WA_ex=[]
 
 LIMIT_P = 1000000000
 PROBLEM = 214
-TABOO = 20000
+TABOO = 25000
 RARE = 1600
 docs = 0
 pick = 15
