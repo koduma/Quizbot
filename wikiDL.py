@@ -1177,7 +1177,7 @@ maxword=100000000
 ctz=1
 
 
-with open('enwiki_namespace_0_19.jsonl', 'rb') as f:
+with open('enwiki_namespace_0_18.jsonl', 'rb') as f:
     for line in f:
         # orjson.loads にバイト列をそのまま渡す
         obj = orjson.loads(line)
