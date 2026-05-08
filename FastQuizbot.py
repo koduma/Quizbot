@@ -1168,8 +1168,6 @@ def reinforce_learning(quiz_text, truth_word):
                 f.write(f"{w}@{counter}\n")
             with open('train_num2.txt', 'a', encoding='utf-8') as f:
                 f.write(f"{counter}@{w}\n")
-            with open('NoAns2.txt', 'a', encoding='utf-8') as f:
-                f.write(f"{w}@1\n")
             
             counter += 1
             with open('counter2.txt', 'w', encoding='utf-8') as f:
@@ -1177,6 +1175,8 @@ def reinforce_learning(quiz_text, truth_word):
         else:
             if str(w) in NoAns:
                 NoAns[str(w)]+=1
+            else:
+                NoAns[str(w)]=1
 
     word_counts = Counter(words_to_learn)
     p_id = train[truth_word]
