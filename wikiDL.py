@@ -69,7 +69,7 @@ WA_ex=[]
 
 LIMIT_P = 1000000000
 PROBLEM = 214
-TABOO = 15000
+TABOO = 20000
 RARE = 1600
 docs = 0
 pick = 15
@@ -765,8 +765,7 @@ for l in range(len(meta)):
                 except ValueError:
                     # skip malformed line
                     continue
-                if val_int <= TABOO or key.lower() in ("water","1"):
-                    NoAns[sys.intern(key)] = val_int
+                NoAns[sys.intern(key)] = val_int
     except Exception as e:
         print("NoAns2 load error:", e)
         reading=False
@@ -1109,8 +1108,6 @@ def reinforce_learning(quiz_text, truth_word):
                 f.write(f"{w}@{counter}\n")
             with open('train_num2.txt', 'a', encoding='utf-8') as f:
                 f.write(f"{counter}@{w}\n")
-            with open('NoAns2.txt', 'a', encoding='utf-8') as f:
-                f.write(f"{w}@1\n")
             
             counter += 1
             with open('counter2.txt', 'w', encoding='utf-8') as f:
@@ -1118,6 +1115,8 @@ def reinforce_learning(quiz_text, truth_word):
         else:
             if str(w) in NoAns:
                 NoAns[str(w)]+=1
+            else:
+                NoAns[str(w)]=1
 
     word_counts = Counter(words_to_learn)
     p_id = train[truth_word]
@@ -1178,7 +1177,7 @@ maxword=100000000
 ctz=1
 
 
-with open('enwiki_namespace_0_25.jsonl', 'rb') as f:
+with open('enwiki_namespace_0_19.jsonl', 'rb') as f:
     for line in f:
         # orjson.loads にバイト列をそのまま渡す
         obj = orjson.loads(line)
