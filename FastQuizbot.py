@@ -68,7 +68,7 @@ WA_ex=[]
 
 LIMIT_P = 1000000000
 PROBLEM = 214
-TABOO = 25000
+TABOO = 200000
 RARE = 1600
 docs = 0
 pick = 15
@@ -817,8 +817,7 @@ for l in range(len(meta)):
                 except ValueError:
                     # skip malformed line
                     continue
-                if val_int <= TABOO or key.lower() in ("water","1"):
-                    NoAns[sys.intern(key)] = val_int
+                NoAns[sys.intern(key)] = val_int
     except Exception as e:
         print("NoAns2 load error:", e)
         reading=False
