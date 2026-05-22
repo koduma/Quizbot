@@ -665,6 +665,8 @@ def is_sp(s):
         sp=1
     elif s=="`":
         sp=1
+    elif s=="—":
+        sp=1
     return sp
 
 looked = dict()
