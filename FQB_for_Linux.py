@@ -38,6 +38,13 @@ from nltk.tokenize import sent_tokenize
 from collections import Counter
 from nltk.corpus import stopwords
 
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+    nltk.download('punkt_tab', quiet=True)
+
 strr=""
 meta=""
 
@@ -69,7 +76,7 @@ WA_ex=[]
 
 LIMIT_P = 1000000000
 PROBLEM = 217
-TABOO = 200000
+TABOO = 600000
 RARE = 1600
 docs = 0
 pick = 15
@@ -648,17 +655,19 @@ def is_sp(s):
         sp=1
     elif s=="|":
         sp=1
-    elif s=="¥":
-        sp=1
     elif s=="@":
         sp=1
     elif s=="=":
         sp=1
     elif s=="^":
         sp=1
-    elif s=="—":
+    elif s=="?":
         sp=1
     elif s=="`":
+        sp=1
+    elif s=="¥":
+        sp=1
+    elif s=="—":
         sp=1
     return sp
 
@@ -761,14 +770,17 @@ def apply_rrf(rankings_lists, weights=None, k=60):
 for l in range(len(meta)):
     reading=True
     try:
+        # 1. Offsets配列のメモリマッピング
         _f_off = open("offsets.bin", "rb")
         _mm_off = mmap.mmap(_f_off.fileno(), 0, access=mmap.ACCESS_READ)
         offsets = memoryview(_mm_off).cast('I')
 
+        # 2. Indices配列のメモリマッピング
         _f_ind = open("indices.bin", "rb")
         _mm_ind = mmap.mmap(_f_ind.fileno(), 0, access=mmap.ACCESS_READ)
         indices = memoryview(_mm_ind).cast('I')
 
+        # 3. Weights配列のメモリマッピング
         _f_w = open("w_data.bin", "rb")
         _mm_w = mmap.mmap(_f_w.fileno(), 0, access=mmap.ACCESS_READ)
         w_data = memoryview(_mm_w).cast('H')
@@ -781,45 +793,42 @@ for l in range(len(meta)):
         break
 
     try:
-        with open('./train2.txt') as f:
+        with open('./train2.txt', 'r', encoding='utf-8') as f:
             for line in f:
-                line=line.replace('\n',"")
-                key=sys.intern(get_key(str(line)))
-                val=get_val(str(line))
-                train[str(key)]=int(val)
+                # Word@ID の形式。単語自体に '@' が含まれる事態に備え、右(Right)から1回だけ分割
+                parts = line.rstrip('\n').rsplit('@', 1)
+                if len(parts) == 2:
+                    train[sys.intern(parts[0])] = int(parts[1])
     except Exception as e:
         print("train2 load error:", e)
-        reading=False
+        reading = False
         break
 
     try:
-        with open('./train_num2.txt') as f:
+        with open('./train_num2.txt', 'r', encoding='utf-8') as f:
             for line in f:
-                line=line.replace('\n',"")
-                key=get_key(str(line))
-                val=sys.intern(get_val(line))
-                if str(key)!="54233@":
-                    train_num[int(key)]=str(val)
+                # ID@Word の形式。IDは必ず数字なので、左から1回だけ分割
+                parts = line.rstrip('\n').split('@', 1)
+                if len(parts) == 2:
+                    train_num[int(parts[0])] = sys.intern(parts[1])
     except Exception as e:
         print("train_num2 load error:", e)
-        reading=False
+        reading = False
         break
 
     try:
-        with open('./NoAns2.txt') as f:
+        with open('./NoAns2.txt', 'r', encoding='utf-8') as f:
             for line in f:
-                line=line.replace('\n',"")
-                key=get_key(str(line))
-                val_str=get_val(str(line))
-                try:
-                    val_int = int(val_str)
-                except ValueError:
-                    # skip malformed line
-                    continue
-                NoAns[sys.intern(key)] = val_int
+                # Word@Count の形式。右から1回だけ分割
+                parts = line.rstrip('\n').rsplit('@', 1)
+                if len(parts) == 2:
+                    try:
+                        NoAns[sys.intern(parts[0])] = int(parts[1])
+                    except ValueError:
+                        continue
     except Exception as e:
         print("NoAns2 load error:", e)
-        reading=False
+        reading = False
         break
 
     try:
@@ -1570,11 +1579,16 @@ def quiz_solve(loop,o,add,q):
     cross_rank = dict()
     for i in range(len(valid_candidates)):
         cross_rank[valid_candidates[i]] = float(cross_scores[i])
-
+        
     tokenized_corpus = [preprocess_text(doc) for doc in candidate_texts]
     tokenized_query = preprocess_text(quiz)
-    bm25 = BM25Okapi(tokenized_corpus)
-    bm25_scores = bm25.get_scores(tokenized_query)
+    try:
+        bm25 = BM25Okapi(tokenized_corpus)
+        bm25_scores = bm25.get_scores(tokenized_query)
+    except ZeroDivisionError:
+        bm25_scores = [0.0] * len(candidate_texts)
+    except Exception:
+        bm25_scores = [0.0] * len(candidate_texts)
         
     jaccard_rank = dict()
     order_rank = dict()
