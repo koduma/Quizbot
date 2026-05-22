@@ -1,0 +1,1964 @@
+#map[過去単語,今単語]学習+ビームサーチ+強化学習
+#source .venv/bin/activate
+#venv上でpip install -r requirements.txt
+import mmap
+from array import array
+import sqlite3
+import math
+import os
+import matplotlib.pyplot as plt
+import psutil
+import Levenshtein
+#from googletrans import Translator
+from deep_translator import GoogleTranslator
+import re
+import sys
+import random
+import warnings
+import sympy
+from sympy import sympify, Eq, solve
+import googlesearch
+import requests
+from bs4 import BeautifulSoup
+from rank_bm25 import BM25Okapi
+import string
+import difflib
+# ==== 変更点: CrossEncoderをインポート ====
+from sentence_transformers import CrossEncoder
+import torch
+import gc
+from collections import defaultdict
+from bisect import bisect_left
+from functools import lru_cache
+import nltk
+from nltk.corpus import wordnet as wn
+import wps
+import time
+from nltk.tokenize import sent_tokenize
+from collections import Counter
+from nltk.corpus import stopwords
+
+strr=""
+meta=""
+
+train = dict()
+train_num = dict()
+datakun = dict()
+NoAns = dict()
+delta_weights = dict()
+
+x_all_list=[]
+ans_type={}
+
+# ==== 変更点: 高速・高精度なCross-encoderモデルをロード ====
+model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+
+with open("./metadata2.txt") as f:
+    for line in f:
+        meta=meta+line
+
+meta=meta.split()
+
+print(len(meta))
+
+counter=1
+now=[1]
+WA=[]
+AC_ex=[]
+WA_ex=[]
+
+LIMIT_P = 1000000000
+PROBLEM = 217
+TABOO = 200000
+RARE = 1600
+docs = 0
+pick = 15
+
+offsets = array('I')
+indices = array('I')
+w_data = array('H')
+
+current_index = 0 
+last_p_id = -1
+
+#translator = Translator()
+
+try:
+    STOP_WORDS = set(stopwords.words('english'))
+except LookupError:
+    nltk.download('stopwords', quiet=True)
+    STOP_WORDS = set(stopwords.words('english'))
+
+warnings.simplefilter('ignore')
+
+def filter_quiz_text(quiz_text):
+    global NoAns, TABOO
+    clean_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', quiz_text)
+    raw_words = clean_text.split()
+    
+    filtered_words = []
+    
+    for w in raw_words:
+        w_lower = w.lower()
+        if w_lower in STOP_WORDS:
+            continue
+        if w_lower not in ("water", "1"):
+            if NoAns.get(w, 0) > TABOO or NoAns.get(w_lower, 0) > TABOO:
+                continue
+        if w_lower == "oconahua":
+            continue
+        filtered_words.append(w)
+    return " ".join(filtered_words)
+
+def load_diff_weights():
+    global delta_weights
+    if not os.path.exists('datakun3_diff.txt'):
+        return
+        
+    try:
+        le=0
+        with open('datakun3_diff.txt', 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(',')
+                if len(parts) == 3:
+                    p_id = int(parts[0])
+                    c_id = int(parts[1])
+                    weight_val = int(parts[2].replace('+', ''))
+                    delta_weights[(p_id, c_id)] = delta_weights.get((p_id, c_id), 0) + weight_val
+                    le+=1
+                    if le % 100000 == 0:
+                        print("idx="+str(le+len(w_data))+"/"+str(LIMIT_P))
+                    
+        print(f"datakun3_diff.txt loaded: {len(delta_weights)} diff weights restored.")
+    except Exception as e:
+        print("datakun3_diff.txt load error:", e)
+
+def wilson_lower(k: float, n: float, z: float = 1.0) -> float:
+    if n <= 0:
+        return 0.0
+    p = k / n
+    denom = 1.0 + (z*z)/n
+    center = p + (z*z)/(2.0*n)
+    margin = z * math.sqrt((p*(1.0-p))/n + (z*z)/(4.0*n*n))
+    return (center - margin) / denom
+
+def is_same_word(s1, s2):
+    s1, s2 = s1.lower(), s2.lower()
+    
+    if s1 == s2:
+        return True
+        
+    len_s1, len_s2 = len(s1), len(s2)
+    max_len = max(len_s1, len_s2)
+    
+    if max_len <= 3:
+        return False
+        
+    if abs(len_s1 - len_s2) > max_len * 0.3:
+        return False
+        
+    ratio = difflib.SequenceMatcher(None, s1, s2).ratio()
+    
+    if max_len <= 5:
+        return ratio >= 0.85
+    else:
+        return ratio >= 0.80
+
+def is_new_word_in_quiz_ignore_case(quiz_xxx: list, word: str) -> bool:
+    new_word = re.sub(r'\(.*?\)', '', word).strip().lower()
+    
+    if not new_word:
+        return False
+    return new_word in quiz_xxx
+
+def get_ansi(tk):
+
+    ret=""
+    if len(tk)>0:
+        for i in range(len(tk)):
+            if tk[len(tk)-i-1]=="/":
+                break
+            ret+=tk[len(tk)-i-1]
+    fret=""
+    if len(ret)>0:
+        for i in range(len(ret)):
+            fret+=ret[len(ret)-i-1]
+        
+    return fret
+@lru_cache(maxsize=10000)
+def get_wikipedia_intro(url: str) -> str:
+    # 1. 入力の正規化
+    if "wikipedia.org" in url:
+        title = url.rsplit('/', 1)[-1]
+    else:
+        title = url
+
+    endpoint = "https://en.wikipedia.org/w/api.php"
+    headers = {
+        "User-Agent": "QuizBot/2.1 (your_email@example.com)" 
+    }
+
+    # --- 内部関数: 指定タイトルでテキスト取得 ---
+    def fetch_text_by_title(target_title):
+        params = {
+            "action": "query",
+            "format": "json",
+            "prop": "extracts",
+            "exintro": True,
+            "explaintext": True,
+            "titles": target_title,
+            "redirects": 1
+        }
+        try:
+            # endpointとheadersは外側のget_wikipedia_intro関数のスコープからアクセスされる
+            response = requests.get(endpoint, params=params, headers=headers, timeout=5) # タイムアウトを3秒から5秒に変更 (安定性のため)
+            
+            if response.status_code != 200:
+                return None
+                
+            data = response.json()
+            pages = data.get("query", {}).get("pages", {})
+            
+            # "-1" はページが存在しない場合のID
+            if "-1" in pages:
+                return None
+                
+            for page_id, page in pages.items():
+                if "extract" in page and page["extract"]:
+                    text = page["extract"].strip()
+
+                    # ======================================================
+                    # 曖昧さ回避ページの門番ロジック (Disambiguation Check)
+                    # ======================================================
+                    # テキストの最初の300文字をチェック（冒頭文の解析）
+                    check_text = text[:300].lower()
+                    
+                    if "may refer to:" in check_text or "may also refer to:" in check_text or "refer to several things" in check_text:
+                        # 曖昧さ回避ページ（SNS, Auなど）と判断し、Noneを返す
+                        return None
+                    # ======================================================
+                    
+                    return text
+        
+        except Exception:
+            # ネットワークエラー、JSON解析エラーなど
+            return None
+        
+        return None # ページIDはあるが extract が空の場合などに備えて、念のためNoneを返す
+
+    # --- Step 1: そのままトライ ---
+    text = fetch_text_by_title(title)
+    if text: return text
+
+    # --- Step 2: CamelCase分割 & 一般的な連結語の分割 ---
+    # "ElonMusk" -> "Elon Musk"
+    split_title = re.sub(r'(?<!^)(?=[A-Z])', ' ', title)
+    # "Listofvideogames" -> "List of video games" 対策 (簡易版)
+    # 一般的な接続詞の周りに強制的にスペースを入れる
+    split_title = re.sub(r'(of|the|vs|and|feat)', r' \1 ', split_title, flags=re.IGNORECASE)
+    
+    if split_title != title:
+        text = fetch_text_by_title(split_title.strip())
+        if text: return text
+
+    # --- Step 3: Wikipedia Search API ---
+    # Wikipedia内の検索機能を使う
+    try:
+        search_params = {
+            "action": "query", "format": "json", "list": "search",
+            "srsearch": title, "srlimit": 1
+        }
+        search_resp = requests.get(endpoint, params=search_params, headers=headers, timeout=3)
+        search_results = search_resp.json().get("query", {}).get("search", [])
+        if search_results:
+            text = fetch_text_by_title(search_results[0]["title"])
+            if text: return text
+    except Exception:
+        pass
+
+    # --- Step 4: Google Search Fallback (最終手段) ---
+    # "Listofvideogames..." のような難物はGoogleに聞くのが一番早い
+    try:
+        # "site:en.wikipedia.org" をつけて検索
+        query = f"site:en.wikipedia.org {title}"
+        # google検索は外部ライブラリ依存なのでtryで囲む
+        results = googlesearch.search(query, num_results=1)
+        
+        for result_url in results:
+            if "wikipedia.org/wiki/" in result_url:
+                # URLからタイトルを抽出 (例: .../wiki/Elon_Musk -> Elon_Musk)
+                new_title = result_url.split("/wiki/")[-1]
+                # URLデコード (例えば %20 をスペースに戻すなど)
+                new_title = requests.utils.unquote(new_title)
+                
+                print(f"Google Fallback: {title} -> {new_title}") # 動作確認用ログ
+                text = fetch_text_by_title(new_title)
+                if text: return text
+    except Exception as e:
+        # Google検索のエラー（レートリミットなど）は無視してNoneを返す
+        # print(f"Google Search Error: {e}") 
+        pass
+
+    return None
+
+def is_english_word(text):
+    if re.fullmatch(r'[a-zA-Z]+', text):
+        return 1
+    elif re.fullmatch(r'[0-9]+', text):
+        return 0
+    else:
+        return 0
+
+def extract_unit(s: str) -> str:
+    pattern = r'\d+(?:\.\d+)?\s*([a-zA-Z]+)'
+    match = re.search(pattern, s)
+    return match.group(1) if match else ""
+
+def fix_expression(s: str) -> str:
+    s = re.sub(r'(\d)\s*\.\s*(\d)', r'\1.\2', s)
+    s = re.sub(r'\s*([*/+\-^])\s*', r'\1', s)
+    s = re.sub(r'(?<!\d)\s*\.\s*(?!\d)', r' . ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    
+    return s
+
+def calculator(s):
+    ev = 0
+    ret = ""
+    ans = None
+
+    
+    safe_globals = {
+        "__builtins__": None,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "log": math.log,
+        "log10": math.log10,
+        "sqrt": math.sqrt,
+        "pi": math.pi,
+        "e": math.e,
+        "abs": abs
+    }
+
+    lower_s = s.lower()
+    lower_s = lower_s.replace('wide', 'width')
+    lower_s = lower_s.replace('high', 'height')
+    lower_s = lower_s.replace('sizes', 'size')
+    lower_s = lower_s.replace('diameters', 'diameter')
+
+    pattern = r"((?:\d+\.\d+)|(?:\d+/\d+)|(?:\d+))(?:\s*(cm|m))?"
+
+    matches = re.findall(pattern, s)
+
+    xx=0
+
+    if all(word in lower_s for word in ["rectangle", "area", "height", "width"]) or all(word in lower_s for word in ["rectangle", "area","size"]):
+        if matches:
+            xx=1
+        
+    if all(word in lower_s for word in ["rectangle", "perimeter", "height", "width"]) or all(word in lower_s for word in ["rectangle", "perimeter", "size"]):
+        if matches:
+            xx=2
+
+    if all(word in lower_s for word in ["circle", "area", "diameter"]):
+        if matches:
+            xx=3
+
+    if all(word in lower_s for word in ["circle", "area", "radius"]):
+        if matches:
+            xx=4
+
+    if all(word in lower_s for word in ["circle", "circumference", "radius"]):
+        if matches:
+            xx=5
+
+    if all(word in lower_s for word in ["circle", "circumference", "diameter"]):
+        if matches:
+            xx=6
+
+    meter=False
+    centimeter=False
+    ls=lower_s.split()
+    for i in range(len(ls)):
+        if ls[i]=='meters':
+            meter=True
+        if ls[i]=='meter':
+            meter=True
+        if ls[i]=='metre':
+            meter=True
+        if ls[i]=='metres':
+            meter=True
+        if ls[i]=='centimeters':
+            centimeter=True
+        if ls[i]=='centimeter':
+            centimeter=True
+        if ls[i]=='centimetre':
+            centimeter=True
+        if ls[i]=='centimetres':
+            centimeter=True 
+    if xx ==1 or xx==2:
+        first_match = matches[0]
+        second_match = matches[1]
+        number1, unit1 = first_match[0], first_match[1]
+        number2, unit2 = second_match[0], second_match[1]
+        n1 = eval(number1, safe_globals, {})
+        n2 = eval(number2, safe_globals, {})
+        number1=float(n1)
+        number2=float(n2)
+        if unit1=='cm':
+            number1=number1/100.0
+        if unit2=='cm':
+            number2=number2/100.0
+        ca=0
+        if xx == 1:
+            ca=number1*number2
+            if meter==True:
+                return len(s), f"{ca:g} m^2"
+            elif centimeter==True:
+                return len(s), f"{ca*10000.0:g} cm^2"
+            else:
+                return len(s),f"{ca:g}"
+        if xx == 2:
+            ca=2.0*(number1+number2)
+            if meter==True:
+                return len(s), f"{ca:g} m"
+            elif centimeter==True:
+                return len(s), f"{ca*100.0:g} cm"
+            else:
+                return len(s),f"{ca:g}"
+    if xx == 3 or xx == 4:            
+        first_match = matches[0]
+        number1, unit1 = first_match[0], first_match[1]
+        n1 = eval(number1, safe_globals, {})
+        number1=float(n1)
+        if unit1=='cm':
+            number1=number1/100.0
+        ca=0    
+        if xx == 3:
+            ca=(1.0/2.0)*(number1)*(1.0/2.0)*(number1)
+        if xx == 4:
+            ca=number1*number1
+        if meter==True:
+            return len(s), f"{ca:g}π m^2"
+        elif centimeter==True:
+            return len(s), f"{ca*10000.0:g}π cm^2"
+        else:
+            return len(s),f"{ca:g}π"
+
+    if xx == 5 or xx == 6:            
+        first_match = matches[0]
+        number1, unit1 = first_match[0], first_match[1]
+        n1 = eval(number1, safe_globals, {})
+        number1=float(n1)
+        if unit1=='cm':
+            number1=number1/100.0
+        ca=0    
+        if xx == 5:
+            ca=2.0*number1
+        if xx == 6:
+            ca=number1
+        if meter==True:
+            return len(s), f"{ca:g}π m"
+        elif centimeter==True:
+            return len(s), f"{ca*100.0:g}π cm"
+        else:
+            return len(s),f"{ca:g}π"
+    
+    #print(s)
+
+    pt=0
+
+    if 'of' in s:
+        s = s.replace('of','*')
+    if 'divisible' in s:
+        s = s.replace('divisible','%')
+        pt=1
+    if 'by' in s:
+        s = s.replace('by',' ')
+    if 'divided' in s:
+        s = s.replace('divided','*1.0/')
+    unit=extract_unit(s)
+    if unit in s and len(unit)>0:
+        s = s.replace(unit,'')
+
+    for i in range(len(s)):
+        st = s[i]
+        for j in range(i+1, len(s)):
+            add=""
+            if s[j]=='%':
+                add="/100.0"
+            else:
+                add=s[j]    
+            st += add    
+            try:
+                if "=" in st:
+                    parts = st.split("=")
+                    if len(parts) != 2:
+                        if ans == None:
+                            ans="False"
+                        continue
+
+                    left_expr = parts[0].strip()
+                    right_expr = parts[1].strip()
+
+                    if not left_expr or not right_expr:
+                        continue
+                        
+                    try:
+                        left_sym = sympify(left_expr)
+                        right_sym = sympify(right_expr)
+                        free_vars = left_sym.free_symbols.union(right_sym.free_symbols)
+                        if not free_vars:
+                            try:
+                                left_val = float(left_sym.evalf())
+                                right_val = float(right_sym.evalf())
+                                if j - i >= ev:
+                                    ev = j - i
+                                    ret = st
+                                    if abs(left_val - right_val) < 1e-9:
+                                        ans = "True"
+                                    else:
+                                        ans = "False"
+                            except Exception:
+                                pass
+                        else:
+                            eq = Eq(left_sym, right_sym)
+                            try:
+                                sol = solve(eq, list(free_vars))
+                                if j - i >= ev:
+                                    ev = j - i
+                                    ret = st
+                                    if isinstance(sol, list):
+                                        ans = sol[0]
+                                    else:
+                                        ans = sol
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    left_val = eval(left_expr, safe_globals, {})
+                    right_val = eval(right_expr, safe_globals, {})
+
+                    if isinstance(left_val, (int, float)) and isinstance(right_val, (int, float)):
+                        #print("l="+str(left_expr)+",r="+str(right_expr))
+                        if abs(left_val - right_val) < 1e-9:
+                            if j - i >= ev:
+                                ev = j - i
+                                ret = st
+                                if ans != "False":
+                                    ans = "True"
+                        else:
+                            if j - i >= ev:
+                                ev = j - i
+                                ret = st
+                                ans = "False"                
+                else:
+                    result = eval(st, safe_globals, {})
+                    if isinstance(result, (int, float, complex)):
+                        #print("st="+str(st)+",result="+str(result)+",j-i="+str(j-i)+",pt="+str(pt))
+                        if j - i >= ev:
+                            ev = j - i
+                            ret = st
+                            if pt==0:
+                                #print(str("st=")+str(st)+",result="+str(result))
+                                ans = result
+                            else:
+                                if result==0:
+                                    ans="True"
+                                else:
+                                    ans="False"
+            except Exception:
+                continue
+
+    if isinstance(ans, float):
+        ans = f"{ans:g}"
+    else:
+        ans = str(ans)
+        
+    if len(unit)>0:
+        ans+=str(unit)
+    return ev, ans
+
+
+def is_ja(s):
+    return True if re.search(r'[ぁ-んァ-ン]', s) else False
+
+def is_sp(s):
+
+    sp=0
+    
+    if s == ".":
+        sp=1
+    elif s == ",":
+        sp=1 
+    elif s == "?":
+        sp=1            
+    elif s == '"':
+        sp=1        
+    elif s == "'":
+        sp=1
+    elif s == "[":
+        sp=1
+    elif s == "]":
+        sp=1
+    elif s == "(":
+        sp=1            
+    elif s == ")":
+        sp=1            
+    elif s == ":":
+        sp=1            
+    elif s == ";":
+        sp=1            
+    elif s == "/":
+        sp=1
+    elif s == "!":
+        sp=1
+    elif s == "#":
+        sp=1            
+    elif s == "&":
+        sp=1
+    elif s == "$":
+        sp=1
+    elif s == "%":
+        sp=1
+    elif s == "-":
+        sp=1
+    elif s == "{":
+        sp=1
+    elif s == "}":
+        sp=1
+    elif s=="“":
+        sp=1
+    elif s=="’":
+        sp=1
+    elif s=="”":
+        sp=1
+    elif s==">":
+        sp=1
+    elif s=="<":
+        sp=1
+    elif s=="+":
+        sp=1
+    elif s=="*":
+        sp=1
+    elif s=="|":
+        sp=1
+    elif s=="¥":
+        sp=1
+    elif s=="@":
+        sp=1
+    elif s=="=":
+        sp=1
+    elif s=="^":
+        sp=1
+    elif s=="—":
+        sp=1
+    elif s=="`":
+        sp=1
+    return sp
+
+looked = dict()
+
+for l in range(len(meta)):
+    title = meta[l]
+    title=title.upper()
+    ex=title in looked
+    if ex==True and title!="LATEX":
+        print(title)
+    else:
+        looked[title]=1
+        
+#sys.exit()
+
+#print("load?(y/n)=",end="")
+#ld=input()
+
+
+def get_key(s):
+    pos=0
+    for i in range(len(s)):
+        if s[i]=="@":
+            pos=i
+    key=""
+    for i in range(pos):
+        key+=str(s[i])
+    return key
+
+def get_val(s):
+    pos=0
+    for i in range(len(s)):
+        if s[i]=="@":
+            pos=i
+    val=""
+    for i in range(pos+1,len(s)):
+        val+=str(s[i])
+    return val
+
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    words = text.split()
+    meaningful_words = []
+    for w in words:
+        if str(w).lower() == "water" or str(w).lower()=="1":    
+            meaningful_words.append(w)
+            continue
+        if str(w)=="Oconahua":
+            continue
+        if NoAns.get(w, 0) > TABOO:
+            continue
+        meaningful_words.append(w)
+        
+    return meaningful_words
+
+def calculate_jaccard(s, t):
+    words_s = set(preprocess_text(s))
+    words_t = set(preprocess_text(t))
+    
+    if len(words_s) == 0 or len(words_t) == 0:
+        return 0.0
+        
+    intersection = words_s & words_t
+    union = words_s | words_t
+    score = len(intersection) / len(union)
+    
+    return score
+
+def calculate_order_score(s, t):#s=クイズ文文字列,t=enwiki説明文文字列
+    text1 = preprocess_text(s)#リスト化とストップワードカット
+    text2 = preprocess_text(t)
+    matcher = difflib.SequenceMatcher(None, text1, text2)
+    return matcher.ratio()
+
+def apply_rrf(rankings_lists, weights=None, k=60):
+    """
+    rankings_lists: [BoWリスト, Jaccardリスト, Orderリスト, BM25リスト, CrossEncoderリスト]
+    weights: [BoW重み, Jaccard重み, Order重み, BM25重み,CrossEncoder重み]
+    """
+    rrf_scores = {}
+    
+    if weights is None:
+        weights = [1.0] * len(rankings_lists)
+    
+    for rank_list, weight in zip(rankings_lists, weights):
+        for i, (word, score) in enumerate(rank_list):
+            rank = i + 1
+            if word not in rrf_scores:
+                rrf_scores[word] = 0.0
+            
+            # 重みをランクスコアに掛ける
+            # weightが高い指標（BoWなど）の上位にある単語ほどスコアが跳ね上がる
+            rrf_scores[word] += weight * (1.0 / (k + rank))
+            
+    final_ranking = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    return final_ranking
+
+for l in range(len(meta)):
+    reading=True
+    try:
+        _f_off = open("offsets.bin", "rb")
+        _mm_off = mmap.mmap(_f_off.fileno(), 0, access=mmap.ACCESS_READ)
+        offsets = memoryview(_mm_off).cast('I')
+
+        _f_ind = open("indices.bin", "rb")
+        _mm_ind = mmap.mmap(_f_ind.fileno(), 0, access=mmap.ACCESS_READ)
+        indices = memoryview(_mm_ind).cast('I')
+
+        _f_w = open("w_data.bin", "rb")
+        _mm_w = mmap.mmap(_f_w.fileno(), 0, access=mmap.ACCESS_READ)
+        w_data = memoryview(_mm_w).cast('H')
+
+        print(f"Mmap Loaded! (Edges: {len(indices)})")
+       
+    except Exception as e:
+        print("Binary Mmap load error:", e)
+        reading=False
+        break
+
+    try:
+        with open('./train2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=sys.intern(get_key(str(line)))
+                val=get_val(str(line))
+                train[str(key)]=int(val)
+    except Exception as e:
+        print("train2 load error:", e)
+        reading=False
+        break
+
+    try:
+        with open('./train_num2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val=sys.intern(get_val(line))
+                if str(key)!="54233@":
+                    train_num[int(key)]=str(val)
+    except Exception as e:
+        print("train_num2 load error:", e)
+        reading=False
+        break
+
+    try:
+        with open('./NoAns2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                key=get_key(str(line))
+                val_str=get_val(str(line))
+                try:
+                    val_int = int(val_str)
+                except ValueError:
+                    # skip malformed line
+                    continue
+                NoAns[sys.intern(key)] = val_int
+    except Exception as e:
+        print("NoAns2 load error:", e)
+        reading=False
+        break
+
+    try:
+        with open('./counter2.txt') as f:
+            for line in f:
+                line=line.replace('\n',"")
+                counter=int(line)
+    except Exception as e:
+        print("counter2 load error:", e)
+        reading=False
+        break
+
+    train_num[54233]="@"#@が連続しているとget_keyやget_valは間違える
+    
+    if reading == True:
+        load_diff_weights()
+
+    if reading==True:
+        print("reading_ok")
+        break
+
+@lru_cache(maxsize=100000)
+def get_weight_fast(parent_word, child_word, raw=False):
+    global train, offsets, indices, w_data, NoAns, delta_weights
+    
+    p_id = train.get(parent_word)
+    c_id = train.get(child_word)
+    
+    if p_id is None or c_id is None:
+        return 0
+        
+    raw_weight = 0
+    # 既存の静的データからの重み取得
+    if p_id + 1 < len(offsets):
+        start_index = offsets[p_id]
+        end_index = offsets[p_id + 1]
+        idx = bisect_left(indices, c_id, lo=start_index, hi=end_index)
+        
+        if idx < end_index and indices[idx] == c_id:
+            raw_weight = w_data[idx]
+            
+    # ==== 追加: 動的に学習した重み（+4など）を加算 ====
+    raw_weight += delta_weights.get((p_id, c_id), 0)
+    
+    if raw_weight == 0:
+        return 0
+        
+    # is_include 等から呼ばれた場合は、生の重みを返す
+    if raw:
+        return raw_weight
+        
+    # --- 対数(log)を使った安全なIDF計算 ---
+    freq = max(1.0, float(NoAns.get(str(child_word), 1)))
+    need = math.log10(float(TABOO) / freq) + 1.0
+    need = max(1.0, need)
+    
+    return raw_weight * need
+
+def is_include(s, t):
+    global train, offsets, indices, w_data, NoAns, TABOO
+
+    if s not in NoAns or t not in NoAns:
+        return False
+    if (NoAns[s] > TABOO and s.lower() not in ("water", "1")) or (NoAns[t] > TABOO and t.lower() not in ("water", "1")):
+        return False
+        
+    w_st = get_weight_fast(s, t,raw=True)
+    w_ts = get_weight_fast(t, s,raw=True)
+
+    if w_st == 0 or w_ts == 0:
+        return False
+        
+    if w_st > 5 or w_ts > 5:
+        if len(s) >= len(t):
+            return (t.upper() in s.upper())
+        else:
+            return (s.upper() in t.upper())
+
+    return False
+
+def calc_vocab(s):
+    items = s.split(',')
+    if len(items) >= 3 or len(items) < 2:
+        return "", ""
+    return str(items[0]), str(items[1])
+
+def collect_children_from_sentence(s):
+    global train, train_num, offsets, indices
+    
+    result_list = []
+    words = s.split()
+    
+    for word in words:
+        if word not in train:
+            continue
+        p_id = train[str(word)]
+        
+        if p_id + 1 >= len(offsets):
+            continue
+            
+        start = offsets[p_id]
+        end = offsets[p_id + 1]
+        
+        for i in range(start, end):
+            c_id = indices[i]
+            
+            if c_id in train_num:
+                child_word = train_num[c_id]
+                result_list.append(child_word)
+                
+    return result_list
+
+def check_exists(x):
+    global train, offsets, indices
+    
+    try:
+        parent_str, child_str = x.split(',', 1)
+    except ValueError:
+        return False
+    if parent_str not in train or child_str not in train:
+        return False
+        
+    p_id = train[parent_str]
+    c_id = train[child_str]
+    
+    if p_id + 1 >= len(offsets):
+        return False
+    start = offsets[p_id]
+    end = offsets[p_id + 1]
+    
+    for i in range(start, end):
+        if indices[i] == c_id:
+            return True
+    return False
+
+def get_children_of_word(s: str) -> list:
+    global train, train_num, offsets, indices
+    
+    result_list = []
+    
+    if s not in train:
+        return result_list
+        
+    p_id = train[s]
+    
+    if p_id + 1 >= len(offsets):
+        return result_list
+        
+    start = offsets[p_id]
+    end = offsets[p_id + 1]
+    
+    for i in range(start, end):
+        c_id = indices[i]
+        if c_id in train_num:
+            result_list.append(train_num[c_id])
+
+    sorted_list = sorted(result_list, key=str.lower)
+            
+    return sorted_list
+
+
+def wordev(a, b):
+    cn_a = get_children_of_word(str(a))
+    cn_b = get_children_of_word(str(b))
+    
+    if not cn_a or not cn_b:
+        return 0.0
+
+    score = 0.0
+    valid_comparisons = 0
+
+    for child in cn_a:
+        if child not in NoAns or NoAns[str(child)] > TABOO:
+            continue
+            
+        weight = get_weight_fast(str(b), str(child))
+        
+        if weight != 0:
+            score += weight
+            valid_comparisons += 1
+    for child in cn_b:
+        if child not in NoAns or NoAns[str(child)] > TABOO:
+            continue
+            
+        weight = get_weight_fast(str(a), str(child))
+        
+        if weight != 0:
+            score += weight
+            valid_comparisons += 1
+
+    if valid_comparisons > 0:
+        return score / valid_comparisons
+    else:
+        return 0.0
+
+#print("Apple,Banana:"+str(wordev("Apple","Banana")))
+#print("Apple,fruit:"+str(wordev("Apple","fruit")))
+#print("Banana,fruit:"+str(wordev("Banana","fruit")))
+#print("Apple,car:"+str(wordev("Apple","car")))
+#print("Banana,car:"+str(wordev("Banana","car")))
+#print("Array(DataStructure),array:"+str(wordev("Array(DataStructure)","array")))
+#print("Anglo,AngloSaxons:"+str(wordev("Anglo","AngloSaxons")))
+#print("Saxon,AngloSaxons:"+str(wordev("Saxon","AngloSaxons")))
+#print("Anglo,Anglo-Saxons:"+str(wordev("Anglo","Anglo-Saxons")))
+#print("Saxon,Anglo-Saxons:"+str(wordev("Saxon","Anglo-Saxons")))
+#print("Anglo,England:"+str(wordev("Anglo","England")))
+#print("Saxon,England:"+str(wordev("Saxon","England")))
+#print(get_children_of_word("Apollo 11"))
+#print(get_children_of_word("Apollo11"))
+#print(get_children_of_word("Apollo 13"))
+#print(get_children_of_word("Apollo13"))
+
+ok=0
+ng=0
+mode=""
+
+print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
+
+mode=input()
+#mode="3"
+
+if mode=="3" or mode=="4":
+    PROBLEM=217
+else:
+    PROBLEM=1
+
+def remove_duplicates_sorted(lst):
+    if not lst:
+        return []
+    relt = [lst[0]]
+    for i in range(1, len(lst)):
+        if lst[i] != lst[i-1]:
+            relt.append(lst[i])
+    return relt
+
+def get_top_3_synonyms(word):
+    synonyms = []
+    seen = set()
+    clean_word = word.lower()
+    
+    seen.add(clean_word)
+
+    synsets = wn.synsets(word)
+    
+    for syn in synsets:
+        for lemma in syn.lemmas():
+            synonym = lemma.name().lower().replace('_', ' ')
+            
+            if synonym not in seen:
+                synonyms.append(synonym)
+                seen.add(synonym)
+                
+                if len(synonyms) >= 3:
+                    return synonyms
+
+    return synonyms
+
+def get_one_synonym(word,quiz_xxx):
+    synsets = wn.synsets(word)
+    
+    clean_word = word.lower()
+
+    for syn in synsets:
+        for lemma in syn.lemmas():
+            synonym = lemma.name().lower().replace('_', ' ')
+            
+            if synonym != clean_word:
+                if str(synonym) not in quiz_xxx:
+                    return synonym
+                
+    return None
+
+def is_5W1H(t, s):
+    # t: クイズ文の単語リスト (quiz2)
+    # s: 正解候補単語 (xxx や train_num[xx+1] など)
+
+    # 1. チェックすべき疑問詞のセットを定義
+    q_words_target = {"who", "where", "when", "which", "what", "why", "how"}
+    
+    # 2. クイズ文(t)の中に、どの疑問詞が含まれているかを抽出する
+    found_q_words = set()
+    for word in t:
+        w_lower = str(word).lower()
+        if w_lower in q_words_target:
+            found_q_words.add(w_lower)
+            
+    # 3. 5W1Hがクイズ文になければ即return 1（足切りしない）
+    if len(found_q_words) == 0:
+        return 1
+        
+    # 4. クイズ文に「含まれていた疑問詞」に対してのみ、候補sとの重みを確認する
+    total_weight = 0
+    for qw in found_q_words:
+        # 大文字始まり（Who）と小文字（who）の両方のスコアを足す
+        total_weight += get_weight_fast(str(s), qw)
+        total_weight += get_weight_fast(str(s), qw.capitalize())
+        
+    # 5. クイズで聞かれている疑問詞との関連度が全く無ければ 0 を返す（足切り）
+    if total_weight < 1:
+        return 0
+        
+    return 1
+
+def reinforce_learning(quiz_text, truth_word):
+    global counter, train, train_num, NoAns, delta_weights
+    
+    # 1. 記号の除去（大文字を消さないように a-zA-Z としています）
+    clean_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', quiz_text)
+    raw_words = clean_text.split()
+    
+    words_to_learn = []
+    
+    for w in raw_words:
+        w_lower = w.lower()
+        
+        # --- preprocess_text のフィルター機能をここで再現 ---
+        if w_lower == "oconahua":
+            continue
+            
+        #if w_lower not in ("water", "1"):
+            # 頻度(TABOO)チェック。大文字・小文字どちらかで超えていたら弾く
+            #if NoAns.get(w, 0) > TABOO or NoAns.get(w_lower, 0) > TABOO:
+                #continue
+        # ----------------------------------------------------
+        
+        # フィルターを生き残った単語だけ、オリジナル(大文字維持)と小文字の両方を登録
+        words_to_learn.append(w)
+        if w != w_lower:
+            words_to_learn.append(w_lower)
+
+    words_to_learn.append(truth_word)
+    if truth_word != truth_word.lower():
+        words_to_learn.append(truth_word.lower())
+
+    unique_words_to_register = list(set(words_to_learn))
+
+    # --- 以下、辞書登録と重み更新の処理は全く同じです ---
+    for w in unique_words_to_register:
+        if w not in train:
+            train[w] = counter
+            train_num[counter] = w
+            NoAns[w] = 1 
+            
+            with open('train2.txt', 'a', encoding='utf-8') as f:
+                f.write(f"{w}@{counter}\n")
+            with open('train_num2.txt', 'a', encoding='utf-8') as f:
+                f.write(f"{counter}@{w}\n")
+            
+            counter += 1
+            with open('counter2.txt', 'w', encoding='utf-8') as f:
+                f.write(str(counter) + "\n")
+        else:
+            if str(w) in NoAns:
+                NoAns[str(w)]+=1
+            else:
+                NoAns[str(w)]=1
+
+    word_counts = Counter(words_to_learn)
+    p_id = train[truth_word]
+    diff_lines = []
+    
+    for w, count in word_counts.items():
+        c_id = train[w]
+        if p_id == c_id:
+            continue
+            
+        weight_to_add = 4 * count
+        
+        delta_weights[(p_id, c_id)] = delta_weights.get((p_id, c_id), 0) + weight_to_add
+        delta_weights[(c_id, p_id)] = delta_weights.get((c_id, p_id), 0) + weight_to_add
+        
+        diff_lines.append(f"{p_id},{c_id},+{weight_to_add}\n")
+        diff_lines.append(f"{c_id},{p_id},+{weight_to_add}\n")
+        
+    if diff_lines:
+        with open('datakun3_diff.txt', 'a', encoding='utf-8') as f:
+            f.writelines(diff_lines)
+            
+    print(f">> [Reinforcement] Learnt from WA. Updated weights for '{truth_word}'.")
+
+def quiz_solve(loop,o,add,q):
+
+    global ok,ng
+    
+    quiz=""
+
+    if mode=="3":
+        with open('./testcase/quiz'+str(loop+1)+'.txt') as f:
+            for line in f:
+                quiz=quiz+line
+    elif mode=="2":
+        with open('./quiz.txt') as f:
+            for line in f:
+                quiz=quiz+line
+    elif mode=="1" or mode=="4":
+        quiz=q
+    if len(quiz)==0:
+        sys.exit()
+
+    quiz_ja=""
+
+    try:
+        if is_ja(quiz) == False:
+            # src -> source, dest -> target に変わります
+            # .text は不要です
+            quiz_ja = GoogleTranslator(source='en', target='ja').translate(quiz)
+        else:
+            quiz_ja=quiz
+            quiz = GoogleTranslator(source='ja', target='en').translate(quiz_ja)
+
+    except Exception:
+        pass
+
+    quiz3=""
+    
+    for k in range(len(quiz)):   
+        if is_sp(quiz[k]) > 0:
+            quiz3+=" "+quiz[k]+" "
+        else:
+            quiz3+=quiz[k]
+    quiz = filter_quiz_text(quiz3)
+    if len(add)>0:
+        quiz+=add+" "
+    quiz2 = quiz.split()
+
+    quiz_xxx=[]
+
+    for i in range(len(quiz2)):
+        quiz_xxx.append(str(quiz2[i]).lower())
+
+    #for i in range(len(quiz2)):
+        #quiz2[i]=str(quiz2[i]).lower()
+    
+    if o==True:
+        print("Quiz_ja:\n"+quiz_ja)
+        print("\n")
+        print("Quiz_en:\n"+quiz3)
+        print("\n")
+        print("Cut_en:\n"+quiz)
+        print("\n")
+    sumsum=0
+    maxsum=0
+    ans=""
+    dic2 = dict()
+
+    hint=""
+    maxhit=1
+
+    rtt = collect_children_from_sentence(quiz)
+
+    rtt2 = []
+
+
+    for cq in range(len(rtt)):
+        if str(rtt[cq])=="Oconahua":
+            continue
+        if str(rtt[cq]) in NoAns:
+            if NoAns[str(rtt[cq])]<=TABOO or str(rtt[cq]).lower() == "water" or str(rtt[cq]).lower()=="1":
+                if str(rtt[cq]) in train:
+                    rtt2.append(train[str(rtt[cq])])
+                    #print(str(rtt[cq])+":"+str(zi)+":"+str(train_num[zi]))
+
+    for xxx in range(len(quiz2)):
+        hit=0
+        if len(quiz2[xxx])>1:
+            for x in range(len(quiz2)):
+                if quiz2[xxx] in quiz2[x]:
+                    if quiz2[xxx] in NoAns:
+                        if NoAns[quiz2[xxx]] <= TABOO or str(quiz2[xxx]).lower() == "water" or str(quiz2[xxx]).lower()=="1":
+                            hit+=1            
+        if hit>maxhit:
+            maxhit=hit
+            hint=quiz2[xxx]
+    #print("hint="+str(hint)+",maxhit="+str(maxhit))
+
+    include=dict()
+
+    printed = [False] * 15
+
+    ngram = dict()
+
+    for k1 in range(len(quiz2)):
+        if k1+2 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])+str(quiz2[k1+2])
+            ngram[str(kt).lower()]=1
+
+    for k1 in range(len(quiz2)):
+        if k1+1 < len(quiz2):
+            kt=str(quiz2[k1])+str(quiz2[k1+1])
+            ngram[str(kt).lower()]=1
+    
+    rtt2.sort()
+
+    uniq = dict()
+
+    for ix in range(len(rtt2)):
+        if rtt2[ix] not in uniq:
+            uniq[rtt2[ix]]=1.0
+        else:
+            uniq[rtt2[ix]]*=2.0
+
+    rtt2=remove_duplicates_sorted(rtt2)
+
+    quizs=quiz.lower().split()
+
+    for cand_id in rtt2:
+        xx = cand_id - 1
+        per=xx/(counter+1)
+        idx = min(9, int(per * 10))
+        if not printed[idx]:
+            print(f"thinking...{idx * 10.0}%")
+            printed[idx] = True
+        sum=1.0
+        if (xx + 1) not in train_num:
+            continue
+        if len(train_num[xx+1])==0:
+            continue
+        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1]).lower()!="1":
+            continue
+        if str(train_num[xx+1])=="Oconahua":
+            continue
+        #if is_5W1H(quiz2, str(train_num[xx+1])) == 0:
+            #continue
+        cnt=-1
+        tmp=str(train_num[xx+1])+","+str(hint)
+        wq = get_weight_fast(str(train_num[xx+1]), str(hint))
+        if wq!=0:
+            sum=float(pow(2,maxhit-1))
+            sum*=uniq[xx+1]
+        else:
+            sum=uniq[xx+1]
+        strl=str(train_num[xx+1]).lower()
+        if strl in ngram:
+            sum=1.0
+            continue
+        if is_new_word_in_quiz_ignore_case(quizs,str(train_num[xx+1]))==True:
+            sum=1.0
+            continue
+        syn = get_one_synonym(str(train_num[xx+1]),quiz_xxx)
+        found_syn=False
+        go_syn=False
+        if syn:
+            found_syn=True
+        for xxx in quiz2:
+            if str(xxx) in NoAns:
+                if NoAns[str(xxx)] > TABOO and str(xxx).lower() != "water" and str(xxx).lower()!="1":
+                    continue
+            else:
+                continue
+            cnt+=1
+            if str(xxx)=="?" or str(xxx)=="!":
+                continue
+            if is_same_word(str(xxx),str(train_num[xx+1]))==True:
+                sum=1.0
+                break
+            dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())
+            if dist < 1:
+                if found_syn == False:
+                    sum=1.0
+                    break
+                go_syn=True
+            if found_syn==True:
+                dist2 = Levenshtein.distance(str(syn).upper(), str(xxx).upper())
+                if dist2 < 1:
+                    go_syn=False
+                    sum*=100.0
+            bbb=False
+            if is_include(str(train_num[xx+1]),str(xxx))==True:
+                #include[str(train_num[xx+1])]=True
+                for w1 in range(len(quiz2)):
+                    if bbb==True:
+                        break
+                    for w2 in range(w1+1,len(quiz2)):
+                        w3=str(quiz2[w1])+str(quiz2[w2])
+                        w4=str(quiz2[w2])+str(quiz2[w1])
+                        d1=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w3).upper())
+                        d2=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w4).upper())
+                        if d1 <=1 or d2 <=1:
+                            include[str(train_num[xx+1])]=True
+                            bbb=True                
+            tmp2=str(train_num[xx+1])+","+str(xxx)
+            wqz = get_weight_fast(str(train_num[xx+1]), str(xxx))
+            if wqz==0:
+                sum/=1.2
+            if wqz!=0:
+                weight=1.0
+                if cnt < 5:
+                    weight=3.0
+                sum*=weight*wqz
+                if xxx not in NoAns:
+                    if is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
+                        sum*=3.0
+                    continue
+                if NoAns[xxx] > TABOO:
+                    if str(xxx).lower() != "water" and str(xxx).lower() != "1":
+                        sum/=weight*wqz
+                if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
+                    sum*=3.0
+                #else:
+                    #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
+                        #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
+                #if str(train_num[xx+1]).lower()=="gnu":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if "theseus" in str(train_num[xx+1]).lower():
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if ("byzantine" in str(train_num[xx+1]).lower()) and ("generals" in str(train_num[xx+1]).lower()) and ("problem" in str(train_num[xx+1]).lower()):
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if "interference" in str(train_num[xx+1]).lower():
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="bloomfilter":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="car":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="benevolent":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1]).lower()=="buttress":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Happiness":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Safety":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Evidence":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Kayak":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+                #if str(train_num[xx+1])=="Reason":
+                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
+        if go_syn==False:
+            dic2[str(train_num[xx+1])]=round(sum,2)
+        else:
+            dic2[str(syn)]=round(sum,2)
+        if sum>maxsum:
+            maxsum=sum
+            ans=train_num[xx+1]
+    print("complete")
+    tmp_quiz=quiz3        
+    tmp_quiz2=fix_expression(tmp_quiz)
+    i1,i2=calculator(tmp_quiz2)
+    calc_flag = 0#0=クイズ、1=計算、2=算数文章題
+    #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
+    if i1>=2:
+        sco=0.0
+        if float(i1/len(tmp_quiz2))<0.1:
+            sco=float(pow(2.0,i1*10/len(tmp_quiz2)))
+        else:
+            sco=float(pow(2.0,i1*100/len(tmp_quiz2)))
+        dic2[str(i2)]=round(sco,2)
+        #print("i2="+str(i2)+",i1="+str(i1)+",len="+str(len(quiz))+",sco="+str(sco))
+        if sco>maxsum:
+            maxsum=round(sco,2)
+            ans=str(i2)
+            calc_flag = 1
+    if calc_flag==0:
+        is_wp=wps.check_wp(quiz3)
+        if is_wp==True:
+            calc_flag=2
+            bt=wps.solve_math_problem(quiz3)
+            if bt == None:
+                calc_flag=0
+            else:
+                ans=str(bt)
+    # 1. divd (クイズ文の有効単語数) の事前計算
+    divd2 = 0.0
+    for kd in range(len(quiz2)):
+        if str(quiz2[kd]) in NoAns:
+            if NoAns[str(quiz2[kd])] <= TABOO:
+                divd2 += 1.0
+            elif str(quiz2[kd]).lower() == "water" or str(quiz2[kd]).lower() == "1":
+                divd2 += 1.0
+        else:
+            if str(quiz2[kd]) not in train:
+                divd2 += 1.0
+    if divd2 < 0.1:
+        divd2 = 1.0
+
+    # 2. dic2 に入っている全候補の take (ヒット回数) を事前計算
+    take_all = dict()
+    for target_word in dic2.keys():
+        take_all[target_word] = 0.0
+        for xyy in quiz2:
+            if str(xyy) in NoAns:
+                if NoAns[str(xyy)] > TABOO and str(xyy).lower() not in ("water", "1"):
+                    continue
+            else:
+                continue
+            
+            if get_weight_fast(target_word, str(xyy)) != 0:
+                take_all[target_word] += 1.0
+
+    hybrid_list = []
+    for word, raw_score in dic2.items():
+        h_score = math.log2(max(1.0, raw_score)) * wilson_lower(take_all[word], divd2, z=1.0)
+        hybrid_list.append((word, h_score))
+    g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
+    if len(g) == 0:
+        ans_type[loop]="Unknown"
+        print("Answer_ja:未知")
+        print("Answer_en:Unknown")
+        if mode == "3":
+            trut=""
+            ans="Unknown"
+            with open('./testcase/ans'+str(loop+1)+'.txt') as f:
+                for line in f:
+                    trut=trut+line
+            if str(trut).lower()==str(ans).lower():
+                ok+=1
+                print("State:AC")
+            else:
+                AC_ex.append(str(trut))
+                WA_ex.append(str(ans))
+                WA.append(loop+1)
+                ng+=1
+                print("State:WA")
+                print("Truth:"+str(trut))
+                #reinforce_learning(quiz, str(trut))
+        return 0,"end"
+    x_all, y_all = zip(*g)
+    if str(x_all[0]) in include:
+        return -1,str(x_all[0])
+    print("\n")
+    #print("BoW_Top5:",end="")
+    #print(g[:5])
+    
+    # ==== 変更点: Wikipediaデータ取得を先に実行し、Cross-encoder用テキストを準備 ====
+    candidate_texts = []
+    valid_candidates = []
+    
+    for cxt in range(len(x_all)):
+        word = str(x_all[cxt])
+        wiki_text = get_wikipedia_intro(word)
+            
+        if wiki_text is None:
+            wiki_text = ""
+            
+        candidate_texts.append(wiki_text)
+        valid_candidates.append(word)
+        
+    # ==== 変更点: Cross-encoderによる精密評価 ====
+    # 質問文と、Wikipediaテキスト（空なら単語自体）をペアにして推論
+    # （※テキストが長すぎるとメモリ・処理を食うため、先頭1000文字程度に制限）
+    pairs = []
+    for i in range(len(valid_candidates)):
+        text_for_cross = candidate_texts[i][:1000] if candidate_texts[i] else valid_candidates[i]
+        pairs.append([quiz, text_for_cross])
+        
+    cross_scores = model.predict(pairs)
+    
+    cross_rank = dict()
+    for i in range(len(valid_candidates)):
+        cross_rank[valid_candidates[i]] = float(cross_scores[i])
+
+    tokenized_corpus = [preprocess_text(doc) for doc in candidate_texts]
+    tokenized_query = preprocess_text(quiz)
+    bm25 = BM25Okapi(tokenized_corpus)
+    bm25_scores = bm25.get_scores(tokenized_query)
+        
+    jaccard_rank = dict()
+    order_rank = dict()
+    bm25_rank = dict()
+        
+    for i in range(len(x_all)):
+        word = valid_candidates[i]
+        text = candidate_texts[i]
+            
+        cok = calculate_jaccard(str(quiz), str(text))
+        jaccard_rank[word] = cok
+            
+        bok = calculate_order_score(str(quiz), str(text))
+        order_rank[word] = bok
+        bm25_rank[word] = bm25_scores[i]
+            
+    rt = sorted(jaccard_rank.items(), key=lambda x: x[1], reverse=True)[:pick]
+    rt2 = sorted(order_rank.items(), key=lambda x: x[1], reverse=True)[:pick]
+    rt3 = sorted(bm25_rank.items(), key=lambda x: x[1], reverse=True)[:pick]
+    
+    # ==== 変更点: Cross_Top5 を用意 ====
+    rt4 = sorted(cross_rank.items(), key=lambda x: x[1], reverse=True)[:pick]    
+
+    # ループで整形して表示
+    metrics = [
+    ("BoW_Top5", g),
+    ("Jaccard_Top5", rt),
+    ("Order_Top5", rt2),
+    ("BM25_Top5", rt3),
+    ("Cross_Top5", rt4) # ラベル変更
+    ]
+    for label, data in metrics:
+        formatted_items = [f"('{name}', {score:.4g})" for name, score in data[:5]]
+        print(f"{label}:[{', '.join(formatted_items)}]")
+    print("\n")
+    
+    take=dict()
+    for fg in range(len(x_all)):
+        target_word = str(x_all[fg])
+        if target_word in train:
+            target_id = train[target_word]
+        else:
+            target_id = -1 
+            
+        ht = 1.0
+        wqa = get_weight_fast(target_word, str(hint))
+        
+        if target_id != -1:
+            if wqa != 0:
+                ht = float(pow(2, maxhit-1))
+                # uniq配列の参照も正しいIDで！
+                if target_id in uniq:
+                    ht *= uniq[target_id]
+            else:
+                if target_id in uniq:
+                    ht = uniq[target_id]
+        ctt=-1
+        for xyy in quiz2:
+            if str(xyy) in NoAns:
+                if NoAns[str(xyy)] > TABOO and str(xyy).lower() not in ("water", "1"):
+                    continue
+            else:
+                continue
+            tmpz=str(x_all[fg])+","+str(xyy)
+            ctt+=1
+            wqi = get_weight_fast(str(x_all[fg]), str(xyy))
+            if wqi==0:
+                ht/=1.2
+            if wqi!=0:
+                wt=1.0
+                if ctt < 5:
+                    wt=3.0
+                ht*=wt*wqi
+                hr=True
+                if str(xyy) in NoAns:
+                    if NoAns[str(xyy)] > TABOO:
+                        if str(xyy).lower() != "water" and str(xyy).lower() != "1":
+                            ht/=(wt*wqi)
+                            hr=False                
+                    if NoAns[str(xyy)] <= TABOO and is_english_word(str(xyy)) == 1 and str(xyy).capitalize()==str(xyy):
+                        ht*=3.0
+                if hr==True and (str(xyy) in NoAns):
+                    if (NoAns[str(xyy)] <= TABOO) or (str(xyy).lower()=="water") or (str(xyy).lower()=="1"):
+                        if str(x_all[fg]) in take:
+                            take[str(x_all[fg])]+=1.0
+                        else:
+                            take[str(x_all[fg])]=1.0
+                if (str(x_all[fg]) in NoAns) and (str(xyy) in NoAns):
+                    if NoAns[str(xyy)] <= TABOO or str(xyy).lower()=="water" or str(xyy).lower()=="1":
+                        print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])])+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(xyy) in NoAns:
+                    if NoAns[str(xyy)] <= TABOO or str(xyy).lower()=="water" or str(xyy).lower()=="1":
+                        print(str(tmpz)+",score="+str(ht)+",NoAns2="+str(NoAns[str(xyy)]))
+                elif str(x_all[fg]) in NoAns:
+                    print(str(tmpz)+",score="+str(ht)+",NoAns1="+str(NoAns[str(x_all[fg])]))
+                else:
+                    print(str(tmpz)+",score="+str(ht))
+    ans_ja=""
+    divd=0.0
+    sz=0.0
+    for kd in range(len(quiz2)):
+        if str(quiz2[kd]) in NoAns:
+            if NoAns[str(quiz2[kd])] <= TABOO:
+                divd+=1.0
+            elif str(quiz2[kd]).lower()=="water" or str(quiz2[kd]).lower()=="1":
+                divd+=1.0
+        else:
+            if str(quiz2[kd]) not in train:
+                divd+=1.0
+    if divd < 0.1:
+        divd=1.0
+    conf=dict()
+    for kj in range(len(x_all)):
+        if str(x_all[kj]) in take:
+            conf[str(x_all[kj])]=wilson_lower(take[str(x_all[kj])], divd, z=1.0)
+        else:
+            conf[str(x_all[kj])]=0.0
+    maxconf=0.0
+    for kn in range(len(x_all)):
+        maxconf=max(maxconf,conf[str(x_all[kn])])
+    alp=dict()
+    RRF_A=[]
+    for ij in range(len(x_all)):
+        alp[str(x_all[ij])]=y_all[ij]
+    if calc_flag==0:
+        top_cross_word, top_cross_score = rt4[0]
+        #if top_cross_score >= 3.0:
+            #weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#Cross=10.0
+            #ans_type[loop]="Cross=10.0"
+        #elif top_cross_score >= 2.0:
+            #weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,Cross=10.0
+            #ans_type[loop]="BoW=2.0,Cross=10.0"
+        #elif top_cross_score >= 1.0:
+            #weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
+            #ans_type[loop]="BoW=10.0,Cross=2.0"
+        #else:
+        if maxconf < 0.3:
+            weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0]#Flat
+            ans_type[loop]="Flat"
+        else:
+            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
+            ans_type[loop]="BoW=10.0"
+        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
+        print("\n")
+        print("Final RRF Ranking:")
+        for rank, (word, score) in enumerate(final_results, 1):
+            print(f"{rank}. {word} (Score: {score:.5f})")
+            if len(RRF_A) <= 4:
+                RRF_A.append(str(word))
+        if final_results:
+            ans = final_results[0][0]
+            if y_all[0] < 0.2:
+                ans="Unknown"
+    else:
+        ans_type[loop]="Calc=10.0"
+    try:
+        translated = GoogleTranslator(source='en', target='ja').translate(str(ans))
+        if translated is not None:
+            ans_ja = translated
+        else:
+            ans_ja = str(ans)
+    except Exception:
+        ans_ja = str(ans)
+    print("\n")    
+    print("Answer_ja:"+ans_ja)    
+    print("Answer_en:"+str(ans))
+    if mode == "3":
+        truth=""
+        with open('./testcase/ans'+str(loop+1)+'.txt') as f:
+            for line in f:
+                truth=truth+line
+        if str(truth).lower()==str(ans).lower():
+            ok+=1
+            print("State:AC")
+        else:
+            AC_ex.append(str(truth))
+            WA_ex.append(str(ans))
+            WA.append(loop+1)
+            ng+=1
+            print("State:WA")
+            print("Truth:"+str(truth))
+            #reinforce_learning(quiz, str(truth))
+    if str(ans) in take:
+        sz=wilson_lower(take[str(ans)], divd, z=1.0)
+    else:
+        sz=0.0
+    if calc_flag > 0:
+        sz=1.0
+    print("Confidence:"+'{:.3f}'.format(sz))
+    if sz < 0.3:
+        print("Eval:F") 
+    else:
+        if sz < 0.45:
+            print("Eval:C")
+        else:
+            if sz < 0.6:
+                print("Eval:A")
+            else:
+                print("Eval:S")                
+    print("Words:"+str(counter))
+    mem = psutil.virtual_memory()
+    total_gb = mem.total / (1024**3)
+    print("Mem:"+str(mem.percent)+"%"+"/"+str(round(total_gb,2))+"GB")
+    print("Docs:"+str(len(meta)))
+    print("Params:"+str(len(w_data)+len(delta_weights)))
+    query1=quiz.split()
+    query2=""
+    zz=len(x_all)
+    if len(x_all) > 5:
+        zz=5
+    for mk in range(zz):
+        query2+=str(x_all[mk])+" " 
+    try:
+        results = googlesearch.search(query2, num_results=5)
+        for url in results:
+            if "wikipedia" in url:
+                s_en=str(get_ansi(url))
+                s_ja = GoogleTranslator(source='en', target='ja').translate(str(get_ansi(url)))
+                print("GoogleAnswer_ja:"+str(s_ja))
+                print("GoogleAnswer_en:"+str(s_en))
+                break
+    except Exception:
+        pass
+    if mode == "2":
+        if len(RRF_A) != 5:
+            return 0, "end"
+        yy_all = []
+        for ij in range(len(RRF_A)):
+            yy_all.append(alp.get(str(RRF_A[ij]), 0.0001))
+        y_log = [-y for y in yy_all[:5]]
+        colors = ['green'] + ['red'] * (len(RRF_A[:5]) - 1)
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_facecolor('#E6F0F9')
+        fig.patch.set_facecolor('#E6F0F9')
+        y_pos = list(range(len(RRF_A[:5])))
+        for i, y in enumerate(y_pos):
+            ax.barh(y, width=abs(min(y_log)) * 1.15, left=min(y_log) * 1.15, height=0.82, color='#DDEAF6', edgecolor='#C8D7E6', linewidth=1, zorder=0)
+        ax.barh(y_pos, y_log, color=colors, height=0.35, zorder=2)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(RRF_A[:5], fontweight='bold')
+        ax.invert_yaxis()
+        ax.yaxis.tick_right()
+        ax.tick_params(axis='y', length=0)
+        ax.axvline(0, color='black', linewidth=1.2, zorder=3)
+        ax.get_xaxis().set_visible(False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_xlim(min(y_log) * 1.25, 0.5)
+        for label in ax.get_yticklabels():
+            if label.get_text() == str(RRF_A[0]):
+                label.set_fontsize(24)
+            else:
+                label.set_fontsize(16)
+
+        plt.tight_layout()
+        plt.show()
+    
+    if mode=="4":
+        x_all_list.clear()
+        limit = min(5, len(x_all))
+        for ik in range(limit):
+            x_all_list.append(str(x_all[ik]))
+        random.shuffle(x_all_list)
+            
+    return 0,"end"
+
+if mode=="2":
+    o=True
+    add=""
+    q=""
+    while True:
+        a,b=quiz_solve(0,o,add,q)
+        if a==0:
+            break
+        else:
+            print("ReThinking...")
+            o=False
+            add+=" "+str(b)
+
+elif mode=="3":
+
+    for l in range(PROBLEM):
+        print("------------------------------------------------------------------")
+        print(str("Problem:")+str(l+1)+"/"+str(PROBLEM))
+        o=True
+        add=""
+        q=""
+        while True:
+            a,b=quiz_solve(l,o,add,q)
+            if a==0:
+                break
+            else:
+                print("ReThinking...")
+                o=False
+                add+=" "+str(b)
+elif mode=="1":
+    o=True
+    add=""
+    qz=""
+    while True:
+        q=""
+        if o==True:
+            print("------------------------------------------------------------------")
+            print("Input_Quiz:")
+            while True:
+                q2 = input()
+                if "@@@" in q2:
+                    q2 = q2.replace("@@@", "")
+                    q+=q2+" "
+                    break
+                q+=q2+" "        
+        q = q.replace("@@@", "")
+        if o == False:
+            q=qz
+        qz=q
+        if add=="":
+            start_time = time.time()
+        a,b=quiz_solve(0,o,add,q)
+        if a!=0:
+            print("ReThinking...")
+            o=False
+            add+=" "+str(b)
+        else:
+            o=True
+            add=""
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"CalcTime: {elapsed_time:.0f} sec")
+            
+elif mode=="4":
+    o=True
+    add=""
+    nxt=""
+    roo=random.randint(0, PROBLEM-1)
+    with open('./testcase/quiz'+str(roo+1)+'.txt') as f:
+        for line in f:
+            nxt=nxt+line
+    q0=""
+    for k in range(len(nxt)):   
+        if is_sp(nxt[k]) > 0:
+            q0+=" "+nxt[k]+" "
+        else:
+            q0+=nxt[k]
+    cnt2=0
+    while True:
+        if o==True:
+            print("------------------------------------------------------------------")
+            q=""
+            print("Input_Quiz:")
+            if cnt2 > 0 and len(x_all_list) > 0:
+                for ik in range(len(x_all_list)):
+                    wiki_text = get_wikipedia_intro(str(x_all_list[ik]))
+                    if wiki_text is None:
+                        wiki_text = ""
+                    else:
+                        sentences = sent_tokenize(wiki_text)
+                        wiki_text = " ".join(sentences[:2])
+                        q=wiki_text
+                        print("Theme:"+str(x_all_list[ik]))
+                        break
+            else:
+                q=q0
+                cnt2=1
+            print(q)
+        a,b=quiz_solve(0,o,add,q)
+        if a!=0:
+            print("ReThinking...")
+            o=False
+            add+=" "+str(b)
+        else:
+            o=True
+            add=""            
+
+
+if mode=="3":
+    print("------------------------------------------------------------------")
+    #with open('NoAns2.txt', 'w', encoding='utf-8') as f:
+    #for wd, cou in NoAns.items():
+        #f.write(f"{wd}@{cou}\n")
+    print(str("AC=")+str(ok)+",WA="+str(ng))
+    if len(WA)!=0:
+        print("WA_Problem:",end="")
+        for i in range(len(WA)-1):
+            print(str(WA[i])+",",end="")
+        print(str(WA[len(WA)-1]))
+        for i in range(len(WA)):
+            print("Truth:"+str(AC_ex[i])+",WA:"+str(WA_ex[i])+",AnsType:"+str(ans_type[WA[i]-1]))
