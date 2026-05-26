@@ -1332,6 +1332,40 @@ def quiz_solve(loop,o,add,q):
 
     quizs=quiz.lower().split()
 
+    if mode == "1":
+        print("Format? (free/select) = ", end="")
+        q_format = input().strip().lower()
+ 
+        if q_format == "select":
+            rtt2.clear()
+            uniq.clear()
+            print("How many choices? = ", end="")
+            try:
+                k = int(input().strip())
+            except ValueError:
+                k = 0
+               
+            for i in range(k):
+                label = chr(ord('A') + i)
+                print(f"Choice {label} = ", end="")
+                opt_str = input().strip()
+               
+                if is_ja(opt_str) or not opt_str.isascii():
+                    try:
+                        opt_str = GoogleTranslator(source='ja', target='en').translate(opt_str)
+                    except Exception:
+                        pass
+                if opt_str not in train:
+                    continue
+                   
+                rtt2.append(train[opt_str])
+
+            for ix in range(len(rtt2)):
+                if rtt2[ix] not in uniq:
+                    uniq[rtt2[ix]]=1.0
+                else:
+                    uniq[rtt2[ix]]*=2.0    
+
     for cand_id in rtt2:
         xx = cand_id - 1
         per=xx/(counter+1)
