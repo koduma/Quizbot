@@ -1512,26 +1512,39 @@ def quiz_solve(loop,o,add,q):
         tmp_quiz=quiz3
         tmp_quiz2=fix_expression(tmp_quiz)
         i1,i2=calculator(tmp_quiz2)
+        ism = (mode == "1" and locals().get('q_format') == "select")
+        def match_choice(val):
+            s_val = str(val)
+            if not ism: return s_val
+            if s_val in dic2: return s_val
+            for k in dic2.keys():
+                try:
+                    if abs(float(s_val) - float(k)) < 1e-9: return k
+                except: pass
+            return None
         if i1>=2:
             sco=0.0
             if float(i1/len(tmp_quiz2))<0.1:
                 sco=float(pow(2.0,i1*10/len(tmp_quiz2)))
             else:
                 sco=float(pow(2.0,i1*100/len(tmp_quiz2)))
-            dic2[str(i2)]=round(sco,2)
-            if sco>maxsum:
-                maxsum=round(sco,2)
-                ans=str(i2)
-                calc_flag = 1
+            m_val = match_choice(i2)
+            if m_val:
+                dic2[m_val]=round(sco,2)
+                if sco>maxsum:
+                    maxsum=round(sco,2)
+                    ans=str(i2)
+                    calc_flag = 1
         if calc_flag==0:
             is_wp=wps.check_wp(quiz3)
             if is_wp==True:
                 calc_flag=2
                 bt=wps.solve_math_problem(quiz3)
-                if bt == None:
+                m_val = match_choice(bt) if bt is not None else None
+                if m_val == None:
                     calc_flag=0
                 else:
-                    ans=str(bt)
+                    ans=m_val
     # 1. divd (クイズ文の有効単語数) の事前計算
     divd2 = 0.0
     for kd in range(len(quiz2)):
