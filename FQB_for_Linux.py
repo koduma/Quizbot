@@ -1369,6 +1369,9 @@ def quiz_solve(loop,o,add,q):
                 else:
                     uniq[rtt2[ix]]*=2.0
 
+    skip_calc = False
+    if mode == "1" and locals().get('q_format') == "select":
+        skip_calc = True
     for cand_id in rtt2:
         xx = cand_id - 1
         per=xx/(counter+1)
@@ -1499,33 +1502,31 @@ def quiz_solve(loop,o,add,q):
             maxsum=sum
             ans=train_num[xx+1]
     print("complete")
-    tmp_quiz=quiz3        
-    tmp_quiz2=fix_expression(tmp_quiz)
-    i1,i2=calculator(tmp_quiz2)
-    calc_flag = 0#0=クイズ、1=計算、2=算数文章題
-    #print("i1="+str(i1)+",len(quiz)="+str(len(quiz)))
-    if i1>=2:
-        sco=0.0
-        if float(i1/len(tmp_quiz2))<0.1:
-            sco=float(pow(2.0,i1*10/len(tmp_quiz2)))
-        else:
-            sco=float(pow(2.0,i1*100/len(tmp_quiz2)))
-        dic2[str(i2)]=round(sco,2)
-        #print("i2="+str(i2)+",i1="+str(i1)+",len="+str(len(quiz))+",sco="+str(sco))
-        if sco>maxsum:
-            maxsum=round(sco,2)
-            ans=str(i2)
-            calc_flag = 1
-    if calc_flag==0:
-        is_wp=wps.check_wp(quiz3)
-        if is_wp==True:
-            calc_flag=2
-            bt=wps.solve_math_problem(quiz3)
-            if bt == None:
-                calc_flag=0
+    calc_flag = 0
+    if not skip_calc:
+        tmp_quiz=quiz3
+        tmp_quiz2=fix_expression(tmp_quiz)
+        i1,i2=calculator(tmp_quiz2)
+        if i1>=2:
+            sco=0.0
+            if float(i1/len(tmp_quiz2))<0.1:
+                sco=float(pow(2.0,i1*10/len(tmp_quiz2)))
             else:
-                ans=str(bt)
-    # 1. divd (クイズ文の有効単語数) の事前計算
+                sco=float(pow(2.0,i1*100/len(tmp_quiz2)))
+            dic2[str(i2)]=round(sco,2)
+            if sco>maxsum:
+                maxsum=round(sco,2)
+                ans=str(i2)
+                calc_flag = 1
+        if calc_flag==0:
+            is_wp=wps.check_wp(quiz3)
+            if is_wp==True:
+                calc_flag=2
+                bt=wps.solve_math_problem(quiz3)
+                if bt == None:
+                    calc_flag=0
+                else:
+                    ans=str(bt)
     divd2 = 0.0
     for kd in range(len(quiz2)):
         if str(quiz2[kd]) in NoAns:
