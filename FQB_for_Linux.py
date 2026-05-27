@@ -1351,6 +1351,7 @@ def quiz_solve(loop,o,add,q):
                 label = chr(ord('A') + i)
                 print(f"Choice {label} = ", end="")
                 opt_str = input().strip()
+                opt_str=str(opt_str).capitalize()
                
                 if is_ja(opt_str) or not opt_str.isascii():
                     try:
