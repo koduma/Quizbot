@@ -1370,6 +1370,11 @@ def quiz_solve(loop,o,add,q):
     skip_calc = False
     if mode == "1" and locals().get('q_format') == "select":
         skip_calc = True
+        tq=quiz3
+        tq2=fix_expression(tq)
+        mo1,mo2=calculator(tq2)
+        if mo1>=2:
+            skip_calc = False
 
     for cand_id in rtt2:
         xx = cand_id - 1
