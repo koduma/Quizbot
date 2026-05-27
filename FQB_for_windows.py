@@ -1402,13 +1402,14 @@ def quiz_solve(loop,o,add,q):
             sum*=uniq[xx+1]
         else:
             sum=uniq[xx+1]
+        is_select_mode = (mode == "1" and locals().get('q_format') == "select")
         strl=str(train_num[xx+1]).lower()
         if strl in ngram:
             sum=1.0
-            continue
+            if not is_select_mode: continue
         if is_new_word_in_quiz_ignore_case(quizs,str(train_num[xx+1]))==True:
             sum=1.0
-            continue
+            if not is_select_mode: continue
         syn = get_one_synonym(str(train_num[xx+1]),quiz_xxx)
         found_syn=False
         go_syn=False
