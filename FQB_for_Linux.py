@@ -159,20 +159,15 @@ def is_same_word(s1, s2):
         return True
         
     len_s1, len_s2 = len(s1), len(s2)
-    max_len = max(len_s1, len_s2)
-    
-    if max_len <= 3:
+    if abs(len_s1 - len_s2) > 1:
         return False
-        
-    if abs(len_s1 - len_s2) > max_len * 0.3:
+    if min(len_s1, len_s2) <= 3:
         return False
-        
-    ratio = difflib.SequenceMatcher(None, s1, s2).ratio()
+    if s1[0] != s2[0]:
+        return False
+    dist = Levenshtein.distance(s1, s2)
     
-    if max_len <= 5:
-        return ratio >= 0.85
-    else:
-        return ratio >= 0.80
+    return dist <= 1
 
 def is_new_word_in_quiz_ignore_case(quiz_xxx: list, word: str) -> bool:
     new_word = re.sub(r'\(.*?\)', '', word).strip().lower()
