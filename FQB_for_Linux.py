@@ -53,6 +53,7 @@ train_num = dict()
 datakun = dict()
 NoAns = dict()
 delta_weights = dict()
+dbpedia_types_dict = dict()
 
 x_all_list=[]
 ans_type={}
@@ -762,6 +763,65 @@ def apply_rrf(rankings_lists, weights=None, k=60):
     final_ranking = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     return final_ranking
 
+
+def load_dbpedia_types(file_path: str) -> dict:
+    dbpedia_dict = {}
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split('@', 1)
+                if len(parts) == 2:
+                    dbpedia_dict[parts[0]] = parts[1]
+        print(f"Loaded DBpedia Types: {len(dbpedia_dict)} entities.")
+    except Exception as e:
+        print("DBpedia Types load error:", e)
+    return dbpedia_dict
+
+def filter_top_k_by_entity(top_k_list: list, dbpedia_dict: dict, quiz_text: str, NoAns: dict):
+    if not dbpedia_dict or not top_k_list:
+        return top_k_list
+    top1_word = top_k_list[0][0]
+    top1_clean = re.sub(r'[^a-zA-Z0-9]', '', top1_word)
+    top1_entity = dbpedia_dict.get(top1_clean, None)
+    meta_entity = None
+    max_noans = -1
+    best_meta_word = ""
+    clean_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', quiz_text)
+    quiz_words = clean_text.split()
+    
+    for w in quiz_words:
+        cw = re.sub(r'[^a-zA-Z0-9]', '', w)
+        noans_val = max(NoAns.get(w, 0), NoAns.get(w.lower(), 0))
+        if cw in dbpedia_dict and noans_val > max_noans:
+            max_noans = noans_val
+            meta_entity = dbpedia_dict[cw]
+            best_meta_word = w
+            
+    print(f"\n[Entity Filter] Top1 Entity: {top1_entity} (from '{top1_word}')")
+    if meta_entity:
+        print(f"[Entity Filter] Max NoAns Entity: {meta_entity} (from '{best_meta_word}', NoAns: {max_noans})")
+    else:
+        print("[Entity Filter] No valid meta entity found in quiz text.")
+        
+    valid_entities = set()
+    if top1_entity:
+        valid_entities.add(top1_entity)
+    if meta_entity:
+        valid_entities.add(meta_entity)
+    filtered_list = []
+    for word, score in top_k_list:
+        cw = re.sub(r'[^a-zA-Z0-9]', '', word)
+        etype = dbpedia_dict.get(cw, None)
+        if etype is None or etype in valid_entities:
+            filtered_list.append((word, score))
+        else:
+            print(f"  -> Removed noise: {word} (Type: {etype})")
+            
+    return filtered_list
+
 for l in range(len(meta)):
     reading=True
     try:
@@ -840,6 +900,9 @@ for l in range(len(meta)):
     
     if reading == True:
         load_diff_weights()
+        
+    if reading == True:
+        dbpedia_types_dict = load_dbpedia_types("dbpedia_types.txt")
 
     if reading==True:
         print("reading_ok")
@@ -1575,6 +1638,7 @@ def quiz_solve(loop,o,add,q):
         h_score = math.log2(max(1.0, raw_score)) * wilson_lower(take_all[word], divd2, z=1.0)
         hybrid_list.append((word, h_score))
     g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
+    g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
     if len(g) == 0:
         ans_type[loop]="Unknown"
         print("Answer_ja:未知")
