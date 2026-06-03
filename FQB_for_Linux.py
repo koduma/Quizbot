@@ -785,6 +785,7 @@ def filter_top_k_by_entity(top_k_list: list, dbpedia_dict: dict, quiz_text: str,
         return top_k_list
     top1_word = top_k_list[0][0]
     top1_clean = re.sub(r'[^a-zA-Z0-9]', '', top1_word)
+    top1_clean = top1_clean.lower()
     top1_entity = dbpedia_dict.get(top1_clean, None)
     meta_entity = None
     max_noans = -1
@@ -794,6 +795,7 @@ def filter_top_k_by_entity(top_k_list: list, dbpedia_dict: dict, quiz_text: str,
     
     for w in quiz_words:
         cw = re.sub(r'[^a-zA-Z0-9]', '', w)
+        cw = cw.lower()
         noans_val = max(NoAns.get(w, 0), NoAns.get(w.lower(), 0))
         if cw in dbpedia_dict and noans_val > max_noans:
             max_noans = noans_val
@@ -814,6 +816,7 @@ def filter_top_k_by_entity(top_k_list: list, dbpedia_dict: dict, quiz_text: str,
     filtered_list = []
     for word, score in top_k_list:
         cw = re.sub(r'[^a-zA-Z0-9]', '', word)
+        cw = cw.lower()
         etype = dbpedia_dict.get(cw, None)
         if etype is None or etype in valid_entities:
             filtered_list.append((word, score))
@@ -1533,7 +1536,7 @@ def quiz_solve(loop,o,add,q):
                 #else:
                     #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
                         #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="gnu":
+                #if str(train_num[xx+1]).lower()=="georgewashington":
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
                 #if "theseus" in str(train_num[xx+1]).lower():
                     #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
