@@ -1561,7 +1561,7 @@ def quiz_solve(loop,o,add,q):
                 ans = target
                 
             # プログレスバー
-            per = i / (counter+1)
+            per = i / (cand_size+1)
             idx = min(9, int(per * 10))
             if not printed[idx]:
                 print(f"thinking...{idx * 10.0}%")
