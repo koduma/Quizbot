@@ -98,43 +98,43 @@ extern "C" {
         return val;
     }
 
-    float get_weight_fast_cpp(int p_id, int c_id, int child_noans, const uint32_t* offsets, const uint32_t* indices, const uint16_t* w_data, int taboo) {
+    double get_weight_fast_cpp(int p_id, int c_id, int child_noans, const uint32_t* offsets, const uint32_t* indices, const uint16_t* w_data, int taboo) {
         uint16_t raw = get_raw_weight(p_id, c_id, offsets, indices, w_data);
-        if (raw == 0) return 0.0f;
-        float freq = (child_noans == -1) ? 1.0f : std::max(1.0f, (float)child_noans);
-        float need = log10((float)taboo / freq) + 1.0f;
-        return (float)raw * std::max(1.0f, need);
+        if (raw == 0) return 0.0;
+        double freq = (child_noans == -1) ? 1.0 : std::max(1.0, (double)child_noans);
+        double need = log10((double)taboo / freq) + 1.0;
+        return (double)raw * std::max(1.0, need);
     }
 
     // メインの2重ループ（Pythonコードの完全な翻訳）
     void run_quiz_loop(
         int cand_size, const int* cand_ids, const char** cand_strs, const char** syn_strs,
-        const float* uniq_vals, const float* wq_hints, const int* ngram_flags, const int* new_word_flags,
+        const double* uniq_vals, const double* wq_hints, const int* ngram_flags, const int* new_word_flags,
         int quiz_size, const int* quiz_ids, const char** quiz_strs, const int* quiz_noans,
         const uint32_t* offsets, const uint32_t* indices, const uint16_t* w_data,
         int taboo, int maxhit, int is_select_mode,
-        float* out_scores, int* out_include, int* out_go_syn
+        double* out_scores, int* out_include, int* out_go_syn
     ) {
         for (int i = 0; i < cand_size; i++) {
             int cand_id = cand_ids[i];
             const char* target_str = cand_strs[i];
             const char* syn_str = syn_strs[i];
-            float sum = 1.0f;
+            double sum = 1.0;
 
-            if (wq_hints[i] != 0.0f) {
-                sum = (float)pow(2, maxhit - 1);
+            if (wq_hints[i] != 0.0) {
+                sum = (double)pow(2, maxhit - 1);
                 sum *= uniq_vals[i];
             } else {
                 sum = uniq_vals[i];
             }
 
             if (ngram_flags[i] == 1) {
-                sum = 1.0f;
+                sum = 1.0;
                 if (!is_select_mode) { out_scores[i] = sum; continue; }
             }
 
             if (new_word_flags[i] == 1) {
-                sum = 1.0f;
+                sum = 1.0;
                 if (!is_select_mode) { out_scores[i] = sum; continue; }
             }
 
@@ -162,14 +162,14 @@ extern "C" {
                 std::string xxx_upper = to_upper(xxx);
 
                 if (is_same_word(xxx, target_str)) {
-                    sum = 1.0f;
+                    sum = 1.0;
                     break;
                 }
 
                 int dist = levenshtein(target_upper.c_str(), xxx_upper.c_str());
                 if (dist < 1) {
                     if (!found_syn) {
-                        sum = 1.0f;
+                        sum = 1.0;
                         break;
                     }
                     go_syn = true;
@@ -179,7 +179,7 @@ extern "C" {
                     int dist2 = levenshtein(syn_upper.c_str(), xxx_upper.c_str());
                     if (dist2 < 1) {
                         go_syn = false;
-                        sum *= 100.0f;
+                        sum *= 100.0;
                     }
                 }
 
@@ -205,13 +205,13 @@ extern "C" {
                     }
                 }
 
-                float wqz = get_weight_fast_cpp(cand_id, quiz_ids[j], quiz_noans[j], offsets, indices, w_data, taboo);
+                double wqz = get_weight_fast_cpp(cand_id, quiz_ids[j], quiz_noans[j], offsets, indices, w_data, taboo);
                 
-                if (wqz == 0.0f) {
-                    sum /= 1.2f;
+                if (wqz == 0.0) {
+                    sum /= 1.2;
                 } 
-                if (wqz != 0.0f) {
-                    float weight = (cnt < 5) ? 3.0f : 1.0f;
+                if (wqz != 0.0) {
+                    double weight = (cnt < 5) ? 3.0 : 1.0;
                     sum *= weight * wqz;
 
                     if (quiz_noans[j] > taboo) {
@@ -221,7 +221,7 @@ extern "C" {
                     }
 
                     if (quiz_noans[j] <= taboo && is_english_word(xxx) && is_capitalized(xxx)) {
-                        sum *= 3.0f;
+                        sum *= 3.0;
                     }
                 }
             }
