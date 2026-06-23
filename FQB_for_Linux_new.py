@@ -48,11 +48,11 @@ try:
     cpp_lib.init_deltas.restype = None
 
     cpp_lib.run_quiz_loop.argtypes = [
-        ctypes.c_int32, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.c_int32, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
         ctypes.c_int32, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_int32),
         ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint16),
         ctypes.c_int32, ctypes.c_int32, ctypes.c_int32,
-        ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32)
+        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32)
     ]
     cpp_lib.run_quiz_loop.restype = None
     CPP_LIB_LOADED = True
@@ -1521,8 +1521,8 @@ def quiz_solve(loop,o,add,q):
         c_cand_ids = (ctypes.c_int32 * cand_size)(*cand_ids_list)
         c_cand_strs = (ctypes.c_char_p * cand_size)(*[s.encode('utf-8') for s in cand_list])
         c_syn_strs = (ctypes.c_char_p * cand_size)(*[s.encode('utf-8') for s in syn_strs_list])
-        c_uniq = (ctypes.c_float * cand_size)(*uniq_vals_list)
-        c_wq_hints = (ctypes.c_float * cand_size)(*wq_hints_list)
+        c_uniq = (ctypes.c_double * cand_size)(*uniq_vals_list)
+        c_wq_hints = (ctypes.c_double * cand_size)(*wq_hints_list)
         c_ngram = (ctypes.c_int32 * cand_size)(*ngram_flags_list)
         c_new = (ctypes.c_int32 * cand_size)(*new_word_flags_list)
         
@@ -1530,7 +1530,7 @@ def quiz_solve(loop,o,add,q):
         c_quiz_ids = (ctypes.c_int32 * quiz_size)(*quiz_ids_list)
         c_quiz_noans = (ctypes.c_int32 * quiz_size)(*quiz_noans_list)
         
-        out_scores = (ctypes.c_float * cand_size)()
+        out_scores = (ctypes.c_double * cand_size)()
         out_include = (ctypes.c_int32 * cand_size)()
         out_go_syn = (ctypes.c_int32 * cand_size)()
 
