@@ -661,10 +661,10 @@ def is_sp(s):
         sp=1
     elif s=="`":
         sp=1
+    elif s=="?":
+        sp=1
     elif s=="¥":
-        sp=1
-    elif s=="—":
-        sp=1
+        sp=1    
     return sp
 
 looked = dict()
@@ -1644,7 +1644,7 @@ def quiz_solve(loop,o,add,q):
         h_score = math.log2(max(1.0, raw_score)) * wl
         hybrid_list.append((word, h_score))
     g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
-    g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
+    #g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
     if len(g) == 0:
         ans_type[loop]="Unknown"
         print("Answer_ja:未知")
