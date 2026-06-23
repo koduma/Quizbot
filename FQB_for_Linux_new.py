@@ -1635,7 +1635,10 @@ def quiz_solve(loop,o,add,q):
 
     hybrid_list = []
     for word, raw_score in dic2.items():
-        h_score = math.log2(max(1.0, raw_score)) * wilson_lower(take_all[word], divd2, z=1.0)
+        wl=wilson_lower(take_all[word], divd2, z=1.0)
+        if wl < 0.01 and calc_flag==1:
+            wl=3.0
+        h_score = math.log2(max(1.0, raw_score)) * wl
         hybrid_list.append((word, h_score))
     g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
     g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
