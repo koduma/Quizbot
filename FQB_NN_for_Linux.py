@@ -39,6 +39,7 @@ from collections import Counter
 from nltk.corpus import stopwords
 import ctypes
 import platform
+import numpy as np
 
 try:
     lib_ext = '.dll' if platform.system() == 'Windows' else '.so'
@@ -118,6 +119,25 @@ try:
 except LookupError:
     nltk.download('stopwords', quiet=True)
     STOP_WORDS = set(stopwords.words('english'))
+
+
+class MinimalStackingNN:
+    def __init__(self, weight_file="nn_weights.txt"):
+        with open(weight_file, 'r') as f:
+            lines = f.read().strip().split('\n')
+        self.W1 = np.zeros((5, 16))
+        for i in range(5):
+            self.W1[i] = list(map(float, lines[i].strip().split()))
+        self.b1 = np.array(list(map(float, lines[5].strip().split())))
+        self.W2 = np.array(list(map(float, lines[6].strip().split())))
+        self.b2 = float(lines[7].strip())
+
+    def predict(self, features):
+        x = np.array(features)
+        hidden = np.maximum(0, np.dot(x, self.W1) + self.b1)
+        y = np.dot(hidden, self.W2) + self.b2
+        y = np.clip(y, -30.0, 30.0)       
+        return 1.0 / (1.0 + np.exp(-y))
 
 warnings.simplefilter('ignore')
 
@@ -1145,7 +1165,7 @@ ok=0
 ng=0
 mode=""
 
-print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
+print("mode?(1:keyboard,2:txt,3:testcase,4:generator,5:learning)=",end="")
 
 mode=input()
 #mode="3"
@@ -1309,7 +1329,22 @@ def reinforce_learning(quiz_text, truth_word):
             
     print(f">> [Reinforcement] Learnt from WA. Updated weights for '{truth_word}'.")
 
-def quiz_solve(loop,o,add,q):
+
+def get_train_id_robust(word):
+    if not word: return -1
+    if word in train: return train[word]
+    if word.capitalize() in train: return train[word.capitalize()]
+    if word.lower() in train: return train[word.lower()]
+    no_bracket = re.sub(r'\(.*?\)', '', word).strip()
+    if no_bracket and no_bracket in train: return train[no_bracket]
+    clean = re.sub(r'[^A-Za-z0-9]', '', word)
+    if clean and clean in train: return train[clean]
+    if clean.capitalize() in train: return train[clean.capitalize()]
+    if clean.lower() in train: return train[clean.lower()]
+    
+    return -1
+
+def quiz_solve(loop,o,add,q, truth_word=None):
 
     global ok,ng
     
@@ -1323,7 +1358,7 @@ def quiz_solve(loop,o,add,q):
         with open('./quiz.txt') as f:
             for line in f:
                 quiz=quiz+line
-    elif mode=="1" or mode=="4":
+    elif mode=="1" or mode=="4" or mode=="5":
         quiz=q
     if len(quiz)==0:
         sys.exit()
@@ -1641,7 +1676,7 @@ def quiz_solve(loop,o,add,q):
         h_score = math.log2(max(1.0, raw_score)) * wl
         hybrid_list.append((word, h_score))
     g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
-    g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
+    #g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
     if len(g) == 0:
         ans_type[loop]="Unknown"
         print("Answer_ja:未知")
@@ -1665,7 +1700,7 @@ def quiz_solve(loop,o,add,q):
                 #reinforce_learning(quiz, str(trut))
         return 0,"end"
     x_all, y_all = zip(*g)
-    if str(x_all[0]) in include:
+    if str(x_all[0]) in include and mode != "5":
         return -1,str(x_all[0])
     print("\n")
     #print("BoW_Top5:",end="")
@@ -1743,6 +1778,55 @@ def quiz_solve(loop,o,add,q):
         formatted_items = [f"('{name}', {score:.4g})" for name, score in data[:5]]
         print(f"{label}:[{', '.join(formatted_items)}]")
     print("\n")
+
+    if mode == "5" and truth_word is not None:
+        cand_words = list(x_all)
+        
+        # 答えの文字列から記号を消して小文字にした「比較用文字列」を作る
+        clean_truth = re.sub(r'[^A-Za-z0-9]', '', truth_word).lower()
+        if not clean_truth:
+            return 2, "invalid_truth"
+            
+        cand_ids = [get_train_id_robust(w) for w in cand_words]
+        
+        bow_scores = list(y_all)
+        jac_scores = [jaccard_rank.get(w, 0.0) for w in cand_words]
+        ord_scores = [order_rank.get(w, 0.0) for w in cand_words]
+        bm25_scores = [bm25_rank.get(w, 0.0) for w in cand_words]
+        cross_scores = [cross_rank.get(w, 0.0) for w in cand_words]
+        
+        def minmax(lst):
+            if not lst: return []
+            mi, ma = min(lst), max(lst)
+            if ma == mi: return [0.0] * len(lst)
+            return [(v - mi) / (ma - mi) for v in lst]
+            
+        n_bow = minmax(bow_scores)
+        n_jac = minmax(jac_scores)
+        n_ord = minmax(ord_scores)
+        n_bm25 = minmax(bm25_scores)
+        n_cross = minmax(cross_scores)
+        
+        # 1問終わるごとにファイルを開いて追記
+        with open("stacking_training_data.csv", "a", encoding="utf-8") as f:
+            for i in range(len(cand_words)):
+                c_id = cand_ids[i]
+                c_word = cand_words[i]
+                if c_id == -1: continue 
+                
+                # ==== 変更点: IDではなく「文字列の包含関係」で正解(1)かハズレ(0)かを判定 ====
+                clean_cand = re.sub(r'[^A-Za-z0-9]', '', c_word).lower()
+                
+                is_correct = 0
+                if clean_truth in clean_cand or clean_cand in clean_truth:
+                    is_correct = 1
+                # ====================================================================
+
+                # IDの代わりに is_correct (0 or 1) を書き込む
+                f.write(f"{is_correct},{c_id},{n_bow[i]:.5f},{n_jac[i]:.5f},{n_ord[i]:.5f},{n_bm25[i]:.5f},{n_cross[i]:.5f}\n")
+        
+        print(f"[{loop}] Saved features for Truth: {truth_word}")
+        return 0, "end"
     
     take=dict()
     for fg in range(len(x_all)):
@@ -1833,34 +1917,56 @@ def quiz_solve(loop,o,add,q):
     for ij in range(len(x_all)):
         alp[str(x_all[ij])]=y_all[ij]
     if calc_flag==0:
-        top_cross_word, top_cross_score = rt4[0]
-        #if top_cross_score >= 3.0:
-            #weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#Cross=10.0
-            #ans_type[loop]="Cross=10.0"
-        #elif top_cross_score >= 2.0:
-            #weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,Cross=10.0
-            #ans_type[loop]="BoW=2.0,Cross=10.0"
-        #elif top_cross_score >= 1.0:
-            #weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
-            #ans_type[loop]="BoW=10.0,Cross=2.0"
-        #else:
+        nn = MinimalStackingNN("nn_weights.txt")
         if maxconf < 0.3:
-            weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0]#Flat
-            ans_type[loop]="Flat"
+            weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0] # Flat
+            rrf_state = "Flat"
         else:
-            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
-            ans_type[loop]="BoW=10.0"
-        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
-        print("\n")
-        print("Final RRF Ranking:")
-        for rank, (word, score) in enumerate(final_results, 1):
+            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1] # BoW=10.0
+            rrf_state = "BoW"
+            
+        final_results = apply_rrf([g, rt, rt2, rt3, rt4], weights=weights_to_use, k=60)
+        def minmax(lst):
+            if not lst: return []
+            mi, ma = min(lst), max(lst)
+            if ma == mi: return [0.0] * len(lst)
+            return [(v - mi) / (ma - mi) for v in lst]
+
+        cand_words = list(x_all)
+        n_bow = minmax(list(y_all))
+        n_jac = minmax([jaccard_rank.get(w, 0.0) for w in cand_words])
+        n_ord = minmax([order_rank.get(w, 0.0) for w in cand_words])
+        n_bm25 = minmax([bm25_rank.get(w, 0.0) for w in cand_words])
+        n_cross = minmax([cross_rank.get(w, 0.0) for w in cand_words])
+
+        nn_results = []
+        for i, w in enumerate(cand_words):
+            score = nn.predict([n_bow[i], n_jac[i], n_ord[i], n_bm25[i], n_cross[i]])
+            nn_results.append((w, float(score)))
+            
+        nn_results.sort(key=lambda x: x[1], reverse=True)
+        print("\nFinal RRF Ranking:")
+        for rank, (word, score) in enumerate(final_results[:5], 1): 
             print(f"{rank}. {word} (Score: {score:.5f})")
             if len(RRF_A) <= 4:
-                RRF_A.append(str(word))
-        if final_results:
-            ans = final_results[0][0]
+                RRF_A.append(str(word))                
+        print("\nFinal NN Ranking:")
+        for rank, (word, score) in enumerate(nn_results[:5], 1):
+            print(f"{rank}. {word} (NN Score: {score:.5f})")
+        if nn_results:
+            top_nn_word, top_nn_score = nn_results[0]
+            if top_nn_score >= 0.5:
+                ans = top_nn_word
+                ans_type[loop] = f"StackingNN({rrf_state})"
+            elif len(nn_results) > 0:
+                ans = nn_results[0][0]
+                ans_type[loop] = "Greedy"
+            else:
+                ans = "Unknown"
+                ans_type[loop] = "Unknown"
             if y_all[0] < 0.2:
-                ans="Unknown"
+                ans = "Unknown"
+                ans_type[loop] = "Unknown"               
     else:
         ans_type[loop]="Calc=10.0"
     try:
@@ -2079,7 +2185,43 @@ elif mode=="4":
             add+=" "+str(b)
         else:
             o=True
-            add=""            
+            add=""
+
+elif mode == "5":
+    print("------------------------------------------------------------------")
+    print("Starting Mode 5: Extracting features from valid_qas.txt")
+    
+    qas = []
+    try:
+        with open("valid_qas.txt", "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) == 2:
+                    qas.append((parts[0], parts[1]))
+    except FileNotFoundError:
+        print("Error: valid_qas.txt not found.")
+        sys.exit(1)
+        
+    start_idx = 0
+    if os.path.exists("resume_index.txt"):
+        with open("resume_index.txt", "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if content.isdigit():
+                start_idx = int(content)
+                
+    print(f"Total questions: {len(qas)}. Starting from index: {start_idx}")
+    if start_idx == 0 and not os.path.exists("stacking_training_data.csv"):
+        with open("stacking_training_data.csv", "w", encoding="utf-8") as f:
+            f.write("is_correct,candidate_id,bow_norm,jaccard_norm,order_norm,bm25_norm,cross_norm\n")
+
+    for idx in range(start_idx, len(qas)):
+        q_text, ans_text = qas[idx]
+        print(f"\n--- Processing [{idx}/{len(qas)}] ---")
+        a, b = quiz_solve(idx, True, "", q_text, truth_word=ans_text)
+        with open("resume_index.txt", "w", encoding="utf-8") as f:
+            f.write(str(idx + 1))
+            
+    print("Mode 5 Completed.")
 
 
 if mode=="3":
