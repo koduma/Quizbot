@@ -1942,31 +1942,40 @@ def quiz_solve(loop,o,add,q, truth_word=None):
         nn_results = []
         for i, w in enumerate(cand_words):
             score = nn.predict([n_bow[i], n_jac[i], n_ord[i], n_bm25[i], n_cross[i]])
-            nn_results.append((w, float(score)))
-            
+            nn_results.append((w, float(score)))            
         nn_results.sort(key=lambda x: x[1], reverse=True)
         print("\nFinal RRF Ranking:")
         for rank, (word, score) in enumerate(final_results[:5], 1): 
             print(f"{rank}. {word} (Score: {score:.5f})")
-            if len(RRF_A) <= 4:
-                RRF_A.append(str(word))                
+            if len(RRF_A) <= 4 and (mode =="2" or mode == "5"):
+                RRF_A.append(str(word))
         print("\nFinal NN Ranking:")
         for rank, (word, score) in enumerate(nn_results[:5], 1):
             print(f"{rank}. {word} (NN Score: {score:.5f})")
-        if nn_results:
-            top_nn_word, top_nn_score = nn_results[0]
-            if top_nn_score >= 0.5:
-                ans = top_nn_word
-                ans_type[loop] = f"StackingNN({rrf_state})"
-            elif len(nn_results) > 0:
-                ans = nn_results[0][0]
-                ans_type[loop] = "Greedy"
+            if len(RRF_A) <= 4 and (mode =="1" or mode == "3" or mode == "4"):
+                RRF_A.append(str(word))
+        if mode in ["2", "5"]:
+            if final_results:
+                ans = final_results[0][0]
+                ans_type[loop] = f"RRF({rrf_state})"
             else:
                 ans = "Unknown"
                 ans_type[loop] = "Unknown"
-            if y_all[0] < 0.2:
+        else:
+            if nn_results:
+                top_nn_word, top_nn_score = nn_results[0]
+                if top_nn_score >= 0.5:
+                    ans = top_nn_word
+                    ans_type[loop] = f"StackingNN({rrf_state})"
+                else:
+                    ans = nn_results[0][0]
+                    ans_type[loop] = "Greedy"
+            else:
                 ans = "Unknown"
-                ans_type[loop] = "Unknown"               
+                ans_type[loop] = "Unknown"
+        if y_all[0] < 0.2:
+            ans = "Unknown"
+            ans_type[loop] = "Unknown"
     else:
         ans_type[loop]="Calc=10.0"
     try:
@@ -2073,9 +2082,9 @@ def quiz_solve(loop,o,add,q, truth_word=None):
     
     if mode=="4":
         x_all_list.clear()
-        limit = min(5, len(x_all))
+        limit = min(5, len(RRF_A))
         for ik in range(limit):
-            x_all_list.append(str(x_all[ik]))
+            x_all_list.append(str(RRF_A[ik]))
         random.shuffle(x_all_list)
             
     return 0,"end"
