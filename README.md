@@ -14,10 +14,10 @@
 # Windows:
 # Quizbot動かす前に、`.\.venv\Scripts\activate`
 # 新pcに引っ越しするとき
-### ステップ0:旧pcのコマンドプロンプトのvenv上で、pip freeze > requirements.txt
+### ステップ0:旧pcのコマンドプロンプトのvenv上で、pip freeze > requirements_windows.txt
 ### ステップ1:mkdir Quizbot
 ### ステップ2:cd Quizbot
-### ステップ3:requirements.txtをQuizbotに置く
+### ステップ3:requirements_windows.txtをQuizbotに置く
 ### ステップ4:python -m venv .venv
 ### ステップ5:`.\.venv\Scripts\activate`
-### 最終ステップ:venv上でpip install -r requirements.txt
+### 最終ステップ:venv上でpip install -r requirements_windows.txt
