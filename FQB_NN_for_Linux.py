@@ -1463,7 +1463,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
         if rtt2[ix] not in uniq:
             uniq[rtt2[ix]]=1.0
         else:
-            uniq[rtt2[ix]]*=2.0
+            uniq[rtt2[ix]]+=2.0
 
     rtt2=remove_duplicates_sorted(rtt2)
 
@@ -1502,7 +1502,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
                 if rtt2[ix] not in uniq:
                     uniq[rtt2[ix]]=1.0
                 else:
-                    uniq[rtt2[ix]]*=2.0
+                    uniq[rtt2[ix]]+=2.0
 
     skip_calc = False
     if mode == "1" and locals().get('q_format') == "select":
