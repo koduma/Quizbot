@@ -1035,30 +1035,69 @@ def calc_vocab(s):
         return "", ""
     return str(items[0]), str(items[1])
 
-def collect_children_from_sentence(s):
-    global train, train_num, offsets, indices
+def collect_children_from_sentence(s, depth=1):
+    global train, train_num, offsets, indices, NoAns, TABOO, STOP_WORDS
+   
+    if depth < 1:
+        return []
+        
+    def is_valid_word(w):
+        w_lower = w.lower()
+        if w_lower in STOP_WORDS:
+            return False
+           
+        if w_lower not in ("water", "1"):
+            if w not in NoAns:
+                return False
+            if NoAns[w] > TABOO:
+                return False
+               
+        if w_lower == "oconahua":
+            return False
+        return True
+
+    current_counts = Counter()
     
-    result_list = []
-    words = s.split()
-    
+    cumulative_counts = Counter()
+   
+    clean_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', s)
+    words = clean_text.split()
     for word in words:
-        if word not in train:
-            continue
-        p_id = train[str(word)]
-        
-        if p_id + 1 >= len(offsets):
-            continue
-            
-        start = offsets[p_id]
-        end = offsets[p_id + 1]
-        
-        for i in range(start, end):
-            c_id = indices[i]
-            
+        if is_valid_word(word) and word in train:
+            current_counts[train[word]] += 1
+    for d in range(depth):
+        next_counts = Counter()
+       
+        for p_id, count in current_counts.items():
+            if p_id + 1 >= len(offsets):
+                continue
+               
+            start = offsets[p_id]
+            end = offsets[p_id + 1]
+           
+            children = indices[start:end]
+            for c_id in children:
+                next_counts[c_id] += count
+               
+        filtered_next_counts = Counter()
+        for c_id, count in next_counts.items():
             if c_id in train_num:
-                child_word = train_num[c_id]
-                result_list.append(child_word)
-                
+                word_str = train_num[c_id]
+                if is_valid_word(word_str):
+                    filtered_next_counts[c_id] = count
+                    
+        current_counts = filtered_next_counts
+        
+        for c_id, count in current_counts.items():
+            cumulative_counts[c_id] += count
+            
+    result_list = []
+    
+    for c_id, count in cumulative_counts.items():
+        child_word = train_num[c_id]
+        safe_count = min(count, 50)
+        result_list.extend([child_word] * safe_count)
+       
     return result_list
 
 def check_exists(x):
@@ -1412,7 +1451,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
     hint=""
     maxhit=1
 
-    rtt = collect_children_from_sentence(quiz)
+    rtt = collect_children_from_sentence(quiz,depth=1)
 
     rtt2 = []
 
