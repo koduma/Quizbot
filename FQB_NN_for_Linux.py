@@ -1673,7 +1673,10 @@ def quiz_solve(loop,o,add,q, truth_word=None):
         wl=wilson_lower(take_all[word], divd2, z=1.0)
         if wl < 0.01 and calc_flag==1:
             wl=3.0
-        h_score = math.log2(max(1.0, raw_score)) * wl
+        if calc_flag == 1 and str(word) == str(ans):
+            h_score = 9999.0
+        else:
+            h_score = math.log2(max(1.0, raw_score)) * wl
         hybrid_list.append((word, h_score))
     g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
     #g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
