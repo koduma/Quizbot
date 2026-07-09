@@ -21,3 +21,11 @@
 ### ステップ4:python -m venv .venv
 ### ステップ5:`.\.venv\Scripts\activate`
 ### 最終ステップ:venv上でpip install -r requirements_windows.txt
+
+
+
+https://github.com/user-attachments/assets/587d5448-987f-4743-8b7d-7af8b83fc642
+
+
+
+
