@@ -115,7 +115,19 @@ extern "C" {
         int taboo, int maxhit, int is_select_mode,
         double* out_scores, int* out_include, int* out_go_syn
     ) {
+        bool printed[15];
+	for(int i=0;i<15;i++){
+        printed[i]=false;
+	}
         for (int i = 0; i < cand_size; i++) {
+            double per = ((double)i / (double)(cand_size + 1)) * 100.0;
+            int iidx = (int)(per / 10.0);
+            if (iidx > 9) { iidx = 9; }
+            double r_per = std::round(per / 10.0) * 10.0;
+            if (!printed[iidx]) {
+            std::cout << "thinking..." << r_per << "%" << std::endl;
+            printed[iidx] = true;
+            }
             int cand_id = cand_ids[i];
             const char* target_str = cand_strs[i];
             const char* syn_str = syn_strs[i];
