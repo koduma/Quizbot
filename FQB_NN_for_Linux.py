@@ -703,9 +703,7 @@ def is_sp(s):
         sp=1
     elif s=="`":
         sp=1
-    elif s=="—":
-        sp=1
-    elif s=="¥":
+    elif s=="?":
         sp=1
     return sp
 
@@ -1634,12 +1632,6 @@ def quiz_solve(loop,o,add,q, truth_word=None):
                 maxsum = score
                 ans = target
                 
-            # プログレスバー
-            per = i / (cand_size+1)
-            idx = min(9, int(per * 10))
-            if not printed[idx]:
-                print(f"thinking...{idx * 10.0}%")
-                printed[idx] = True
     print("complete")
     calc_flag = 0
     if not skip_calc:
