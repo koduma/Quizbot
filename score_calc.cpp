@@ -116,9 +116,9 @@ extern "C" {
         double* out_scores, int* out_include, int* out_go_syn
     ) {
         bool printed[15];
-	for(int i=0;i<15;i++){
+		for(int i=0;i<15;i++){
         printed[i]=false;
-	}
+		}
         for (int i = 0; i < cand_size; i++) {
             double per = ((double)i / (double)(cand_size + 1)) * 100.0;
             int iidx = (int)(per / 10.0);
