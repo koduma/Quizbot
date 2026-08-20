@@ -1,5 +1,5 @@
-//Linux:g++ -O3 -shared -fPIC score_calc.cpp -o score_calc.so
-//Windows:g++ -O3 -shared -static -static-libgcc -static-libstdc++ score_calc.cpp -o score_calc.dll
+//Linux:g++ -O3 -shared -fPIC -fopenmp score_calc.cpp -o score_calc.so
+//Windows:g++ -O3 -shared -static -static-libgcc -static-libstdc++ -fopenmp score_calc.cpp -o score_calc.dll
 
 #include <iostream>
 #include <vector>
@@ -8,10 +8,13 @@
 #include <cmath>
 #include <algorithm>
 #include <unordered_map>
+#include <omp.h>
+#include <atomic>
 
 std::unordered_map<uint64_t, int> delta_map;
 
 extern "C" {
+    
     // 強化学習の動的重み(delta_weights)をC++に同期する
     void init_deltas(int size, const uint64_t* keys, const int* weights) {
         delta_map.clear();
@@ -105,8 +108,6 @@ extern "C" {
         double need = log10((double)taboo / freq) + 1.0;
         return (double)raw * std::max(1.0, need);
     }
-
-    // メインの2重ループ（Pythonコードの完全な翻訳）
     void run_quiz_loop(
         int cand_size, const int* cand_ids, const char** cand_strs, const char** syn_strs,
         const double* uniq_vals, const double* wq_hints, const int* ngram_flags, const int* new_word_flags,
@@ -115,19 +116,34 @@ extern "C" {
         int taboo, int maxhit, int is_select_mode,
         double* out_scores, int* out_include, int* out_go_syn
     ) {
-        bool printed[15];
-		for(int i=0;i<15;i++){
-        printed[i]=false;
-		}
+        // 0%～100%まで11段階に対応するためサイズ11
+        bool printed[11] = {false}; 
+        
+        // ★スレッドセーフな完了タスクカウンター
+        std::atomic<int> completed_count(0); 
+
+        #pragma omp parallel for schedule(dynamic)
         for (int i = 0; i < cand_size; i++) {
-            double per = ((double)i / (double)(cand_size + 1)) * 100.0;
+            
+            // ★アトミックにカウンターをインクリメントし、現在の完了数を取得
+            int current_completed = ++completed_count;
+            
+            // iではなく、実際の完了数ベースでパーセンテージを計算
+            double per = ((double)current_completed / cand_size) * 100.0;
             int iidx = (int)(per / 10.0);
-            if (iidx > 9) { iidx = 9; }
-            double r_per = std::round(per / 10.0) * 10.0;
+            if (iidx > 10) { iidx = 10; }
+            
+            // スレッドセーフな進捗出力
             if (!printed[iidx]) {
-            std::cout << "thinking..." << r_per << "%" << std::endl;
-            printed[iidx] = true;
+                #pragma omp critical
+                {
+                    if (!printed[iidx]) {
+                        std::cout << "thinking..." << iidx * 10 << "%" << std::endl;
+                        printed[iidx] = true;
+                    }
+                }
             }
+
             int cand_id = cand_ids[i];
             const char* target_str = cand_strs[i];
             const char* syn_str = syn_strs[i];
@@ -165,7 +181,7 @@ extern "C" {
                 if (in_noans) {
                     if (quiz_noans[j] > taboo && xxx_lower != "water" && xxx_lower != "1") continue;
                 } else {
-                    continue; // if str(xxx) not in NoAns: continue (Pythonのコード準拠)
+                    continue;
                 }
 
                 cnt += 1;
