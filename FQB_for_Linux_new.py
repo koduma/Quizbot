@@ -37,6 +37,29 @@ import time
 from nltk.tokenize import sent_tokenize
 from collections import Counter
 from nltk.corpus import stopwords
+import ctypes
+import platform
+import numpy as np
+
+try:
+    lib_ext = '.dll' if platform.system() == 'Windows' else '.so'
+    lib_path = os.path.abspath(f'./score_calc{lib_ext}')
+    cpp_lib = ctypes.CDLL(lib_path)
+    cpp_lib.init_deltas.argtypes = [ctypes.c_int32, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_int32)]
+    cpp_lib.init_deltas.restype = None
+
+    cpp_lib.run_quiz_loop.argtypes = [
+        ctypes.c_int32, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.c_int32, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint16),
+        ctypes.c_int32, ctypes.c_int32, ctypes.c_int32,
+        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32)
+    ]
+    cpp_lib.run_quiz_loop.restype = None
+    CPP_LIB_LOADED = True
+except Exception as e:
+    print("Failed to load C++ library:", e)
+    CPP_LIB_LOADED = False
 
 try:
     nltk.data.find('tokenizers/punkt')
@@ -96,6 +119,25 @@ try:
 except LookupError:
     nltk.download('stopwords', quiet=True)
     STOP_WORDS = set(stopwords.words('english'))
+
+
+class MinimalStackingNN:
+    def __init__(self, weight_file="nn_weights.txt"):
+        with open(weight_file, 'r') as f:
+            lines = f.read().strip().split('\n')
+        self.W1 = np.zeros((5, 16))
+        for i in range(5):
+            self.W1[i] = list(map(float, lines[i].strip().split()))
+        self.b1 = np.array(list(map(float, lines[5].strip().split())))
+        self.W2 = np.array(list(map(float, lines[6].strip().split())))
+        self.b2 = float(lines[7].strip())
+
+    def predict(self, features):
+        x = np.array(features)
+        hidden = np.maximum(0, np.dot(x, self.W1) + self.b1)
+        y = np.dot(hidden, self.W2) + self.b2
+        y = np.clip(y, -30.0, 30.0)       
+        return 1.0 / (1.0 + np.exp(-y))
 
 warnings.simplefilter('ignore')
 
@@ -664,7 +706,7 @@ def is_sp(s):
     elif s=="—":
         sp=1
     elif s=="¥":
-        sp=1    
+        sp=1
     return sp
 
 looked = dict()
@@ -825,29 +867,46 @@ def filter_top_k_by_entity(top_k_list: list, dbpedia_dict: dict, quiz_text: str,
             
     return filtered_list
 
+offsets_ptr = None
+indices_ptr = None
+w_data_ptr = None
+
 for l in range(len(meta)):
     reading=True
     try:
         # 1. Offsets配列のメモリマッピング
         _f_off = open("offsets.bin", "rb")
-        _mm_off = mmap.mmap(_f_off.fileno(), 0, access=mmap.ACCESS_READ)
+        # 変更: ACCESS_READ を ACCESS_COPY に変えて ctypes の制限を突破する
+        _mm_off = mmap.mmap(_f_off.fileno(), 0, access=mmap.ACCESS_COPY)
         offsets = memoryview(_mm_off).cast('I')
 
         # 2. Indices配列のメモリマッピング
         _f_ind = open("indices.bin", "rb")
-        _mm_ind = mmap.mmap(_f_ind.fileno(), 0, access=mmap.ACCESS_READ)
+        _mm_ind = mmap.mmap(_f_ind.fileno(), 0, access=mmap.ACCESS_COPY)
         indices = memoryview(_mm_ind).cast('I')
 
         # 3. Weights配列のメモリマッピング
         _f_w = open("w_data.bin", "rb")
-        _mm_w = mmap.mmap(_f_w.fileno(), 0, access=mmap.ACCESS_READ)
+        _mm_w = mmap.mmap(_f_w.fileno(), 0, access=mmap.ACCESS_COPY)
         w_data = memoryview(_mm_w).cast('H')
+
+        if CPP_LIB_LOADED:
+            IntArrayOff = ctypes.c_uint32 * (len(_mm_off) // 4)
+            offsets_ptr = ctypes.cast(IntArrayOff.from_buffer(_mm_off), ctypes.POINTER(ctypes.c_uint32))
+
+            IntArrayInd = ctypes.c_uint32 * (len(_mm_ind) // 4)
+            indices_ptr = ctypes.cast(IntArrayInd.from_buffer(_mm_ind), ctypes.POINTER(ctypes.c_uint32))
+
+            ShortArrayW = ctypes.c_uint16 * (len(_mm_w) // 2)
+            w_data_ptr = ctypes.cast(ShortArrayW.from_buffer(_mm_w), ctypes.POINTER(ctypes.c_uint16))
 
         print(f"Mmap Loaded! (Edges: {len(indices)})")
        
     except Exception as e:
-        print("Binary Mmap load error:", e)
-        reading=False
+        print("\n!!! Fatal Error: Binary Mmap load error !!!")
+        reading = False
+        print("error:", e)
+        sys.exit(1) 
         break
 
     try:
@@ -976,30 +1035,69 @@ def calc_vocab(s):
         return "", ""
     return str(items[0]), str(items[1])
 
-def collect_children_from_sentence(s):
-    global train, train_num, offsets, indices
+def collect_children_from_sentence(s, depth=1):
+    global train, train_num, offsets, indices, NoAns, TABOO, STOP_WORDS
+   
+    if depth < 1:
+        return []
+        
+    def is_valid_word(w):
+        w_lower = w.lower()
+        if w_lower in STOP_WORDS:
+            return False
+           
+        if w_lower not in ("water", "1"):
+            if w not in NoAns:
+                return False
+            if NoAns[w] > TABOO:
+                return False
+               
+        if w_lower == "oconahua":
+            return False
+        return True
+
+    current_counts = Counter()
     
-    result_list = []
-    words = s.split()
-    
+    cumulative_counts = Counter()
+   
+    clean_text = re.sub(r'[^a-zA-Z0-9\s]', ' ', s)
+    words = clean_text.split()
     for word in words:
-        if word not in train:
-            continue
-        p_id = train[str(word)]
-        
-        if p_id + 1 >= len(offsets):
-            continue
-            
-        start = offsets[p_id]
-        end = offsets[p_id + 1]
-        
-        for i in range(start, end):
-            c_id = indices[i]
-            
+        if is_valid_word(word) and word in train:
+            current_counts[train[word]] += 1
+    for d in range(depth):
+        next_counts = Counter()
+       
+        for p_id, count in current_counts.items():
+            if p_id + 1 >= len(offsets):
+                continue
+               
+            start = offsets[p_id]
+            end = offsets[p_id + 1]
+           
+            children = indices[start:end]
+            for c_id in children:
+                next_counts[c_id] += count
+               
+        filtered_next_counts = Counter()
+        for c_id, count in next_counts.items():
             if c_id in train_num:
-                child_word = train_num[c_id]
-                result_list.append(child_word)
-                
+                word_str = train_num[c_id]
+                if is_valid_word(word_str):
+                    filtered_next_counts[c_id] = count
+                    
+        current_counts = filtered_next_counts
+        
+        for c_id, count in current_counts.items():
+            cumulative_counts[c_id] += count
+            
+    result_list = []
+    
+    for c_id, count in cumulative_counts.items():
+        child_word = train_num[c_id]
+        safe_count = min(count, 50)
+        result_list.extend([child_word] * safe_count)
+       
     return result_list
 
 def check_exists(x):
@@ -1106,7 +1204,7 @@ ok=0
 ng=0
 mode=""
 
-print("mode?(1:keyboard,2:txt,3:testcase,4:generator)=",end="")
+print("mode?(1:keyboard,2:txt,3:testcase,4:generator,5:learning)=",end="")
 
 mode=input()
 #mode="3"
@@ -1250,6 +1348,12 @@ def reinforce_learning(quiz_text, truth_word):
     word_counts = Counter(words_to_learn)
     p_id = train[truth_word]
     diff_lines = []
+
+    noans_tmp = "NoAns2.txt.tmp"
+    with open(noans_tmp, "w", encoding="utf-8") as f:
+        for word, count in NoAns.items():
+            f.write(f"{word}@{count}\n")
+    os.replace(noans_tmp, "NoAns2.txt")
     
     for w, count in word_counts.items():
         c_id = train[w]
@@ -1270,7 +1374,22 @@ def reinforce_learning(quiz_text, truth_word):
             
     print(f">> [Reinforcement] Learnt from WA. Updated weights for '{truth_word}'.")
 
-def quiz_solve(loop,o,add,q):
+
+def get_train_id_robust(word):
+    if not word: return -1
+    if word in train: return train[word]
+    if word.capitalize() in train: return train[word.capitalize()]
+    if word.lower() in train: return train[word.lower()]
+    no_bracket = re.sub(r'\(.*?\)', '', word).strip()
+    if no_bracket and no_bracket in train: return train[no_bracket]
+    clean = re.sub(r'[^A-Za-z0-9]', '', word)
+    if clean and clean in train: return train[clean]
+    if clean.capitalize() in train: return train[clean.capitalize()]
+    if clean.lower() in train: return train[clean.lower()]
+    
+    return -1
+
+def quiz_solve(loop,o,add,q, truth_word=None):
 
     global ok,ng
     
@@ -1284,7 +1403,7 @@ def quiz_solve(loop,o,add,q):
         with open('./quiz.txt') as f:
             for line in f:
                 quiz=quiz+line
-    elif mode=="1" or mode=="4":
+    elif mode=="1" or mode=="4" or mode=="5":
         quiz=q
     if len(quiz)==0:
         sys.exit()
@@ -1338,7 +1457,7 @@ def quiz_solve(loop,o,add,q):
     hint=""
     maxhit=1
 
-    rtt = collect_children_from_sentence(quiz)
+    rtt = collect_children_from_sentence(quiz,depth=1)
 
     rtt2 = []
 
@@ -1389,7 +1508,7 @@ def quiz_solve(loop,o,add,q):
         if rtt2[ix] not in uniq:
             uniq[rtt2[ix]]=1.0
         else:
-            uniq[rtt2[ix]]*=2.0
+            uniq[rtt2[ix]]+=2.0
 
     rtt2=remove_duplicates_sorted(rtt2)
 
@@ -1428,7 +1547,7 @@ def quiz_solve(loop,o,add,q):
                 if rtt2[ix] not in uniq:
                     uniq[rtt2[ix]]=1.0
                 else:
-                    uniq[rtt2[ix]]*=2.0
+                    uniq[rtt2[ix]]+=2.0
 
     skip_calc = False
     if mode == "1" and locals().get('q_format') == "select":
@@ -1438,137 +1557,89 @@ def quiz_solve(loop,o,add,q):
         mo1,mo2=calculator(tq2)
         if mo1>=2:
             skip_calc = False
-
+    # === Python側のリストをC++用の配列にまとめる ===
+    is_select_mode = (mode == "1" and locals().get('q_format') == "select")
+    
+    cand_list, cand_ids_list, syn_strs_list = [], [], []
+    uniq_vals_list, wq_hints_list, ngram_flags_list, new_word_flags_list = [], [], [], []
+    
     for cand_id in rtt2:
         xx = cand_id - 1
-        per=xx/(counter+1)
-        idx = min(9, int(per * 10))
-        if not printed[idx]:
-            print(f"thinking...{idx * 10.0}%")
-            printed[idx] = True
-        sum=1.0
-        if (xx + 1) not in train_num:
-            continue
-        if len(train_num[xx+1])==0:
-            continue
-        if NoAns[train_num[xx+1]] > TABOO and str(train_num[xx+1]).lower() != "water" and str(train_num[xx+1]).lower()!="1":
-            continue
-        if str(train_num[xx+1])=="Oconahua":
-            continue
-        #if is_5W1H(quiz2, str(train_num[xx+1])) == 0:
-            #continue
-        cnt=-1
-        tmp=str(train_num[xx+1])+","+str(hint)
-        wq = get_weight_fast(str(train_num[xx+1]), str(hint))
-        if wq!=0:
-            sum=float(pow(2,maxhit-1))
-            sum*=uniq[xx+1]
-        else:
-            sum=uniq[xx+1]
-        is_select_mode = (mode == "1" and locals().get('q_format') == "select")
-        strl=str(train_num[xx+1]).lower()
-        if strl in ngram:
-            sum=1.0
-            if not is_select_mode: continue
-        if is_new_word_in_quiz_ignore_case(quizs,str(train_num[xx+1]))==True:
-            sum=1.0
-            if not is_select_mode: continue
-        syn = get_one_synonym(str(train_num[xx+1]),quiz_xxx)
-        found_syn=False
-        go_syn=False
-        if syn:
-            found_syn=True
-        for xxx in quiz2:
-            if str(xxx) in NoAns:
-                if NoAns[str(xxx)] > TABOO and str(xxx).lower() != "water" and str(xxx).lower()!="1":
-                    continue
+        if (xx + 1) not in train_num or len(train_num[xx+1]) == 0: continue
+        target = str(train_num[xx+1])
+        if NoAns.get(target, 0) > TABOO and target.lower() not in ("water", "1"): continue
+        if target == "Oconahua": continue
+        
+        cand_list.append(target)
+        cand_ids_list.append(xx+1)
+        wq_hints_list.append(float(get_weight_fast(target, str(hint))))
+        uniq_vals_list.append(float(uniq.get(xx+1, 1.0)))
+        ngram_flags_list.append(1 if target.lower() in ngram else 0)
+        new_word_flags_list.append(1 if is_new_word_in_quiz_ignore_case(quizs, target) else 0)
+        
+        syn = get_one_synonym(target, quiz_xxx)
+        syn_strs_list.append(str(syn) if syn else "")
+
+    cand_size = len(cand_list)
+    
+    quiz_strs_list = [str(x) for x in quiz2]
+    quiz_ids_list = [train.get(str(x), -1) for x in quiz2]
+    quiz_noans_list = [NoAns.get(str(x), -1) for x in quiz2]
+    quiz_size = len(quiz2)
+
+    # === C++による超高速2重ループの実行 ===
+    if CPP_LIB_LOADED and cand_size > 0 and quiz_size > 0:
+        # 強化学習の重みをC++に同期
+        if len(delta_weights) > 0:
+            d_keys, d_vals = [], []
+            for (p, c), w in delta_weights.items():
+                d_keys.append((p << 32) | c)
+                d_vals.append(w)
+            cpp_lib.init_deltas(len(d_keys), (ctypes.c_uint64 * len(d_keys))(*d_keys), (ctypes.c_int32 * len(d_vals))(*d_vals))
+
+        # ctypes配列の作成
+        c_cand_ids = (ctypes.c_int32 * cand_size)(*cand_ids_list)
+        c_cand_strs = (ctypes.c_char_p * cand_size)(*[s.encode('utf-8') for s in cand_list])
+        c_syn_strs = (ctypes.c_char_p * cand_size)(*[s.encode('utf-8') for s in syn_strs_list])
+        c_uniq = (ctypes.c_double * cand_size)(*uniq_vals_list)
+        c_wq_hints = (ctypes.c_double * cand_size)(*wq_hints_list)
+        c_ngram = (ctypes.c_int32 * cand_size)(*ngram_flags_list)
+        c_new = (ctypes.c_int32 * cand_size)(*new_word_flags_list)
+        
+        c_quiz_strs = (ctypes.c_char_p * quiz_size)(*[s.encode('utf-8') for s in quiz_strs_list])
+        c_quiz_ids = (ctypes.c_int32 * quiz_size)(*quiz_ids_list)
+        c_quiz_noans = (ctypes.c_int32 * quiz_size)(*quiz_noans_list)
+        
+        out_scores = (ctypes.c_double * cand_size)()
+        out_include = (ctypes.c_int32 * cand_size)()
+        out_go_syn = (ctypes.c_int32 * cand_size)()
+
+        # 2重ループ実行 (Pythonはここで待機)
+        cpp_lib.run_quiz_loop(
+            cand_size, c_cand_ids, c_cand_strs, c_syn_strs, c_uniq, c_wq_hints, c_ngram, c_new,
+            quiz_size, c_quiz_ids, c_quiz_strs, c_quiz_noans,
+            offsets_ptr, indices_ptr, w_data_ptr,
+            TABOO, maxhit, 1 if is_select_mode else 0,
+            out_scores, out_include, out_go_syn
+        )
+
+        # C++から結果を受け取って dic2 に格納
+        for i in range(cand_size):
+            target = cand_list[i]
+            score = out_scores[i]
+            
+            if out_include[i] == 1:
+                include[target] = True
+                
+            if out_go_syn[i] == 0:
+                dic2[target] = round(score, 2)
             else:
-                continue
-            cnt+=1
-            if str(xxx)=="?" or str(xxx)=="!":
-                continue
-            if is_same_word(str(xxx),str(train_num[xx+1]))==True:
-                sum=1.0
-                break
-            dist = Levenshtein.distance(str(train_num[xx+1]).upper(), str(xxx).upper())
-            if dist < 1:
-                if found_syn == False:
-                    sum=1.0
-                    break
-                go_syn=True
-            if found_syn==True:
-                dist2 = Levenshtein.distance(str(syn).upper(), str(xxx).upper())
-                if dist2 < 1:
-                    go_syn=False
-                    sum*=100.0
-            bbb=False
-            if is_include(str(train_num[xx+1]),str(xxx))==True:
-                #include[str(train_num[xx+1])]=True
-                for w1 in range(len(quiz2)):
-                    if bbb==True:
-                        break
-                    for w2 in range(w1+1,len(quiz2)):
-                        w3=str(quiz2[w1])+str(quiz2[w2])
-                        w4=str(quiz2[w2])+str(quiz2[w1])
-                        d1=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w3).upper())
-                        d2=Levenshtein.distance(str(train_num[xx+1]).upper(), str(w4).upper())
-                        if d1 <=1 or d2 <=1:
-                            include[str(train_num[xx+1])]=True
-                            bbb=True                
-            tmp2=str(train_num[xx+1])+","+str(xxx)
-            wqz = get_weight_fast(str(train_num[xx+1]), str(xxx))
-            if wqz==0:
-                sum/=1.2
-            if wqz!=0:
-                weight=1.0
-                if cnt < 5:
-                    weight=3.0
-                sum*=weight*wqz
-                if xxx not in NoAns:
-                    if is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
-                        sum*=3.0
-                    continue
-                if NoAns[xxx] > TABOO:
-                    if str(xxx).lower() != "water" and str(xxx).lower() != "1":
-                        sum/=weight*wqz
-                if NoAns[xxx] <= TABOO and is_english_word(str(xxx)) == 1 and str(xxx).capitalize()==str(xxx):
-                    sum*=3.0
-                #else:
-                    #if str(train_num[xx+1])=="TheFindingoftheSaviourintheTemple":
-                        #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))                            
-                #if str(train_num[xx+1]).lower()=="georgewashington":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if "theseus" in str(train_num[xx+1]).lower():
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if ("byzantine" in str(train_num[xx+1]).lower()) and ("generals" in str(train_num[xx+1]).lower()) and ("problem" in str(train_num[xx+1]).lower()):
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if "interference" in str(train_num[xx+1]).lower():
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="bloomfilter":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="car":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="benevolent":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1]).lower()=="buttress":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Happiness":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Safety":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Evidence":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Kayak":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-                #if str(train_num[xx+1])=="Reason":
-                    #print(str(tmp2)+",score="+str(sum)+",NoAns1="+str(NoAns[train_num[xx+1]])+",NoAns2="+str(NoAns[xxx]))
-        if go_syn==False:
-            dic2[str(train_num[xx+1])]=round(sum,2)
-        else:
-            dic2[str(syn)]=round(sum,2)
-        if sum>maxsum:
-            maxsum=sum
-            ans=train_num[xx+1]
+                dic2[syn_strs_list[i]] = round(score, 2)
+                
+            if score > maxsum:
+                maxsum = score
+                ans = target
+                
     print("complete")
     calc_flag = 0
     if not skip_calc:
@@ -1641,7 +1712,10 @@ def quiz_solve(loop,o,add,q):
         wl=wilson_lower(take_all[word], divd2, z=1.0)
         if wl < 0.01 and calc_flag==1:
             wl=3.0
-        h_score = math.log2(max(1.0, raw_score)) * wl
+        if calc_flag == 1 and str(word) == str(ans):
+            h_score = 9999.0
+        else:
+            h_score = math.log2(max(1.0, raw_score)) * wl
         hybrid_list.append((word, h_score))
     g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
     #g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
@@ -1668,7 +1742,7 @@ def quiz_solve(loop,o,add,q):
                 #reinforce_learning(quiz, str(trut))
         return 0,"end"
     x_all, y_all = zip(*g)
-    if str(x_all[0]) in include:
+    if str(x_all[0]) in include and mode != "5":
         return -1,str(x_all[0])
     print("\n")
     #print("BoW_Top5:",end="")
@@ -1746,6 +1820,55 @@ def quiz_solve(loop,o,add,q):
         formatted_items = [f"('{name}', {score:.4g})" for name, score in data[:5]]
         print(f"{label}:[{', '.join(formatted_items)}]")
     print("\n")
+
+    if mode == "5" and truth_word is not None:
+        cand_words = list(x_all)
+        
+        # 答えの文字列から記号を消して小文字にした「比較用文字列」を作る
+        clean_truth = re.sub(r'[^A-Za-z0-9]', '', truth_word).lower()
+        if not clean_truth:
+            return 2, "invalid_truth"
+            
+        cand_ids = [get_train_id_robust(w) for w in cand_words]
+        
+        bow_scores = list(y_all)
+        jac_scores = [jaccard_rank.get(w, 0.0) for w in cand_words]
+        ord_scores = [order_rank.get(w, 0.0) for w in cand_words]
+        bm25_scores = [bm25_rank.get(w, 0.0) for w in cand_words]
+        cross_scores = [cross_rank.get(w, 0.0) for w in cand_words]
+        
+        def minmax(lst):
+            if not lst: return []
+            mi, ma = min(lst), max(lst)
+            if ma == mi: return [0.0] * len(lst)
+            return [(v - mi) / (ma - mi) for v in lst]
+            
+        n_bow = minmax(bow_scores)
+        n_jac = minmax(jac_scores)
+        n_ord = minmax(ord_scores)
+        n_bm25 = minmax(bm25_scores)
+        n_cross = minmax(cross_scores)
+        
+        # 1問終わるごとにファイルを開いて追記
+        with open("stacking_training_data.csv", "a", encoding="utf-8") as f:
+            for i in range(len(cand_words)):
+                c_id = cand_ids[i]
+                c_word = cand_words[i]
+                if c_id == -1: continue 
+                
+                # ==== 変更点: IDではなく「文字列の包含関係」で正解(1)かハズレ(0)かを判定 ====
+                clean_cand = re.sub(r'[^A-Za-z0-9]', '', c_word).lower()
+                
+                is_correct = 0
+                if clean_truth in clean_cand or clean_cand in clean_truth:
+                    is_correct = 1
+                # ====================================================================
+
+                # IDの代わりに is_correct (0 or 1) を書き込む
+                f.write(f"{is_correct},{c_id},{n_bow[i]:.5f},{n_jac[i]:.5f},{n_ord[i]:.5f},{n_bm25[i]:.5f},{n_cross[i]:.5f}\n")
+        
+        print(f"[{loop}] Saved features for Truth: {truth_word}")
+        return 0, "end"
     
     take=dict()
     for fg in range(len(x_all)):
@@ -1836,34 +1959,65 @@ def quiz_solve(loop,o,add,q):
     for ij in range(len(x_all)):
         alp[str(x_all[ij])]=y_all[ij]
     if calc_flag==0:
-        top_cross_word, top_cross_score = rt4[0]
-        #if top_cross_score >= 3.0:
-            #weights_to_use = [0.1, 0.1, 0.1, 0.1, 10.0]#Cross=10.0
-            #ans_type[loop]="Cross=10.0"
-        #elif top_cross_score >= 2.0:
-            #weights_to_use = [2.0, 0.1, 0.1, 0.1, 10.0]#BoW=2.0,Cross=10.0
-            #ans_type[loop]="BoW=2.0,Cross=10.0"
-        #elif top_cross_score >= 1.0:
-            #weights_to_use = [10.0, 0.1, 0.1, 0.1, 2.0]#BoW=10.0,Cross=2.0
-            #ans_type[loop]="BoW=10.0,Cross=2.0"
-        #else:
+        nn = MinimalStackingNN("nn_weights.txt")
         if maxconf < 0.3:
-            weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0]#Flat
-            ans_type[loop]="Flat"
+            weights_to_use = [1.0, 1.0, 1.0, 1.0, 1.0] # Flat
+            rrf_state = "Flat"
         else:
-            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1]#BoW=10.0
-            ans_type[loop]="BoW=10.0"
-        final_results = apply_rrf([g, rt, rt2, rt3,rt4], weights=weights_to_use, k=60)
-        print("\n")
-        print("Final RRF Ranking:")
-        for rank, (word, score) in enumerate(final_results, 1):
+            weights_to_use = [10.0, 0.1, 0.1, 0.1, 0.1] # BoW=10.0
+            rrf_state = "BoW"
+            
+        final_results = apply_rrf([g, rt, rt2, rt3, rt4], weights=weights_to_use, k=60)
+        def minmax(lst):
+            if not lst: return []
+            mi, ma = min(lst), max(lst)
+            if ma == mi: return [0.0] * len(lst)
+            return [(v - mi) / (ma - mi) for v in lst]
+
+        cand_words = list(x_all)
+        n_bow = minmax(list(y_all))
+        n_jac = minmax([jaccard_rank.get(w, 0.0) for w in cand_words])
+        n_ord = minmax([order_rank.get(w, 0.0) for w in cand_words])
+        n_bm25 = minmax([bm25_rank.get(w, 0.0) for w in cand_words])
+        n_cross = minmax([cross_rank.get(w, 0.0) for w in cand_words])
+
+        nn_results = []
+        for i, w in enumerate(cand_words):
+            score = nn.predict([n_bow[i], n_jac[i], n_ord[i], n_bm25[i], n_cross[i]])
+            nn_results.append((w, float(score)))            
+        nn_results.sort(key=lambda x: x[1], reverse=True)
+        print("\nFinal RRF Ranking:")
+        for rank, (word, score) in enumerate(final_results[:5], 1): 
             print(f"{rank}. {word} (Score: {score:.5f})")
-            if len(RRF_A) <= 4:
+            if len(RRF_A) <= 4 and (mode =="2" or mode == "5"):
                 RRF_A.append(str(word))
-        if final_results:
-            ans = final_results[0][0]
-            if y_all[0] < 0.2:
-                ans="Unknown"
+        print("\nFinal NN Ranking:")
+        for rank, (word, score) in enumerate(nn_results[:5], 1):
+            print(f"{rank}. {word} (NN Score: {score:.5f})")
+            if len(RRF_A) <= 4 and (mode =="1" or mode == "3" or mode == "4"):
+                RRF_A.append(str(word))
+        if mode in ["2", "5"]:
+            if final_results:
+                ans = final_results[0][0]
+                ans_type[loop] = f"RRF({rrf_state})"
+            else:
+                ans = "Unknown"
+                ans_type[loop] = "Unknown"
+        else:
+            if nn_results:
+                top_nn_word, top_nn_score = nn_results[0]
+                if top_nn_score >= 0.5:
+                    ans = top_nn_word
+                    ans_type[loop] = f"StackingNN({rrf_state})"
+                else:
+                    ans = nn_results[0][0]
+                    ans_type[loop] = "Greedy"
+            else:
+                ans = "Unknown"
+                ans_type[loop] = "Unknown"
+        if y_all[0] < 0.2:
+            ans = "Unknown"
+            ans_type[loop] = "Unknown"
     else:
         ans_type[loop]="Calc=10.0"
     try:
@@ -1970,9 +2124,9 @@ def quiz_solve(loop,o,add,q):
     
     if mode=="4":
         x_all_list.clear()
-        limit = min(5, len(x_all))
+        limit = min(5, len(RRF_A))
         for ik in range(limit):
-            x_all_list.append(str(x_all[ik]))
+            x_all_list.append(str(RRF_A[ik]))
         random.shuffle(x_all_list)
             
     return 0,"end"
@@ -2082,7 +2236,43 @@ elif mode=="4":
             add+=" "+str(b)
         else:
             o=True
-            add=""            
+            add=""
+
+elif mode == "5":
+    print("------------------------------------------------------------------")
+    print("Starting Mode 5: Extracting features from valid_qas.txt")
+    
+    qas = []
+    try:
+        with open("valid_qas.txt", "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) == 2:
+                    qas.append((parts[0], parts[1]))
+    except FileNotFoundError:
+        print("Error: valid_qas.txt not found.")
+        sys.exit(1)
+        
+    start_idx = 0
+    if os.path.exists("resume_index.txt"):
+        with open("resume_index.txt", "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if content.isdigit():
+                start_idx = int(content)
+                
+    print(f"Total questions: {len(qas)}. Starting from index: {start_idx}")
+    if start_idx == 0 and not os.path.exists("stacking_training_data.csv"):
+        with open("stacking_training_data.csv", "w", encoding="utf-8") as f:
+            f.write("is_correct,candidate_id,bow_norm,jaccard_norm,order_norm,bm25_norm,cross_norm\n")
+
+    for idx in range(start_idx, len(qas)):
+        q_text, ans_text = qas[idx]
+        print(f"\n--- Processing [{idx}/{len(qas)}] ---")
+        a, b = quiz_solve(idx, True, "", q_text, truth_word=ans_text)
+        with open("resume_index.txt", "w", encoding="utf-8") as f:
+            f.write(str(idx + 1))
+            
+    print("Mode 5 Completed.")
 
 
 if mode=="3":
