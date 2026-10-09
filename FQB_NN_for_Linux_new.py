@@ -1371,7 +1371,7 @@ def reinforce_learning(quiz_text, truth_word):
     if diff_lines:
         with open('datakun3_diff.txt', 'a', encoding='utf-8') as f:
             f.writelines(diff_lines)
-            
+    get_weight_fast.cache_clear()        
     print(f">> [Reinforcement] Learnt from WA. Updated weights for '{truth_word}'.")
 
 
