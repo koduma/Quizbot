@@ -2037,7 +2037,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
     if calc_flag > 0:
         sz = 1.0
 
-    if sz < 0.3 and not is_step2 and mode in ["1", "2", "3", "4"] and len(x_all) > 0:
+    if sz < 0.2 and not is_step2 and mode in ["1", "2", "3", "4"] and len(x_all) > 0:
         step1_backup = (ans, sz, ans_type.get(loop, "Unknown"))
         
         top1_cand = str(x_all[0])
@@ -2049,7 +2049,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
         step2_words = list(dict.fromkeys([top1_cand] + unrelated_words))
         step2_query = "@STEP2@:" + " ".join(step2_words)
         
-        print(f"\n[1st Step Ans: {ans} (Confidence:{sz:.3f} <= F)] -> Triggering 2-step search!")
+        print(f"\n[1st Step Ans: {ans} (Confidence:{sz:.3f} < F)] -> Triggering 2-step search!")
         print(f"[Step2 Query] {' '.join(step2_words)}")
         return -2, step2_query
 
