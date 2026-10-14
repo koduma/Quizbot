@@ -703,9 +703,9 @@ def is_sp(s):
         sp=1
     elif s=="`":
         sp=1
-    elif s=="—":
+    elif s=="?":
         sp=1
-    elif s=="¥":
+    elif s=="\":
         sp=1
     return sp
 
@@ -1371,7 +1371,7 @@ def reinforce_learning(quiz_text, truth_word):
     if diff_lines:
         with open('datakun3_diff.txt', 'a', encoding='utf-8') as f:
             f.writelines(diff_lines)
-    get_weight_fast.cache_clear()        
+    get_weight_fast.cache_clear()         
     print(f">> [Reinforcement] Learnt from WA. Updated weights for '{truth_word}'.")
 
 
@@ -1391,7 +1391,7 @@ def get_train_id_robust(word):
 
 def quiz_solve(loop,o,add,q, truth_word=None):
 
-    global ok,ng
+    global ok, ng, step1_backup
     
     quiz=""
 
@@ -1430,8 +1430,13 @@ def quiz_solve(loop,o,add,q, truth_word=None):
         else:
             quiz3+=quiz[k]
     quiz = filter_quiz_text(quiz3)
-    if len(add)>0:
-        quiz+=add+" "
+    is_step2 = False
+    if len(add) > 0:
+        if "@STEP2@:" in add:
+            quiz = add.split("@STEP2@:")[-1].strip()
+            is_step2 = True
+        else:
+            quiz += add + " "
     quiz2 = quiz.split()
 
     quiz_xxx=[]
@@ -1642,7 +1647,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
                 
     print("complete")
     calc_flag = 0
-    if not skip_calc:
+    if not skip_calc and not is_step2:
         tmp_quiz=quiz3
         tmp_quiz2=fix_expression(tmp_quiz)
         i1,i2=calculator(tmp_quiz2)
@@ -1720,7 +1725,12 @@ def quiz_solve(loop,o,add,q, truth_word=None):
     g = sorted(hybrid_list, key=lambda x: x[1], reverse=True)[:pick]
     #g = filter_top_k_by_entity(g, dbpedia_types_dict, quiz, NoAns)
     if len(g) == 0:
-        ans_type[loop]="Unknown"
+        if is_step2 and 'step1_backup' in globals():
+            ans, sz, ans_type[loop] = step1_backup
+            print(f"\n[Step2 Empty Fallback] Reverting to Step1: {ans}")
+        else:
+            ans = "Unknown"
+            ans_type[loop] = "Unknown"
         print("Answer_ja:未知")
         print("Answer_en:Unknown")
         if mode == "3":
@@ -1742,7 +1752,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
                 #reinforce_learning(quiz, str(trut))
         return 0,"end"
     x_all, y_all = zip(*g)
-    if str(x_all[0]) in include and mode != "5":
+    if str(x_all[0]) in include and mode != "5" and not is_step2:
         return -1,str(x_all[0])
     print("\n")
     #print("BoW_Top5:",end="")
@@ -2020,6 +2030,38 @@ def quiz_solve(loop,o,add,q, truth_word=None):
             ans_type[loop] = "Unknown"
     else:
         ans_type[loop]="Calc=10.0"
+    if str(ans) in take:
+        sz = wilson_lower(take[str(ans)], divd, z=1.0)
+    else:
+        sz = 0.0
+    if calc_flag > 0:
+        sz = 1.0
+
+    if sz < 0.3 and not is_step2 and mode in ["1", "2", "3", "4"] and len(x_all) > 0:
+        step1_backup = (ans, sz, ans_type.get(loop, "Unknown"))
+        
+        top1_cand = str(x_all[0])
+        unrelated_words = [
+            str(word)
+            for word in quiz2
+            if get_weight_fast(top1_cand, str(word), raw=True) == 0
+        ]
+        step2_words = list(dict.fromkeys([top1_cand] + unrelated_words))
+        step2_query = "@STEP2@:" + " ".join(step2_words)
+        
+        print(f"\n[1st Step Ans: {ans} (Confidence:{sz:.3f} <= F)] -> Triggering 2-step search!")
+        print(f"[Step2 Query] {' '.join(step2_words)}")
+        return -2, step2_query
+
+    if is_step2 and 'step1_backup' in globals():
+        s1_ans, s1_sz, s1_type = step1_backup
+        if sz <= s1_sz or ans == "Unknown":
+            print(f"\n[Step2 Fallback] Step2({ans}, sz={sz:.3f}) <= Step1({s1_ans}, sz={s1_sz:.3f}). Reverting to Step1!")
+            ans = s1_ans
+            sz = s1_sz
+            ans_type[loop] = s1_type
+        else:
+            ans_type[loop] = "Step2_" + str(ans_type.get(loop, ""))
     try:
         translated = GoogleTranslator(source='en', target='ja').translate(str(ans))
         if translated is not None:
@@ -2047,12 +2089,6 @@ def quiz_solve(loop,o,add,q, truth_word=None):
             print("State:WA")
             print("Truth:"+str(truth))
             #reinforce_learning(quiz, str(truth))
-    if str(ans) in take:
-        sz=wilson_lower(take[str(ans)], divd, z=1.0)
-    else:
-        sz=0.0
-    if calc_flag > 0:
-        sz=1.0
     print("Confidence:"+'{:.3f}'.format(sz))
     if sz < 0.3:
         print("Eval:F") 
