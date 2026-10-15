@@ -2037,7 +2037,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
     if calc_flag > 0:
         sz = 1.0
 
-    if sz < 0.2 and not is_step2 and mode in ["1", "2", "3", "4"] and len(x_all) > 0:
+    if sz < 0.05 and not is_step2 and mode in ["1", "2", "3", "4"] and len(x_all) > 0:
         step1_backup = (ans, sz, ans_type.get(loop, "Unknown"))
         
         top1_cand = str(x_all[0])
