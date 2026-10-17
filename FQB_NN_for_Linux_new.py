@@ -1675,16 +1675,21 @@ def quiz_solve(loop,o,add,q, truth_word=None):
                     ans=str(i2)
                     calc_flag = 1
         if calc_flag==0:
-            is_wp=wps.check_wp(quiz3)
-            if is_wp==True:
-                calc_flag=2
-                bt=wps.solve_math_problem(quiz3)
-                m_val = match_choice(bt) if bt is not None else None
-                if m_val == None:
-                    calc_flag=0
-                else:
-                    ans=m_val
-    # 1. divd (クイズ文の有効単語数) の事前計算
+            math_ans = wps.solve(quiz3, check_is_math=True)
+            if math_ans is not None:
+                m_val = match_choice(math_ans)
+                if m_val:
+                    calc_flag = 2
+                    ans = str(m_val)
+                    dic2[ans] = 9999.0
+                    if 9999.0 > maxsum:
+                        maxsum = 9999.0
+    if calc_flag==0:
+        print("Query_Type:Quiz")
+    elif calc_flag==1:
+        print("Query_Type:Calc")
+    elif calc_flag==2:
+        print("Query_Type:Math")
     divd2 = 0.0
     for kd in range(len(quiz2)):
         if str(quiz2[kd]) in NoAns:
@@ -1717,7 +1722,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
         wl=wilson_lower(take_all[word], divd2, z=1.0)
         if wl < 0.01 and calc_flag==1:
             wl=3.0
-        if calc_flag == 1 and str(word) == str(ans):
+        if calc_flag > 0 and str(word) == str(ans):
             h_score = 9999.0
         else:
             h_score = math.log2(max(1.0, raw_score)) * wl
