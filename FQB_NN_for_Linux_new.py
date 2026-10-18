@@ -2337,7 +2337,7 @@ if mode=="3":
         for i in range(len(WA)):
             print("Truth:"+str(AC_ex[i])+",WA:"+str(WA_ex[i])+",AnsType:"+str(ans_type[WA[i]-1]))
 
-
-for il in range(PROBLEM):
-    if str(il + 1) in query_type_dict:
-        print("Problem:" + str(il + 1) + "/" + str(PROBLEM) + ":" + query_type_dict[str(il + 1)])
+if mode == "3":
+    for il in range(PROBLEM):
+        if str(il + 1) in query_type_dict:
+            print("Problem:" + str(il + 1) + "/" + str(PROBLEM) + ":" + query_type_dict[str(il + 1)])
