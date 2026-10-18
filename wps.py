@@ -23,11 +23,18 @@ TEST_JSON_URL = "https://raw.githubusercontent.com/arkilpatel/SVAMP/main/SVAMP.j
 
 TRAIN_FILE = os.path.join(BASE_DIR, "mawps_asdiv.csv")
 TEST_FILE = os.path.join(BASE_DIR, "SVAMP.json")
-WEIGHTS_FILE = os.path.join(BASE_DIR, "math_lr_weights.json")
+WEIGHTS_FILE = os.path.join(BASE_DIR, "math_lr_weights2.json")
 
 NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
 VAR_RE = re.compile(r"\bvar(\d+)\b")
+# アンダースコア区切りのトークン (例: PREV1_var1_had) 内の var も置換するための正規表現
+TOKEN_VAR_RE = re.compile(r"(?<![a-zA-Z0-9])var(\d+)(?![a-zA-Z0-9])")
 OPS = {"+", "-", "*", "/"}
+
+# 時間帯分割の設定 (① ざっくり時間帯分割: t0=序盤, t1=中盤, t2=終盤 + all=全体)
+N_TIME_BUCKETS = 3
+TIME_KEYS = ("all", "t0", "t1", "t2")
+TIME_FEATURE_SCALE = 0.45  # 時間帯別特徴の正則化スケール（過学習を抑えつつ位置情報を反映）
 
 WORD_TO_NUM = {
     "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
@@ -213,7 +220,7 @@ def max_variable_index(expression):
 
 
 # ==========================================
-# 4. 数値マスクと構造・単位特徴トークン抽出
+# 4. 数値マスクと時間帯別・構造・単位特徴トークン抽出
 # ==========================================
 def preprocess_implicit_numbers(text):
     s = re.sub(r"\b(a|one)\s+dozen\b", "12", text, flags=re.IGNORECASE)
@@ -343,6 +350,16 @@ def simple_lemmatize(word):
     return word
 
 
+def get_time_bucket(index, total_length, n_buckets=N_TIME_BUCKETS):
+    """単語の出現位置(index)から、時間帯バケット('t0', 't1', 't2')を計算する"""
+    if total_length <= 0:
+        return "t0"
+    b = int((index / total_length) * n_buckets)
+    if b >= n_buckets:
+        b = n_buckets - 1
+    return f"t{b}"
+
+
 def get_var_spans(words):
     clauses = []
     curr = []
@@ -385,9 +402,10 @@ def analyze_question_structure(text):
 
     _, var_spans = get_var_spans(words)
     clean_words = [w for w in words if w not in (".", ",", "?", ";")]
+    n_words = len(clean_words)
 
     q_idx = 0
-    for idx in range(len(clean_words) - 1, -1, -1):
+    for idx in range(n_words - 1, -1, -1):
         if clean_words[idx] in ("how", "what"):
             q_idx = idx
             break
@@ -395,11 +413,13 @@ def analyze_question_structure(text):
     q_words_set = set(q_words)
 
     var_units = {}
+    var_time_buckets = {}
     for i, w in enumerate(clean_words):
         if w.startswith("var"):
+            var_time_buckets[w] = get_time_bucket(i, n_words)
             u_list = []
             for offset in (1, 2, 3):
-                if i + offset < len(clean_words):
+                if i + offset < n_words:
                     cand = clean_words[i + offset]
                     if cand.startswith("var"):
                         break
@@ -412,7 +432,7 @@ def analyze_question_structure(text):
     each_nouns = set()
     for i, w in enumerate(clean_words):
         if w in ("each", "every", "per", "apiece"):
-            if i + 1 < len(clean_words) and not clean_words[i + 1].startswith("var"):
+            if i + 1 < n_words and not clean_words[i + 1].startswith("var"):
                 each_nouns.add(clean_words[i + 1])
             if i - 1 >= 0 and not clean_words[i - 1].startswith("var"):
                 each_nouns.add(clean_words[i - 1])
@@ -483,90 +503,156 @@ def analyze_question_structure(text):
             else:
                 diff_unit_pairs.add((v1, v2))
 
-    tokens = []
+    # 時間帯別のトークン集合: dict[時間][単語]
+    time_tokens = {k: set() for k in TIME_KEYS}
+
+    def add_tok(t_b, tok):
+        time_tokens["all"].add(tok)
+        if t_b in time_tokens:
+            time_tokens[t_b].add(tok)
+
     for i, w in enumerate(clean_words):
         if w.startswith("var"):
+            t_b = get_time_bucket(i, n_words)
             u1, u2 = var_units[w]
             prev1 = clean_words[i - 1] if i > 0 and clean_words[i - 1] in MATH_CORE_WORDS else "OBJ"
             prev2 = clean_words[i - 2] if i > 1 and clean_words[i - 2] in MATH_CORE_WORDS else "OBJ"
-            tokens.append(f"PREV1_{w}_{prev1}")
-            tokens.append(f"PREV2_{w}_{prev2}_{prev1}")
+            add_tok(t_b, f"PREV1_{w}_{prev1}")
+            add_tok(t_b, f"PREV2_{w}_{prev2}_{prev1}")
 
             span = var_spans.get(w, [])
             span_set = set(span)
             if span_set & {"each", "every", "per", "apiece"}:
-                tokens.append(f"EACH_IN_SPAN_{w}")
+                add_tok(t_b, f"EACH_IN_SPAN_{w}")
             for sh in (span_set & SUB_CUES):
-                tokens.append(f"SPAN_SUB_{w}_{sh}")
+                add_tok(t_b, f"SPAN_SUB_{w}_{sh}")
             if span_set & SUB_CUES:
-                tokens.append(f"SPAN_ANY_SUB_{w}")
+                add_tok(t_b, f"SPAN_ANY_SUB_{w}")
             for ah in (span_set & ADD_CUES):
-                tokens.append(f"SPAN_ADD_{w}_{ah}")
+                add_tok(t_b, f"SPAN_ADD_{w}_{ah}")
             if span_set & ADD_CUES:
-                tokens.append(f"SPAN_ANY_ADD_{w}")
+                add_tok(t_b, f"SPAN_ANY_ADD_{w}")
 
             if w in q_match_vars:
-                tokens.append(f"Q_UNIT_MATCH_{w}")
+                add_tok(t_b, f"Q_UNIT_MATCH_{w}")
             else:
-                tokens.append(f"Q_UNIT_NOMATCH_{w}")
+                add_tok(t_b, f"Q_UNIT_NOMATCH_{w}")
 
             if (u1 != "NONE" and u1 in each_nouns) or (u2 != "NONE" and u2 in each_nouns):
-                tokens.append(f"ROLE_EACH_NOUN_{w}")
+                add_tok(t_b, f"ROLE_EACH_NOUN_{w}")
 
             if w in q_words_set:
-                tokens.append(f"IN_Q_CLAUSE_{w}")
+                add_tok(t_b, f"IN_Q_CLAUSE_{w}")
 
     for v1, v2 in same_unit_pairs:
-        tokens.append(f"SAME_UNIT_EXACT_{v1}_{v2}")
+        time_tokens["all"].add(f"SAME_UNIT_EXACT_{v1}_{v2}")
     for v1, v2 in diff_unit_pairs:
-        tokens.append(f"DIFF_UNIT_{v1}_{v2}")
+        time_tokens["all"].add(f"DIFF_UNIT_{v1}_{v2}")
 
-    abstract_words = []
-    for w in clean_words:
+    abstract_items = []
+    for i, w in enumerate(clean_words):
+        t_b = get_time_bucket(i, n_words)
         if w.startswith("var") or w in MATH_CORE_WORDS:
-            abstract_words.append(w)
-        elif not abstract_words or abstract_words[-1] != "OBJ":
-            abstract_words.append("OBJ")
+            abstract_items.append((w, t_b))
+        elif not abstract_items or abstract_items[-1][0] != "OBJ":
+            abstract_items.append(("OBJ", t_b))
 
-    for w in abstract_words:
+    for w, t_b in abstract_items:
         if w != "OBJ":
-            tokens.append(w)
-    for i in range(len(abstract_words) - 1):
-        w1, w2 = abstract_words[i], abstract_words[i + 1]
+            add_tok(t_b, w)
+    for i in range(len(abstract_items) - 1):
+        (w1, tb1), (w2, tb2) = abstract_items[i], abstract_items[i + 1]
         if w1 != "OBJ" or w2 != "OBJ":
-            tokens.append(f"{w1}_{w2}")
+            # 変数を含むbigramは変数の時間帯バケットに合わせる
+            target_tb = tb2 if w2.startswith("var") else tb1
+            add_tok(target_tb, f"{w1}_{w2}")
 
-    q_abstract = [w for w in q_words if w.startswith("var") or w in MATH_CORE_WORDS]
-    for w in q_abstract:
-        tokens.append(f"Q_{w}")
+    q_abstract = [
+        (clean_words[idx], get_time_bucket(idx, n_words))
+        for idx in range(q_idx, n_words)
+        if clean_words[idx].startswith("var") or clean_words[idx] in MATH_CORE_WORDS
+    ]
+    for w, t_b in q_abstract:
+        add_tok(t_b, f"Q_{w}")
     for i in range(len(q_abstract) - 1):
-        tokens.append(f"QBI_{q_abstract[i]}_{q_abstract[i + 1]}")
+        (w1, tb1), (w2, _tb2) = q_abstract[i], q_abstract[i + 1]
+        add_tok(tb1, f"QBI_{w1}_{w2}")
 
-    return tokens, same_unit_pairs, diff_unit_pairs, q_match_vars
-
-
-def tokenize(text):
-    tokens, _, _, _ = analyze_question_structure(text)
-    return tokens
+    return time_tokens, same_unit_pairs, diff_unit_pairs, q_match_vars, var_time_buckets
 
 
-def permute_tokens_and_eq(tokens, eq, mapping):
+def tokenize_by_time(text):
+    time_tokens, _, _, _, var_time_buckets = analyze_question_structure(text)
+    return time_tokens, var_time_buckets
+
+
+def permute_time_tokens_and_eq(time_tokens, var_time_buckets, eq, mapping):
+    """
+    変数の入れ替え(mapping)に合わせて、トークン内の変数名および時間帯バケットを連動して入れ替える。
+    """
     def repl(m):
         v = f"var{m.group(1)}"
         return mapping.get(v, v)
 
-    new_eq = normalize_equation(VAR_RE.sub(repl, eq), prefix=False)
-    new_tokens = []
-    for t in tokens:
-        t_mapped = VAR_RE.sub(repl, t)
+    def map_tok(t):
+        t_mapped = TOKEN_VAR_RE.sub(repl, t)
         m_pair = re.match(r"^(SAME_UNIT_EXACT|DIFF_UNIT)_(var\d+)_(var\d+)$", t_mapped)
         if m_pair:
             prefix, v_a, v_b = m_pair.groups()
             if v_a > v_b:
                 v_a, v_b = v_b, v_a
             t_mapped = f"{prefix}_{v_a}_{v_b}"
-        new_tokens.append(t_mapped)
-    return new_tokens, new_eq
+        return t_mapped
+
+    new_eq = normalize_equation(TOKEN_VAR_RE.sub(repl, eq), prefix=False)
+
+    orig_vars = sorted(
+        [k for k in mapping.keys() if k in var_time_buckets],
+        key=lambda v: int(v[3:]),
+    )
+    orig_buckets = [var_time_buckets[v] for v in orig_vars]
+    vars_by_new_order = sorted(orig_vars, key=lambda v: int(mapping[v][3:]))
+
+    var_to_new_bucket = {}
+    bucket_map_candidates = defaultdict(set)
+    for r, orig_v in enumerate(vars_by_new_order):
+        old_b = var_time_buckets[orig_v]
+        new_b = orig_buckets[r]
+        var_to_new_bucket[orig_v] = new_b
+        bucket_map_candidates[old_b].add(new_b)
+
+    bucket_map = {}
+    for old_b, new_bs in bucket_map_candidates.items():
+        if len(new_bs) == 1:
+            bucket_map[old_b] = next(iter(new_bs))
+
+    new_time_tokens = {k: set() for k in TIME_KEYS}
+    for t_key, tok_set in time_tokens.items():
+        if t_key == "all":
+            for tok in tok_set:
+                new_time_tokens["all"].add(map_tok(tok))
+        else:
+            for tok in tok_set:
+                vars_in_tok = [f"var{m}" for m in TOKEN_VAR_RE.findall(tok)]
+                if len(vars_in_tok) == 1 and vars_in_tok[0] in var_to_new_bucket:
+                    target_b = var_to_new_bucket[vars_in_tok[0]]
+                else:
+                    target_b = bucket_map.get(t_key, t_key)
+                new_time_tokens[target_b].add(map_tok(tok))
+
+    return new_time_tokens, new_eq
+
+
+def time_tokens_to_feature_dict(time_tokens):
+    """
+    DictVectorizer用に {'時間::単語': スケール値} のフラット辞書へ変換する。
+    """
+    feat = {}
+    for t_key, tok_set in time_tokens.items():
+        scale = 1.0 if t_key == "all" else TIME_FEATURE_SCALE
+        for w in tok_set:
+            feat[f"{t_key}::{w}"] = scale
+    return feat
 
 
 # ==========================================
@@ -657,11 +743,11 @@ def check_ast_and_dimensional_bonus(expression, values, same_unit_pairs, diff_un
 
 
 # ==========================================
-# 6. ロジスティック回帰モデル（重みファイル保存・高速読込）
+# 6. ロジスティック回帰モデル（3階層: dict[数式][時間][単語]）
 # ==========================================
 class MathLogisticModel:
     def __init__(self):
-        self.weights_dict = {}   # dict[equation][token] = float
+        self.weights_dict = {}   # dict[equation][time_key][token] = float
         self.bias_dict = {}      # dict[equation] = float
         self.is_loaded = False
 
@@ -670,23 +756,27 @@ class MathLogisticModel:
         y_labels = []
 
         for question, eq, values, _ans in dataset:
-            base_tokens = set(tokenize(question))
-            X_dicts.append({w: 1.0 for w in base_tokens})
+            base_time_tokens, var_tb = tokenize_by_time(question)
+            X_dicts.append(time_tokens_to_feature_dict(base_time_tokens))
             y_labels.append(eq)
 
             if len(values) == 2 and max_variable_index(eq) == 2:
-                sw_tokens, sw_eq = permute_tokens_and_eq(base_tokens, eq, {"var1": "var2", "var2": "var1"})
-                if sw_eq != eq:
-                    X_dicts.append({w: 1.0 for w in sw_tokens})
-                    y_labels.append(sw_eq)
+                sw_tokens, sw_eq = permute_time_tokens_and_eq(
+                    base_time_tokens, var_tb, eq, {"var1": "var2", "var2": "var1"}
+                )
+                X_dicts.append(time_tokens_to_feature_dict(sw_tokens))
+                y_labels.append(sw_eq)
+
                 for mapping in (
                     {"var1": "var1", "var2": "var3"},
                     {"var1": "var2", "var2": "var3"},
                     {"var1": "var3", "var2": "var1"},
                     {"var1": "var3", "var2": "var2"},
                 ):
-                    sh_tokens, sh_eq = permute_tokens_and_eq(base_tokens, eq, mapping)
-                    X_dicts.append({w: 1.0 for w in sh_tokens})
+                    sh_tokens, sh_eq = permute_time_tokens_and_eq(
+                        base_time_tokens, var_tb, eq, mapping
+                    )
+                    X_dicts.append(time_tokens_to_feature_dict(sh_tokens))
                     y_labels.append(sh_eq)
 
             elif len(values) == 3 and max_variable_index(eq) == 3:
@@ -694,8 +784,10 @@ class MathLogisticModel:
                 for p in permutations(vars_3):
                     if p == vars_3:
                         continue
-                    perm_tokens, perm_eq = permute_tokens_and_eq(base_tokens, eq, dict(zip(vars_3, p)))
-                    X_dicts.append({w: 1.0 for w in perm_tokens})
+                    perm_tokens, perm_eq = permute_time_tokens_and_eq(
+                        base_time_tokens, var_tb, eq, dict(zip(vars_3, p))
+                    )
+                    X_dicts.append(time_tokens_to_feature_dict(perm_tokens))
                     y_labels.append(perm_eq)
 
         vectorizer = DictVectorizer(sparse=True)
@@ -710,30 +802,35 @@ class MathLogisticModel:
         self.weights_dict = {}
         self.bias_dict = {}
 
+        def build_eq_time_dict(w_row, sign=1.0):
+            eq_dict = {k: {} for k in TIME_KEYS}
+            for j, feat_name in enumerate(feature_names):
+                t_key, word = feat_name.split("::", 1)
+                scale = 1.0 if t_key == "all" else TIME_FEATURE_SCALE
+                val = float(sign * w_row[j] * scale)
+                if abs(val) > 1e-4:
+                    eq_dict[t_key][word] = val
+            return {k: v for k, v in eq_dict.items() if v}
+
         if len(classes) == 2 and clf.coef_.shape[0] == 1:
             w_row = clf.coef_[0]
             b_val = float(clf.intercept_[0])
             self.bias_dict[classes[0]] = -b_val
             self.bias_dict[classes[1]] = b_val
-            self.weights_dict[classes[0]] = {
-                feature_names[j]: float(-w_row[j]) for j in range(len(feature_names)) if abs(w_row[j]) > 1e-4
-            }
-            self.weights_dict[classes[1]] = {
-                feature_names[j]: float(w_row[j]) for j in range(len(feature_names)) if abs(w_row[j]) > 1e-4
-            }
+            self.weights_dict[classes[0]] = build_eq_time_dict(w_row, sign=-1.0)
+            self.weights_dict[classes[1]] = build_eq_time_dict(w_row, sign=1.0)
         else:
             for idx, eq in enumerate(classes):
                 self.bias_dict[eq] = float(clf.intercept_[idx])
-                w_row = clf.coef_[idx]
-                self.weights_dict[eq] = {
-                    feature_names[j]: float(w_row[j])
-                    for j in range(len(feature_names))
-                    if abs(w_row[j]) > 1e-4
-                }
+                self.weights_dict[eq] = build_eq_time_dict(clf.coef_[idx], sign=1.0)
 
         with open(weights_path, "w", encoding="utf-8") as f:
             json.dump(
-                {"weights_dict": self.weights_dict, "bias_dict": self.bias_dict},
+                {
+                    "format_version": "time_bow_v1",
+                    "weights_dict": self.weights_dict,
+                    "bias_dict": self.bias_dict,
+                },
                 f,
                 ensure_ascii=False,
                 indent=2,
@@ -745,23 +842,29 @@ class MathLogisticModel:
     def load(self, weights_path=WEIGHTS_FILE):
         if not os.path.exists(weights_path):
             return False
-        with open(weights_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        self.weights_dict = data["weights_dict"]
-        self.bias_dict = data["bias_dict"]
-        self.is_loaded = True
-        return True
+        try:
+            with open(weights_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # 旧フォーマット(2階層 dict[数式][単語])の場合はFalseを返して再学習させる
+            if data.get("format_version") != "time_bow_v1":
+                return False
+            self.weights_dict = data["weights_dict"]
+            self.bias_dict = data["bias_dict"]
+            self.is_loaded = True
+            return True
+        except Exception:
+            return False
 
     def predict(self, masked_question, values):
-        tokens, same_u, diff_u, q_match = analyze_question_structure(masked_question)
-        q_words = set(tokens)
+        time_tokens, same_u, diff_u, q_match, _ = analyze_question_structure(masked_question)
         num_vars = len(values)
 
         best_eq = None
         best_score = float("-inf")
         best_ans = None
 
-        for eq, w_dict in self.weights_dict.items():
+        # dict[正解候補数式][時間][単語] によるスコア計算
+        for eq, time_w_dict in self.weights_dict.items():
             if max_variable_index(eq) > num_vars:
                 continue
 
@@ -772,8 +875,12 @@ class MathLogisticModel:
                 continue
 
             lr_score = self.bias_dict.get(eq, 0.0)
-            for w in q_words:
-                lr_score += w_dict.get(w, 0.0)
+            for t_key, words_in_t in time_tokens.items():
+                w_dict = time_w_dict.get(t_key)
+                if not w_dict:
+                    continue
+                for w in words_in_t:
+                    lr_score += w_dict.get(w, 0.0)
 
             total_score = lr_score + ast_bonus
 
@@ -827,14 +934,14 @@ _GLOBAL_MODEL = MathLogisticModel()
 
 def ensure_model_loaded():
     """
-    重みファイル (math_lr_weights.json) があれば読み込むだけ。
-    まだ存在しない初回のみ、学習データをダウンロードして学習・保存する。
+    重みファイル (math_lr_weights2.json) が新形式であれば読み込むだけ。
+    まだ存在しないか旧形式の場合は、学習データを読み込んで再学習・保存する。
     """
     if _GLOBAL_MODEL.is_loaded:
         return
     if _GLOBAL_MODEL.load(WEIGHTS_FILE):
         return
-    print("重みファイルが見つからないため、初回学習を実行して保存します...")
+    print("時間帯分割モデルの重みファイルを初回学習して保存します...")
     download_files()
     train_data = load_train_data(TRAIN_FILE)
     _GLOBAL_MODEL.fit_and_save(train_data, WEIGHTS_FILE)
@@ -893,26 +1000,26 @@ def main():
     if os.path.exists(TRAIN_FILE) and os.path.exists(TEST_FILE):
         train_data = load_train_data(TRAIN_FILE)
         test_data = load_test_data(TEST_FILE)
-        evaluate_dataset(_GLOBAL_MODEL, train_data, "ロジスティック回帰 (重み読込) - 学習データ")
-        evaluate_dataset(_GLOBAL_MODEL, test_data,  "ロジスティック回帰 (重み読込) - SVAMPテストデータ")
+        evaluate_dataset(_GLOBAL_MODEL, train_data, "時間帯分割BoW + ロジスティック回帰 - 学習データ")
+        evaluate_dataset(_GLOBAL_MODEL, test_data,  "時間帯分割BoW + ロジスティック回帰 - SVAMPテストデータ")
 
-    #sample_math = (
-        #"Each pack of dvds costs 76 dollars. "
-        #"If there is a discount of 25 dollars on each pack, "
-        #"how much do you have to pay to buy 5 packs?"
-    #)
-    #sample_quiz = (
-        #"In 1969, Apollo 11 landed on the Moon with 3 astronauts. "
-    #)
+    sample_math = (
+        "Each pack of dvds costs 76 dollars. "
+        "If there is a discount of 25 dollars on each pack, "
+        "how much do you have to pay to buy 5 packs?"
+    )
+    sample_quiz = (
+        " is an online knowledge engine developed by Research , released in 2009 . [ 1 ] It is offered as an online service that answers queries by computing answers from externally sourced data . [ 2 ][ 3 ]"
+    )
 
-    #print("=== solve(question_text) ＆ クイズ判定テスト ===")
-    #print(f"問題1: {sample_math}")
-    #print(f"  -> 算数判定: {is_math_word_problem(sample_math)}")
-    #print(f"  -> solve() の返り値: {solve(sample_math)}\n")
+    print("=== solve(question_text) ＆ クイズ判定テスト ===")
+    print(f"問題1: {sample_math}")
+    print(f"  -> 算数判定: {is_math_word_problem(sample_math)}")
+    print(f"  -> solve() の返り値: {solve(sample_math)}\n")
 
-    #print(f"問題2: {sample_quiz}")
-    #print(f"  -> 算数判定: {is_math_word_problem(sample_quiz)}")
-    #print(f"  -> solve(check_is_math=True) の返り値: {solve(sample_quiz, check_is_math=True)}")
+    print(f"問題2: {sample_quiz}")
+    print(f"  -> 算数判定: {is_math_word_problem(sample_quiz)}")
+    print(f"  -> solve(check_is_math=True) の返り値: {solve(sample_quiz, check_is_math=True)}")
 
 
 if __name__ == "__main__":
