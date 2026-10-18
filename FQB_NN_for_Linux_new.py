@@ -77,6 +77,7 @@ datakun = dict()
 NoAns = dict()
 delta_weights = dict()
 dbpedia_types_dict = dict()
+query_type_dict = dict()
 
 x_all_list=[]
 ans_type={}
@@ -1684,12 +1685,18 @@ def quiz_solve(loop,o,add,q, truth_word=None):
                     dic2[ans] = 9999.0
                     if 9999.0 > maxsum:
                         maxsum = 9999.0
-    if calc_flag==0:
+    if calc_flag == 0:
         print("Query_Type:Quiz")
-    elif calc_flag==1:
+        if str(loop + 1) not in query_type_dict:
+            query_type_dict[str(loop + 1)] = "Quiz"
+    elif calc_flag == 1:
         print("Query_Type:Calc")
-    elif calc_flag==2:
+        if str(loop + 1) not in query_type_dict:
+            query_type_dict[str(loop + 1)] = "Calc"
+    elif calc_flag == 2:
         print("Query_Type:Math")
+        if str(loop + 1) not in query_type_dict:
+            query_type_dict[str(loop + 1)] = "Math"
     divd2 = 0.0
     for kd in range(len(quiz2)):
         if str(quiz2[kd]) in NoAns:
@@ -2329,3 +2336,8 @@ if mode=="3":
         print(str(WA[len(WA)-1]))
         for i in range(len(WA)):
             print("Truth:"+str(AC_ex[i])+",WA:"+str(WA_ex[i])+",AnsType:"+str(ans_type[WA[i]-1]))
+
+
+for il in range(PROBLEM):
+    if str(il + 1) in query_type_dict:
+        print("Problem:" + str(il + 1) + "/" + str(PROBLEM) + ":" + query_type_dict[str(il + 1)])
