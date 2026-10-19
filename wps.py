@@ -58,9 +58,8 @@ def download_files():
     download_if_needed(TRAIN_CSV_URL, TRAIN_FILE, minimum_size=10_000)
     download_if_needed(TEST_JSON_URL, TEST_FILE, minimum_size=50_000)
 
-
 # ==========================================
-# 2. クイズ vs 算数文章題のルーティング判定器
+# 2. クイズ vs 算数文章題のルーティング判定器（改善版）
 # ==========================================
 ENCYCLOPEDIA_PATTERNS = re.compile(
     r"\b("
@@ -76,13 +75,20 @@ ENCYCLOPEDIA_PATTERNS = re.compile(
 MATH_QUESTION_PATTERNS = re.compile(
     r"\b("
     r"how many|how much|how long|how far|how old|how heavy|how fast|how tall|how deep|"
-    r"what is the total|what was the total|what is the cost|what is the price|"
-    r"what is the difference|what is the sum|what is the value|what is the average|"
-    r"what is the area|what is the perimeter|what is the volume|what is the speed|"
-    r"calculate|find the total|find the number"
+    r"how big|how wide|how high|how often|"
+    r"what is the|what was the|what will be the|what would be the|"
+    r"what fraction|what percent|what percentage|what rate|"
+    r"calculate|find the|compute"
     r")\b",
     re.IGNORECASE,
 )
+
+# 暗黙の数値（硬貨・時間・単数冠詞など）もカウント対象に追加
+IMPLICIT_NUM_WORDS = set(WORD_TO_NUM.keys()) | {
+    "quarter", "quarters", "dime", "dimes", "nickel", "nickels", "penny", "pennies",
+    "dozen", "pair", "pairs", "half", "halves", "twice", "double", "triple",
+    "week", "weeks", "year", "years", "hour", "hours", "minute", "minutes",
+}
 
 MATH_OPERATION_CUES = {
     "each", "every", "per", "apiece", "total", "altogether", "together", "combined",
@@ -94,6 +100,17 @@ MATH_OPERATION_CUES = {
     "half", "twice", "double", "dozen", "pair",
     "dollar", "dollars", "cent", "cents", "yen", "pound", "pounds",
     "pack", "packs", "box", "boxes", "bag", "bags",
+    # 追加：算数の基本動詞・状態・単位系
+    "have", "has", "had", "make", "made", "take", "took", "get", "got",
+    "find", "found", "collect", "collected", "plant", "planted", "bake", "baked",
+    "eat", "ate", "drink", "drank", "use", "used", "read", "walk", "walked",
+    "run", "ran", "drive", "drove", "fly", "flew", "work", "worked",
+    "all", "now", "first", "start", "started", "begin", "began", "finish", "finished",
+    "need", "needed", "want", "wanted", "already", "still", "another", "other",
+    "group", "groups", "row", "rows", "team", "teams", "page", "pages",
+    "hour", "hours", "minute", "minutes", "day", "days", "week", "weeks",
+    "mile", "miles", "foot", "feet", "inch", "inches", "meter", "meters",
+    "liter", "liters", "gram", "grams", "kilogram", "kilograms",
 }
 
 
@@ -110,26 +127,37 @@ def is_math_word_problem(text):
     if ENCYCLOPEDIA_PATTERNS.search(text_low):
         return False
 
+    # 疑問詞パターンのチェック (文末に '?' があり "how" を含む場合も許容)
     if not MATH_QUESTION_PATTERNS.search(text_low):
-        return False
+        if not ("?" in text_low and re.search(r"\bhow\b", text_low)):
+            return False
 
-    scrubbed = re.sub(r"\b(in|from|to|since|during|year|years|war|apollo|century)\s+\d{1,4}\b", " ", text_low)
-    scrubbed = re.sub(r"\b(a|one)\s+dozen\b", " 12 ", scrubbed)
-    scrubbed = re.sub(r"\b(half)\b", " 0.5 ", scrubbed)
-    scrubbed = re.sub(r"\b(twice|double)\b", " 2 ", scrubbed)
+    # number0, number1 や var1, var2 のようなマスク済み変数も数値として扱う
+    masked_vars = re.findall(r"\b(?:number|var)\d+\b", text_low)
+
+    # クイズの年号 (in 1999, during 2009 など 1000〜2099年の4桁年号のみ) を除外
+    # ※ 以前の \d{1,4} だと "in 3 boxes" や "to 5 friends" の数字まで消えてしまうため修正
+    scrubbed = re.sub(
+        r"\b(in|from|to|since|during|year|years|released in|born in|founded in)\s+(1[0-9]{3}|20[0-9]{2})\b",
+        " ",
+        text_low,
+    )
 
     nums = NUMBER_RE.findall(scrubbed)
-    if len(nums) < 2:
-        word_nums = [w for w in re.findall(r"[a-z]+", scrubbed) if w in WORD_TO_NUM]
-        if len(nums) + len(word_nums) < 2:
+    total_num_count = len(nums) + len(masked_vars)
+
+    if total_num_count < 2:
+        word_nums = [w for w in re.findall(r"[a-z]+", scrubbed) if w in IMPLICIT_NUM_WORDS]
+        # "a minute", "an hour", "a pie" などの単数単位表現 (1個分) も補助カウント
+        per_a = re.findall(r"\b(?:a|an)\s+(?:minute|hour|day|week|month|year|pie|pack|box|bag|group|shirt|car)\b", scrubbed)
+        if total_num_count + len(word_nums) + len(per_a) < 2:
             return False
 
     words_in_text = set(re.findall(r"[a-z]+", text_low))
-    if not (words_in_text & MATH_OPERATION_CUES):
+    if not (words_in_text & MATH_OPERATION_CUES) and "$" not in text_low and "%" not in text_low:
         return False
 
     return True
-
 
 # ==========================================
 # 3. 数式の変換・正規化
@@ -1011,6 +1039,7 @@ def main():
     sample_quiz = (
         " is an online knowledge engine developed by Research , released in 2009 . [ 1 ] It is offered as an online service that answers queries by computing answers from externally sourced data . [ 2 ][ 3 ]"
     )
+    
 
     print("=== solve(question_text) ＆ クイズ判定テスト ===")
     print(f"問題1: {sample_math}")
