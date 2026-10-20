@@ -32,7 +32,7 @@ from bisect import bisect_left
 from functools import lru_cache
 import nltk
 from nltk.corpus import wordnet as wn
-import wps
+import wps_nnue
 import time
 from nltk.tokenize import sent_tokenize
 from collections import Counter
@@ -1676,7 +1676,7 @@ def quiz_solve(loop,o,add,q, truth_word=None):
                     ans=str(i2)
                     calc_flag = 1
         if calc_flag==0:
-            math_ans = wps.solve(quiz3, check_is_math=True)
+            math_ans = wps_nnue.solve(quiz3, check_is_math=True)
             if math_ans is not None:
                 m_val = match_choice(math_ans)
                 if m_val:
