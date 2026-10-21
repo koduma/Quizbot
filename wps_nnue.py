@@ -412,7 +412,13 @@ def get_var_spans(words):
 
 
 def analyze_question_structure(text):
-    text_low = re.sub(r"'s\b", "", text.lower())
+    text_low = re.sub(r"[\u2018\u2019`]", "'", text.lower())
+    text_low = re.sub(r"'s\b", "", text_low)
+    text_low = re.sub(r"\$\s*(var\d+)", r"\1 dollar ", text_low)
+    text_low = re.sub(r"[\u00a5\uffe5]\s*(var\d+)", r"\1 yen ", text_low)    
+    text_low = text_low.replace("%", " percent ")
+    text_low = re.sub(r"(?<=[a-z0-9])\s*/\s*(?=[a-z])", " per ", text_low)
+    text_low = re.sub(r"[:!]", ".", text_low)
     raw_tokens = re.findall(r"var\d+|[a-z]+|[.,?;]", text_low)
     words = []
     for w in raw_tokens:
@@ -1052,7 +1058,7 @@ class MathNNUEModel:
             nnue_score = float(a2 @ self.W3)
 
             total_score = base_score + nnue_score + ast_bonus
-
+            
             if total_score > best_score:
                 best_score = total_score
                 best_eq = eq
@@ -1178,7 +1184,7 @@ def main():
         "how much do you have to pay to buy 5 packs?"
     )
     sample_quiz = (
-        " is an online knowledge engine developed by Research , released in 2009 . [ 1 ] It is offered as an online service that answers queries by computing answers from externally sourced data . [ 2 ][ 3 ]"
+        "is an online knowledge engine developed by Research , released in 2009 . [ 1 ] It is offered as an online service that answers queries by computing answers from externally sourced data . [ 2 ][ 3 ]"
     )
 
     print("=== solve(question_text) ＆ クイズ判定テスト ===")
