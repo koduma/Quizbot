@@ -76,8 +76,8 @@ NNUE_LR = 0.015
 NNUE_L2_DECAY = 1e-4
 
 # L-BFGS-B のメモリ爆発 (12GB ArrayMemoryError) を防ぐための大局テンプレート・語彙上限
-MAX_GLOBAL_FORMULAS = 500    # 大局NNUEモデルで保持する頻出数式テンプレート数の上限
-MAX_GLOBAL_WORDS = 20000     # 大局NNUEモデルで保持する有効語彙数の上限
+MAX_GLOBAL_FORMULAS = 400    # 大局NNUEモデルで保持する頻出数式テンプレート数の上限
+MAX_GLOBAL_WORDS = 30000     # 大局NNUEモデルで保持する有効語彙数の上限
 MIN_WORD_DF = 2              # 大局BoW特徴の最小出現文書数
 
 BEAM_WIDTH = 6               # 各ステップで残す部分盤面のビーム幅
