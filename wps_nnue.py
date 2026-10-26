@@ -1,11 +1,12 @@
 import ast
 import csv
+import gc
 import json
 import math
 import os
 import re
 import urllib.request
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import permutations
 
 import numpy as np
@@ -23,12 +24,34 @@ TRAIN_CSV_URL = (
     "data/mawps-asdiv-a_svamp/train.csv"
 )
 TEST_JSON_URL = "https://raw.githubusercontent.com/arkilpatel/SVAMP/main/SVAMP.json"
+GSM8K_TRAIN_URL = (
+    "https://raw.githubusercontent.com/openai/grade-school-math/master/"
+    "grade_school_math/data/train.jsonl"
+)
+
+# 追加の外部算数文章題データセットURL (MultiArith と GSM8K の両方を使用)
+EXTRA_DATASET_URLS = [
+    (
+        "MultiArith.json",
+        "https://raw.githubusercontent.com/wangxr14/Algebraic-Word-Problem-Solver/master/data/MultiArith.json",
+        "multiarith_json",
+        "MultiArith",
+    ),
+    (
+        "gsm8k_test.jsonl",
+        "https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/test.jsonl",
+        "gsm8k_jsonl",
+        "GSM8K",
+    ),
+]
 
 TRAIN_FILE = os.path.join(BASE_DIR, "mawps_asdiv.csv")
+GSM8K_TRAIN_FILE = os.path.join(BASE_DIR, "gsm8k_train.jsonl")
 TEST_FILE = os.path.join(BASE_DIR, "SVAMP.json")
-WEIGHTS_FILE = os.path.join(BASE_DIR, "math_lr_weights6.json")
+WEIGHTS_FILE = os.path.join(BASE_DIR, "math_lr_weights11.json")
 
-NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
+# 文末のピリオド (例: "while her sister had 42.") の直前の数値も確実に抽出する正規表現
+NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w]|\.\d)")
 VAR_RE = re.compile(r"\bvar(\d+)\b")
 TOKEN_VAR_RE = re.compile(r"(?<![a-zA-Z0-9])var(\d+)(?![a-zA-Z0-9])")
 OPS = {"+", "-", "*", "/"}
@@ -44,7 +67,7 @@ N_TIME_BUCKETS = 3
 TIME_KEYS = ("all", "t0", "t1", "t2")
 TIME_FEATURE_SCALE = 0.35
 
-# NNUE & ビームサーチ（スタック型段階探索）設定
+# NNUE & ビームサーチ（スタック型段階探索）・省メモリ制限設定
 HIDDEN1_SIZE = 16
 HIDDEN2_SIZE = 16
 TOP_K_CANDIDATES = 8
@@ -52,20 +75,41 @@ NNUE_EPOCHS = 18
 NNUE_LR = 0.015
 NNUE_L2_DECAY = 1e-4
 
-BEAM_WIDTH = 2               # 各ステップで残す部分盤面のビーム幅
+# L-BFGS-B のメモリ爆発 (12GB ArrayMemoryError) を防ぐための大局テンプレート・語彙上限
+MAX_GLOBAL_FORMULAS = 500    # 大局NNUEモデルで保持する頻出数式テンプレート数の上限
+MAX_GLOBAL_WORDS = 20000     # 大局NNUEモデルで保持する有効語彙数の上限
+MIN_WORD_DF = 2              # 大局BoW特徴の最小出現文書数
+
+BEAM_WIDTH = 6               # 各ステップで残す部分盤面のビーム幅
 STEP_ACTIONS = ("ADD", "SUB_LR", "SUB_RL", "MUL", "DIV_LR", "DIV_RL", "NONE")
 ACTIVE_ACTIONS = ("ADD", "SUB_LR", "SUB_RL", "MUL", "DIV_LR", "DIV_RL")
-BEAM_SCORE_WEIGHT = 0.55     # ビームサーチの段階評価スコアの統合重み
+BEAM_SCORE_WEIGHT = 0.80     # ビームサーチの段階評価スコアの統合重み
 
-WORD_TO_NUM = {
-    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+TENS_MAP = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+ONES_MAP = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9,
+}
+CARDINAL_WORD_TO_NUM = {
+    "two": "2", "three": "3", "four": "4", "five": "5",
     "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
     "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
     "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18",
     "nineteen": "19", "twenty": "20", "thirty": "30", "forty": "40",
     "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80",
-    "ninety": "90", "hundred": "100",
-    "twice": "2 times", "double": "2 times",
+    "ninety": "90",
+}
+
+WORD_TO_NUM = {
+    "one": "1",
+    **CARDINAL_WORD_TO_NUM,
+    "hundred": "100",
+    "twice": "2 times",
+    "double": "2 times",
+    "triple": "3 times",
 }
 
 
@@ -78,6 +122,10 @@ def download_if_needed(url, path, minimum_size):
 def download_files():
     download_if_needed(TRAIN_CSV_URL, TRAIN_FILE, minimum_size=10_000)
     download_if_needed(TEST_JSON_URL, TEST_FILE, minimum_size=50_000)
+    try:
+        download_if_needed(GSM8K_TRAIN_URL, GSM8K_TRAIN_FILE, minimum_size=100_000)
+    except Exception:
+        pass
 
 
 # ==========================================
@@ -251,6 +299,70 @@ def max_variable_index(expression):
     return max((int(idx) for idx in VAR_RE.findall(expression)), default=0)
 
 
+def is_self_canceling_or_invalid_duplicate(expression, num_vars_in_question=None):
+    """
+    1. ((var1 + var2) - var2) や ((var1 * var2) / var2) のように同じ変数を足して引く・掛けて割る自己相殺式を除外する。
+    2. (var1 + (var1 * var2)) や (var1 + (var1 / var2)) のような「基準量 + 基準量の倍数/端数」は有効とする。
+       ただし問題文中にまだ未使用の変数があるのに変数を重複使用している式は除外する。
+    """
+    occ = VAR_RE.findall(expression)
+    unique_occ = set(occ)
+    if len(occ) == len(unique_occ):
+        return False
+
+    if num_vars_in_question is not None and len(unique_occ) < num_vars_in_question:
+        return True
+
+    test_primes = [13.37, 29.71, 41.19, 53.83, 67.29, 79.43, 89.61, 97.17]
+    max_idx = max((int(x) for x in unique_occ), default=1)
+    test_vals = {f"var{i + 1}": test_primes[i % len(test_primes)] + i * 100.0 for i in range(max_idx)}
+    try:
+        val = float(eval(expression, {"__builtins__": {}}, test_vals))
+    except Exception:
+        return True
+
+    if abs(val) < 1e-6 or abs(val - 1.0) < 1e-6:
+        return True
+    for v_val in test_vals.values():
+        if math.isclose(val, v_val, abs_tol=1e-5):
+            return True
+
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except Exception:
+        return True
+
+    invalid_dup = False
+
+    def check_node(node):
+        nonlocal invalid_dup
+        if isinstance(node, ast.Expression):
+            return check_node(node.body)
+        if isinstance(node, ast.Name):
+            return {node.id}, False
+        if isinstance(node, ast.Constant):
+            return set(), False
+        if isinstance(node, ast.UnaryOp):
+            return check_node(node.operand)
+        if isinstance(node, ast.BinOp):
+            l_vars, l_has_scale = check_node(node.left)
+            r_vars, r_has_scale = check_node(node.right)
+            overlap = l_vars & r_vars
+            is_scale = isinstance(node.op, (ast.Mult, ast.Div))
+            if overlap:
+                if isinstance(node.op, (ast.Add, ast.Sub)) and len(overlap) == 1:
+                    if (isinstance(node.left, ast.Name) and r_has_scale) or (
+                        isinstance(node.right, ast.Name) and l_has_scale
+                    ):
+                        return l_vars | r_vars, True
+                invalid_dup = True
+            return l_vars | r_vars, (is_scale or l_has_scale or r_has_scale)
+        return set(), False
+
+    check_node(tree)
+    return invalid_dup
+
+
 def decompose_ast_to_steps(expression):
     """
     正規化された数式 (例: '((var1 - var2) * var3)') のASTをボトムアップに分解し、
@@ -293,8 +405,46 @@ def decompose_ast_to_steps(expression):
 # 4. 数値マスクと時間帯別・構造・単位特徴トークン抽出
 # ==========================================
 def preprocess_implicit_numbers(text):
-    s = re.sub(r"\b(a|one)\s+dozen\b", "12", text, flags=re.IGNORECASE)
-    return re.sub(r"\ba\s+pair\s+of\b", "2", s, flags=re.IGNORECASE)
+    """
+    桁区切りカンマ、英語の数詞 (two〜ninety, twenty-five等)、倍数語 (twice, double, triple)、
+    分数語 (half, a third, a quarter)、およびダース・ペア表現を数値に正規化する。
+    """
+    s = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)
+
+    s = re.sub(r"\bhalf\s+a\s+dozen\b", "6", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(a|one)\s+dozen\b", "12", s, flags=re.IGNORECASE)
+    s = re.sub(r"\btwo\s+dozen\b", "24", s, flags=re.IGNORECASE)
+    s = re.sub(r"\bthree\s+dozen\b", "36", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(a|one)\s+pair\s+of\b", "2", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(a|one)\s+couple\s+(?:of\s+)?", "2 ", s, flags=re.IGNORECASE)
+
+    def repl_compound(m):
+        t_w = m.group(1).lower()
+        o_w = m.group(2).lower()
+        return str(TENS_MAP[t_w] + ONES_MAP[o_w])
+
+    s = re.sub(
+        r"\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b",
+        repl_compound,
+        s,
+        flags=re.IGNORECASE,
+    )
+
+    s = re.sub(r"\b(twice|double)\b", "2 times", s, flags=re.IGNORECASE)
+    s = re.sub(r"\btriple\b", "3 times", s, flags=re.IGNORECASE)
+
+    def repl_cardinal(m):
+        w = m.group(1).lower()
+        return CARDINAL_WORD_TO_NUM.get(w, m.group(0))
+
+    card_pat = r"\b(" + "|".join(CARDINAL_WORD_TO_NUM.keys()) + r")\b"
+    s = re.sub(card_pat, repl_cardinal, s, flags=re.IGNORECASE)
+
+    s = re.sub(r"\bhalf\b(?!\s+\d)", "half 2", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:a|one)[-\s]+third\b(?!\s+\d)", "third 3", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(?:a|one)[-\s]+(?:quarter|fourth)\b(?!\s+\d)", "quarter 4", s, flags=re.IGNORECASE)
+
+    return s
 
 
 def mask_numbers_in_question(text):
@@ -337,6 +487,11 @@ STOP_WORDS = {
     "who", "what", "where",
 }
 
+DET_BOUNDARY_WORDS = {
+    "the", "a", "an", "this", "that", "these", "those",
+    "his", "her", "their", "my", "your", "our", "its",
+}
+
 IRREGULAR_LEMMAS = {
     "bought": "buy", "buys": "buy", "buying": "buy",
     "gave": "give", "gives": "give", "given": "give",
@@ -363,7 +518,7 @@ IRREGULAR_LEMMAS = {
 
 ES_SUFFIXES = ("ches", "shes", "sses", "xes", "zes")
 MONEY_UNITS = {"dollar", "cent", "money", "price", "cost", "penny", "dime", "quarter", "nickel", "buck", "yen"}
-TIME_UNITS = {"hour", "minute", "second", "day", "week", "month", "year"}
+TIME_UNITS = {"hour", "minute", "second", "day", "week", "month", "year", "morn", "afternoon", "night"}
 DIST_UNITS = {"mile", "foot", "inch", "yard", "meter", "kilometer", "centimeter"}
 WEIGHT_UNITS = {"pound", "ounce", "gram", "kilogram", "ton"}
 
@@ -374,9 +529,9 @@ NON_UNIT_WORDS = {
     "left", "remain", "remaining", "away", "back", "out", "up", "down", "off", "over",
     "now", "then", "still", "already", "only", "just", "also", "too", "together", "altogether",
     "total", "how", "many", "much", "long", "far", "old", "heavy",
+    "first", "second", "third", "fourth", "quarter", "half", "next", "last", "same", "daily",
 }
 
-# 単位スキャン時に文境界や前置詞・レート句を越えて無関係な名詞を拾わないための境界語集合
 CLAUSE_BREAK_WORDS = {".", ",", "?", ";", "if", "when", "while", "after", "before", "but", "so", "how", "and"}
 UNIT_STOP_WORDS = CLAUSE_BREAK_WORDS | {
     "on", "in", "at", "to", "for", "from", "with", "by", "into", "among", "between",
@@ -405,6 +560,16 @@ MATH_CORE_WORDS = NON_UNIT_WORDS | SUB_CUES | ADD_CUES | MONEY_UNITS | TIME_UNIT
     "make", "put", "hold", "fill", "filled", "fit",
 }
 
+ELLIPSIS_BLOCK_PREV = {
+    "into", "by", "page", "grade", "level", "step", "chapter", "number", "group", "team", "row",
+    "half", "third", "quarter", "fourth",
+}
+ELLIPSIS_VERB_PREV = {
+    "had", "have", "has", "buy", "get", "find", "make", "eat", "give", "take",
+    "lose", "spend", "sell", "pick", "collect", "bake", "plant", "earn", "save",
+    "receive", "received", "caught", "catch", "read", "drink", "with",
+}
+
 
 def simple_lemmatize(word):
     if word in IRREGULAR_LEMMAS:
@@ -427,6 +592,75 @@ def get_time_bucket(index, total_length, n_buckets=N_TIME_BUCKETS):
     return f"t{min(b, n_buckets - 1)}"
 
 
+def extract_strict_units_with_ellipsis(raw_tokens):
+    """
+    raw_tokens から各変数の直後単位 (u1, u2) を抽出し、
+    単位が省略されている変数 (例: "while her sister had 42." や "She eats 3 for breakfast ... with 4.")
+    に対して先行・後続変数の単位を補完する。
+    """
+    var_strict_units = {}
+    var_sent_id = {}
+    var_order_list = []
+    var_prev_lem = {}
+    sent_id = 0
+
+    for idx_r, tok in enumerate(raw_tokens):
+        if tok in (".", "?", ";"):
+            sent_id += 1
+        if is_var_tok(tok):
+            var_sent_id[tok] = sent_id
+            var_order_list.append(tok)
+            prev_w = raw_tokens[idx_r - 1] if idx_r > 0 else "NONE"
+            var_prev_lem[tok] = simple_lemmatize(prev_w)
+
+            u_list = []
+            prev_was_of = False
+            for offset in range(1, 6):
+                if idx_r + offset >= len(raw_tokens):
+                    break
+                cand_raw = raw_tokens[idx_r + offset]
+                if cand_raw == "of":
+                    prev_was_of = True
+                    continue
+                if cand_raw in DET_BOUNDARY_WORDS:
+                    if prev_was_of:
+                        continue
+                    break
+                cand = simple_lemmatize(cand_raw)
+                if cand in UNIT_STOP_WORDS or is_var_tok(cand):
+                    break
+                if cand not in NON_UNIT_WORDS and cand not in STOP_WORDS:
+                    u_list.append(cand)
+                    prev_was_of = False
+                if len(u_list) >= 2:
+                    break
+
+            var_strict_units[tok] = (
+                u_list[0] if len(u_list) >= 1 else "NONE",
+                u_list[1] if len(u_list) >= 2 else "NONE",
+            )
+
+    # 単位省略 (Unit Ellipsis) の補完
+    for idx_v, v in enumerate(var_order_list):
+        if var_strict_units[v] == ("NONE", "NONE") and var_prev_lem.get(v) not in ELLIPSIS_BLOCK_PREV:
+            for prev_v in reversed(var_order_list[:idx_v]):
+                if var_sent_id[prev_v] == var_sent_id[v] and var_strict_units[prev_v] != ("NONE", "NONE"):
+                    var_strict_units[v] = var_strict_units[prev_v]
+                    break
+            if var_strict_units[v] == ("NONE", "NONE"):
+                for next_v in var_order_list[idx_v + 1 :]:
+                    if var_sent_id[next_v] == var_sent_id[v] and var_strict_units[next_v] != ("NONE", "NONE"):
+                        var_strict_units[v] = var_strict_units[next_v]
+                        break
+            if var_strict_units[v] == ("NONE", "NONE") and idx_v > 0:
+                if var_prev_lem.get(v) in ELLIPSIS_VERB_PREV:
+                    prev_v = var_order_list[idx_v - 1]
+                    if var_strict_units[prev_v] != ("NONE", "NONE"):
+                        var_strict_units[v] = var_strict_units[prev_v]
+
+    return var_strict_units, var_sent_id
+
+
 def get_var_spans(words):
     clauses, curr = [], []
     for w in words:
@@ -440,15 +674,26 @@ def get_var_spans(words):
         clauses.append(curr)
 
     var_spans = {}
+    intro_cues = set()
+    seen_any_var = False
     for c in clauses:
         var_indices = [idx for idx, w in enumerate(c) if is_var_tok(w)]
-        if len(var_indices) == 1:
-            var_spans[c[var_indices[0]]] = c
-        elif len(var_indices) > 1:
-            for k, v_idx in enumerate(var_indices):
-                start = 0 if k == 0 else min(v_idx, var_indices[k - 1] + 2)
-                end = len(c) if k == len(var_indices) - 1 else min(var_indices[k + 1], v_idx + 3)
-                var_spans[c[v_idx]] = c[start:end]
+        if not var_indices:
+            if not seen_any_var:
+                intro_cues |= (set(c) & (ADD_CUES | SUB_CUES))
+        else:
+            seen_any_var = True
+            if len(var_indices) == 1:
+                var_spans[c[var_indices[0]]] = c
+            else:
+                for k, v_idx in enumerate(var_indices):
+                    start = 0 if k == 0 else min(v_idx, var_indices[k - 1] + 2)
+                    end = len(c) if k == len(var_indices) - 1 else min(var_indices[k + 1], v_idx + 3)
+                    var_spans[c[v_idx]] = c[start:end]
+
+    if (intro_cues & {"combined", "together", "altogether", "total", "sum"}) and "var2" in var_spans:
+        var_spans["var2"] = list(var_spans["var2"]) + list(intro_cues & {"combined", "together", "altogether", "total", "sum"})
+
     return clauses, var_spans
 
 
@@ -480,25 +725,7 @@ def analyze_question_structure(text):
     q_words = clean_words[q_idx:]
     q_words_set = set(q_words)
 
-    # 句読点や前置詞・レート語(on, each等)を越えない厳密な単位抽出
-    var_strict_units = {}
-    for idx_w, w in enumerate(words):
-        if is_var_tok(w):
-            u_list = []
-            for offset in range(1, 5):
-                if idx_w + offset >= len(words):
-                    break
-                cand = words[idx_w + offset]
-                if cand in UNIT_STOP_WORDS or is_var_tok(cand):
-                    break
-                if cand not in NON_UNIT_WORDS:
-                    u_list.append(cand)
-                if len(u_list) >= 2:
-                    break
-            var_strict_units[w] = (
-                u_list[0] if len(u_list) >= 1 else "NONE",
-                u_list[1] if len(u_list) >= 2 else "NONE",
-            )
+    var_strict_units, _ = extract_strict_units_with_ellipsis(raw_tokens)
 
     var_units, var_time_buckets = {}, {}
     for i, w in enumerate(clean_words):
@@ -509,22 +736,39 @@ def analyze_question_structure(text):
     each_nouns = set()
     for i, w in enumerate(clean_words):
         if w in ("each", "every", "per", "apiece"):
-            if i + 1 < n_words and not is_var_tok(clean_words[i + 1]):
-                each_nouns.add(clean_words[i + 1])
+            for off in range(1, 4):
+                if i + off < n_words and not is_var_tok(clean_words[i + off]):
+                    cand_e = clean_words[i + off]
+                    if cand_e in UNIT_STOP_WORDS:
+                        break
+                    if cand_e not in NON_UNIT_WORDS:
+                        each_nouns.add(cand_e)
             if i - 1 >= 0 and not is_var_tok(clean_words[i - 1]):
                 each_nouns.add(clean_words[i - 1])
+
+    q_rate_nouns = set()
+    for i, w in enumerate(q_words):
+        if w in ("each", "every", "per", "apiece", "one"):
+            if i + 1 < len(q_words) and not is_var_tok(q_words[i + 1]):
+                q_rate_nouns.add(q_words[i + 1])
+        elif w == "daily":
+            q_rate_nouns.add("day")
 
     asks_money = bool(q_words_set & {"pay", "spend", "cost", "price", "money", "dollar", "cent", "change", "earn", "save"}) or (
         "how" in q_words and "much" in q_words and not (q_words_set & WEIGHT_UNITS)
     )
-    asks_time = ("how" in q_words and "long" in q_words) or bool(q_words_set & TIME_UNITS)
-    asks_dist = ("how" in q_words and "far" in q_words) or bool(q_words_set & DIST_UNITS)
-    asks_weight = ("how" in q_words and "heavy" in q_words) or "weigh" in q_words_set or bool(q_words_set & WEIGHT_UNITS)
+    asks_time = (
+        ("how" in q_words and "long" in q_words)
+        or bool((q_words_set - q_rate_nouns) & TIME_UNITS)
+    ) and not asks_money
+    asks_dist = ("how" in q_words and "far" in q_words) or bool((q_words_set - q_rate_nouns) & DIST_UNITS)
+    asks_weight = ("how" in q_words and "heavy" in q_words) or "weigh" in q_words_set or bool((q_words_set - q_rate_nouns) & WEIGHT_UNITS)
 
     q_var_units = {q_words[i + 1] for i, w in enumerate(q_words) if is_var_tok(w) and i + 1 < len(q_words)}
     q_target_nouns = {
         w for i, w in enumerate(q_words)
-        if w not in NON_UNIT_WORDS and not is_var_tok(w) and not (w in q_var_units and "many" not in q_words[:i])
+        if w not in NON_UNIT_WORDS and not is_var_tok(w) and w not in q_rate_nouns
+        and not (w in q_var_units and "many" not in q_words[:i])
     }
 
     double_match_vars = {
@@ -698,10 +942,6 @@ def time_tokens_to_feature_dict(time_tokens):
 # 5. ビームサーチ（スタック型段階探索）用の状態・単位代数・特徴抽出
 # ==========================================
 def extract_rich_question_info(text, values=None):
-    """
-    各変数ノード(VarNode)の単位・レート分母(each/per)・減算/加算ヒント語・節情報と、
-    質問文が求めるターゲット単位を抽出する。
-    """
     text_low = re.sub(r"[\u2018\u2019`]", "'", text.lower())
     text_low = re.sub(r"'s\b", "", text_low)
     text_low = re.sub(r"\$\s*(var\d+)", r"\1 dollar ", text_low)
@@ -738,38 +978,33 @@ def extract_rich_question_info(text, values=None):
                 var_clause_id[w] = c_id
                 var_full_clause[w] = c
 
-    var_strict_units = {}
-    for i, w in enumerate(words):
-        if is_var_tok(w):
-            u_list = []
-            for offset in range(1, 5):
-                if i + offset >= len(words):
-                    break
-                cand = words[i + offset]
-                if cand in UNIT_STOP_WORDS or is_var_tok(cand):
-                    break
-                if cand not in NON_UNIT_WORDS:
-                    u_list.append(cand)
-                if len(u_list) >= 2:
-                    break
-            var_strict_units[w] = (
-                u_list[0] if len(u_list) >= 1 else "NONE",
-                u_list[1] if len(u_list) >= 2 else "NONE",
-            )
+    var_strict_units, var_sent_id = extract_strict_units_with_ellipsis(raw_tokens)
 
-    q_asks_rate = bool(q_words_set & {"each", "every", "per", "apiece", "one"})
+    q_asks_rate = bool(q_words_set & {"each", "every", "per", "apiece", "one", "daily"})
     q_rate_nouns = set()
     for i, w in enumerate(q_words):
         if w in ("each", "every", "per", "apiece", "one"):
-            if i + 1 < len(q_words) and not is_var_tok(q_words[i + 1]):
-                q_rate_nouns.add(q_words[i + 1])
+            for off in range(1, 4):
+                if i + off < len(q_words) and not is_var_tok(q_words[i + off]):
+                    if q_words[i + off] in UNIT_STOP_WORDS:
+                        break
+                    if q_words[i + off] not in NON_UNIT_WORDS:
+                        q_rate_nouns.add(q_words[i + off])
+        elif w == "daily":
+            q_rate_nouns.add("day")
+
+    if "day" in q_rate_nouns:
+        q_rate_nouns.update({"morn", "afternoon", "night"})
 
     asks_money = bool(q_words_set & {"pay", "spend", "cost", "price", "money", "dollar", "cent", "change", "earn", "save"}) or (
         "how" in q_words and "much" in q_words and not (q_words_set & WEIGHT_UNITS)
     )
-    asks_time = ("how" in q_words and "long" in q_words) or bool(q_words_set & TIME_UNITS)
-    asks_dist = ("how" in q_words and "far" in q_words) or bool(q_words_set & DIST_UNITS)
-    asks_weight = ("how" in q_words and "heavy" in q_words) or "weigh" in q_words_set or bool(q_words_set & WEIGHT_UNITS)
+    asks_time = (
+        ("how" in q_words and "long" in q_words)
+        or bool((q_words_set - q_rate_nouns) & TIME_UNITS)
+    ) and not asks_money
+    asks_dist = ("how" in q_words and "far" in q_words) or bool((q_words_set - q_rate_nouns) & DIST_UNITS)
+    asks_weight = ("how" in q_words and "heavy" in q_words) or "weigh" in q_words_set or bool((q_words_set - q_rate_nouns) & WEIGHT_UNITS)
 
     q_var_units = {q_words[i + 1] for i, w in enumerate(q_words) if is_var_tok(w) and i + 1 < len(q_words)}
     q_target_nouns = {
@@ -781,8 +1016,13 @@ def extract_rich_question_info(text, values=None):
     each_nouns = set()
     for i, w in enumerate(clean_words):
         if w in ("each", "every", "per", "apiece"):
-            if i + 1 < n_words and not is_var_tok(clean_words[i + 1]):
-                each_nouns.add(clean_words[i + 1])
+            for off in range(1, 4):
+                if i + off < n_words and not is_var_tok(clean_words[i + off]):
+                    cand_e = clean_words[i + off]
+                    if cand_e in UNIT_STOP_WORDS:
+                        break
+                    if cand_e not in NON_UNIT_WORDS:
+                        each_nouns.add(cand_e)
             if i - 1 >= 0 and not is_var_tok(clean_words[i - 1]):
                 each_nouns.add(clean_words[i - 1])
 
@@ -803,13 +1043,13 @@ def extract_rich_question_info(text, values=None):
             for seq in (span, full_c):
                 for idx_s, sw in enumerate(seq):
                     if sw in ("each", "every", "per", "apiece"):
-                        if idx_s + 1 < len(seq):
-                            cand_r = seq[idx_s + 1]
-                            if (
-                                not is_var_tok(cand_r)
-                                and cand_r not in NON_UNIT_WORDS
-                                and cand_r not in units
-                            ):
+                        for off in range(1, 4):
+                            if idx_s + off >= len(seq):
+                                break
+                            cand_r = seq[idx_s + off]
+                            if cand_r in UNIT_STOP_WORDS or is_var_tok(cand_r):
+                                break
+                            if cand_r not in NON_UNIT_WORDS and cand_r not in units:
                                 rate_units.add(cand_r)
                         if idx_s - 1 >= 0 and sw in ("each", "apiece"):
                             cand_r = seq[idx_s - 1]
@@ -820,8 +1060,26 @@ def extract_rich_question_info(text, values=None):
                             ):
                                 rate_units.add(cand_r)
 
+            if q_rate_nouns and (rate_units & q_rate_nouns):
+                rate_units = rate_units - q_rate_nouns
+
             prev1 = clean_words[i - 1] if i > 0 and clean_words[i - 1] in MATH_CORE_WORDS else "OBJ"
             prev2 = clean_words[i - 2] if i > 1 and clean_words[i - 2] in MATH_CORE_WORDS else "OBJ"
+
+            cues_sub = set(span_set & SUB_CUES)
+            cues_add = set(span_set & ADD_CUES)
+            if "take" in cues_sub and ("take" in q_words_set or bool(q_words_set & {"total", "altogether", "combined", "all"})):
+                cues_sub.discard("take")
+
+            if (units & MONEY_UNITS) and rate_units and asks_money and ("sell" in cues_sub):
+                cues_sub.discard("sell")
+
+            if prev1 == "with" and "bake" in cues_add:
+                cues_add.discard("bake")
+                cues_sub.add("use")
+
+            is_frac_div = prev1 in ("half", "third", "quarter", "fourth")
+            is_mult_scale = ("time" in units) or (i + 1 < n_words and clean_words[i + 1] == "time")
 
             is_q_match = bool(
                 (units & q_target_nouns)
@@ -839,27 +1097,51 @@ def extract_rich_question_info(text, values=None):
                 "u2": u2,
                 "units": units,
                 "rate_units": rate_units,
-                "cues_sub": span_set & SUB_CUES,
-                "cues_add": span_set & ADD_CUES,
-                "has_each": bool((span_set | full_c_set) & {"each", "every", "per", "apiece"}),
+                "cues_sub": cues_sub,
+                "cues_add": cues_add,
+                "has_each": bool(rate_units) or bool((span_set | full_c_set) & {"each", "every", "per", "apiece"}),
                 "role_each_noun": bool(units & each_nouns),
                 "in_q_clause": w in q_words_set,
                 "q_match": is_q_match,
+                "is_frac_div": is_frac_div,
+                "is_mult_scale": is_mult_scale,
                 "prev1": prev1,
                 "prev2": prev2,
                 "pos_idx": i,
                 "var_order": v_num,
                 "clause_id": var_clause_id.get(w, -1),
+                "sent_id": var_sent_id.get(w, -1),
                 "vars_used": frozenset([w]),
                 "depth": 0,
                 "last_op": "INIT",
             }
+
+    remainder_positions = [
+        idx for idx, w in enumerate(clean_words)
+        if w in ("remainder", "remaining", "rest") and idx < q_idx
+    ]
+    if remainder_positions:
+        rem_pos = remainder_positions[0]
+        early_vars = [
+            vn for vn in sorted(var_nodes.values(), key=lambda x: x["var_order"])
+            if vn["pos_idx"] < rem_pos
+        ]
+        if len(early_vars) >= 2:
+            base_u = early_vars[0]["units"]
+            for ev in early_vars[1:]:
+                if ev["units"] & base_u:
+                    ev["cues_sub"].add("leave")
+                    ev["cues_add"].clear()
 
     q_abstract = [
         clean_words[idx]
         for idx in range(q_idx, n_words)
         if is_var_tok(clean_words[idx]) or clean_words[idx] in MATH_CORE_WORDS
     ]
+
+    wants_combine_all = bool(
+        set(clean_words) & {"total", "altogether", "together", "combined", "all", "both"}
+    )
 
     q_ctx = {
         "clean_words": clean_words,
@@ -874,16 +1156,13 @@ def extract_rich_question_info(text, values=None):
         "asks_dist": asks_dist,
         "asks_weight": asks_weight,
         "each_nouns": each_nouns,
+        "wants_combine_all": wants_combine_all,
         "num_vars": len(var_nodes),
     }
     return var_nodes, q_ctx
 
 
 def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
-    """
-    2つの変数ノード (nodeL, nodeR) に1手分の演算 action を適用し、
-    新しい合成ノード (new_node) と1手分の次元解析・約分ボーナス (step_dim_bonus) を返す。
-    """
     if action == "ADD":
         op_L, op_R, op_sym = nodeL, nodeR, "+"
     elif action == "SUB_LR":
@@ -936,23 +1215,40 @@ def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
     ]
 
     if op_sym in ("+", "-"):
+        if op_L.get("is_frac_div") or op_R.get("is_frac_div") or op_L.get("is_mult_scale") or op_R.get("is_mult_scale"):
+            return None
         new_units = uL | uR
         new_rate_units = rL | rR
         if same_unit:
             step_dim_bonus += 1.5
             if rL and rR and (rL & rR):
-                step_dim_bonus += 1.8
+                step_dim_bonus += 2.2
             elif bool(rL) != bool(rR) and (op_L["last_op"] == "*" or op_R["last_op"] == "*"):
-                step_dim_bonus -= 3.5
+                step_dim_bonus -= 4.0
 
             if op_sym == "-":
                 if op_R["cues_sub"] and not op_L["cues_sub"]:
-                    step_dim_bonus += 1.6
+                    step_dim_bonus += 2.4
                 elif op_L["cues_sub"] and not op_R["cues_sub"] and op_L["depth"] == 0:
-                    step_dim_bonus -= 1.5
+                    step_dim_bonus -= 2.5
+                elif not op_L["cues_sub"] and not op_R["cues_sub"]:
+                    if any(bool(n["cues_sub"]) and bool(n["units"] & new_units) for n in other_nodes):
+                        step_dim_bonus -= 2.2
+                    elif q_ctx.get("wants_combine_all"):
+                        step_dim_bonus -= 1.8
             else:
                 if "discount" in (op_L["cues_sub"] | op_R["cues_sub"]):
-                    step_dim_bonus -= 2.2
+                    step_dim_bonus -= 3.0
+                elif op_R["cues_sub"] and not op_R["cues_add"] and "leave" in op_R["cues_sub"]:
+                    step_dim_bonus -= 2.5
+                elif not op_L["cues_sub"] and not op_R["cues_sub"]:
+                    if (
+                        (op_L["cues_add"] or op_R["cues_add"])
+                        or (op_L.get("sent_id", -1) >= 0 and op_L.get("sent_id") == op_R.get("sent_id"))
+                        or any(bool(n["cues_sub"]) and bool(n["units"] & new_units) for n in other_nodes)
+                        or q_ctx.get("wants_combine_all")
+                    ):
+                        step_dim_bonus += 1.6
         elif diff_unit:
             step_dim_bonus -= 4.5
 
@@ -961,27 +1257,45 @@ def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
         cancel_rl = bool(rR & uL)
         if cancel_lr and not cancel_rl:
             new_units = set(uL)
-            new_rate_units = rL - uR
-            step_dim_bonus += 2.0
-            if op_L["depth"] >= 1:
-                step_dim_bonus += 1.5
-            elif "discount" in op_L["cues_sub"]:
+            new_rate_units = set()
+            step_dim_bonus += 2.2
+            if op_L["depth"] >= 1 or op_R["depth"] >= 1:
+                step_dim_bonus += 2.5
+            else:
                 if any(bool(n["units"] & uL) and bool(n["rate_units"] & rL) for n in other_nodes):
-                    step_dim_bonus -= 2.0
+                    if op_L["cues_sub"] or any(bool(n["cues_sub"]) for n in other_nodes if bool(n["units"] & uL)):
+                        step_dim_bonus -= 4.0
+                    else:
+                        step_dim_bonus -= 1.5
+                if any(bool(n["units"] & uR) and bool(n["cues_sub"] | n["cues_add"]) for n in other_nodes):
+                    step_dim_bonus -= 3.5
         elif cancel_rl and not cancel_lr:
             new_units = set(uR)
-            new_rate_units = rR - uL
-            step_dim_bonus += 2.0
-            if op_R["depth"] >= 1:
-                step_dim_bonus += 1.5
-            elif "discount" in op_R["cues_sub"]:
+            new_rate_units = set()
+            step_dim_bonus += 2.2
+            if op_R["depth"] >= 1 or op_L["depth"] >= 1:
+                step_dim_bonus += 2.5
+            else:
                 if any(bool(n["units"] & uR) and bool(n["rate_units"] & rR) for n in other_nodes):
-                    step_dim_bonus -= 2.0
+                    if op_R["cues_sub"] or any(bool(n["cues_sub"]) for n in other_nodes if bool(n["units"] & uR)):
+                        step_dim_bonus -= 4.0
+                    else:
+                        step_dim_bonus -= 1.5
+                if any(bool(n["units"] & uL) and bool(n["cues_sub"] | n["cues_add"]) for n in other_nodes):
+                    step_dim_bonus -= 3.5
+        elif op_R.get("is_mult_scale") and not op_L.get("is_mult_scale"):
+            new_units = set(uL)
+            new_rate_units = set(rL)
+            step_dim_bonus += 2.2
+        elif op_L.get("is_mult_scale") and not op_R.get("is_mult_scale"):
+            new_units = set(uR)
+            new_rate_units = set(rR)
+            step_dim_bonus += 2.2
         else:
             new_units = uL if op_L["q_match"] else (uR if op_R["q_match"] else (uL | uR))
             new_rate_units = set()
             if same_unit and uL:
-                step_dim_bonus -= 1.8
+                step_dim_bonus -= 2.0
 
     else:  # "/"
         if abs(new_val - round(new_val)) > 1e-6:
@@ -989,7 +1303,11 @@ def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
                 step_dim_bonus -= 2.5
             else:
                 step_dim_bonus -= 0.5
-        if same_unit and rR:
+        if op_R.get("is_frac_div") and not op_L.get("is_frac_div"):
+            new_units = set(uL)
+            new_rate_units = set(rL)
+            step_dim_bonus += 2.6
+        elif same_unit and rR:
             new_units = set(rR)
             new_rate_units = set()
             step_dim_bonus += 1.5
@@ -1004,6 +1322,8 @@ def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
 
     raw_expr = f"({op_L['expr']} {op_sym} {op_R['expr']})"
     norm_expr = normalize_equation(raw_expr, prefix=False)
+    if is_self_canceling_or_invalid_duplicate(norm_expr):
+        return None
 
     is_q_match = bool(
         (new_units & q_ctx["q_target_nouns"])
@@ -1027,11 +1347,14 @@ def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
         "role_each_noun": False,
         "in_q_clause": op_L["in_q_clause"] or op_R["in_q_clause"],
         "q_match": is_q_match,
+        "is_frac_div": False,
+        "is_mult_scale": False,
         "prev1": op_L["prev1"],
         "prev2": op_L["prev2"],
         "pos_idx": min(op_L["pos_idx"], op_R["pos_idx"]),
-        "var_order": min(op_L["var_order"], op_R["var_order"]),
+        "var_order": max(op_L["var_order"], op_R["var_order"]),
         "clause_id": op_L["clause_id"],
+        "sent_id": op_L.get("sent_id", -1),
         "vars_used": op_L["vars_used"] | op_R["vars_used"],
         "depth": max(op_L["depth"], op_R["depth"]) + 1,
         "last_op": op_sym,
@@ -1040,9 +1363,6 @@ def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
 
 
 def extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1):
-    """
-    盤面上の2つのノード (nodeL, nodeR) に対して、1手読みステップ評価器の特徴辞書を抽出する。
-    """
     feat = {}
     uL, uR = nodeL["units"], nodeR["units"]
     rL, rR = nodeL["rate_units"], nodeR["rate_units"]
@@ -1054,8 +1374,8 @@ def extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1):
     )
     diff_unit = bool(uL and uR and not same_unit)
 
-    feat[f"S{min(step_num, 2)}::BIAS"] = 1.0
-    feat[f"NVARS::{min(q_ctx['num_vars'], 4)}"] = 1.0
+    feat[f"S{min(step_num, 3)}::BIAS"] = 1.0
+    feat[f"NVARS::{min(q_ctx['num_vars'], 5)}"] = 1.0
 
     if same_unit:
         feat["PAIR::SAME_UNIT"] = 1.0
@@ -1072,15 +1392,11 @@ def extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1):
     if rR & uL:
         feat["PAIR::CANCEL_RL"] = 1.0
 
-    if nodeR["var_order"] == nodeL["var_order"] + 1:
-        feat["PAIR::ADJACENT"] = 1.0
-    else:
-        feat["PAIR::NON_ADJACENT"] = 1.0
-
     if nodeL["clause_id"] == nodeR["clause_id"] and nodeL["clause_id"] >= 0:
         feat["PAIR::SAME_CLAUSE"] = 1.0
+    if nodeL.get("sent_id", -1) == nodeR.get("sent_id", -1) and nodeL.get("sent_id", -1) >= 0:
+        feat["PAIR::SAME_SENT"] = 1.0
 
-    # L側ノードの特徴
     feat[f"L::LAST_OP_{nodeL['last_op']}"] = 1.0
     feat[f"L::PREV1_{nodeL['prev1']}"] = 1.0
     feat[f"L::PREV2_{nodeL['prev2']}_{nodeL['prev1']}"] = 1.0
@@ -1103,7 +1419,6 @@ def extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1):
         for ah in nodeL["cues_add"]:
             feat[f"L::ADD_{ah}"] = 1.0
 
-    # R側ノードの特徴
     feat[f"R::LAST_OP_{nodeR['last_op']}"] = 1.0
     feat[f"R::PREV1_{nodeR['prev1']}"] = 1.0
     feat[f"R::PREV2_{nodeR['prev2']}_{nodeR['prev1']}"] = 1.0
@@ -1111,6 +1426,10 @@ def extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1):
         feat["R::HAS_EACH"] = 1.0
     if nodeR["role_each_noun"]:
         feat["R::ROLE_EACH_NOUN"] = 1.0
+    if nodeR.get("is_frac_div"):
+        feat["R::IS_FRAC_DIV"] = 1.0
+    if nodeR.get("is_mult_scale"):
+        feat["R::IS_MULT_SCALE"] = 1.0
     if nodeR["q_match"]:
         feat["R::Q_MATCH"] = 1.0
     else:
@@ -1126,12 +1445,11 @@ def extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1):
         for ah in nodeR["cues_add"]:
             feat[f"R::ADD_{ah}"] = 1.0
 
-    # LとRの複合条件特徴
     if same_unit and nodeR["cues_sub"] and not nodeL["cues_sub"]:
         feat["COMBO::SAME_U_R_SUB"] = 1.0
     if same_unit and nodeL["cues_sub"] and not nodeR["cues_sub"]:
         feat["COMBO::SAME_U_L_SUB"] = 1.0
-    if same_unit and nodeR["cues_add"]:
+    if same_unit and (nodeR["cues_add"] or (nodeL.get("sent_id", -1) == nodeR.get("sent_id", -1) and not nodeL["cues_sub"] and not nodeR["cues_sub"])):
         feat["COMBO::SAME_U_R_ADD"] = 1.0
     if (rL & uR) and not nodeL["cues_sub"]:
         feat["COMBO::CLEAN_RATE_MUL_LR"] = 1.0
@@ -1171,8 +1489,8 @@ def permute_question_vars(question, eq, values, mapping):
 
 def extract_unified_step_samples(question, eq, values):
     """
-    1つの問題 (question, eq, values) からASTをボトムアップに分解し、
-    1手目・2手目の (特徴辞書, 正解アクションラベル) リストを生成する。
+    任意の深さのAST (2変数〜6変数以上の多段式) をボトムアップに1手ずつシミュレートし、
+    各ステップの盤面における正例アクションと負例(NONE)ペアをすべて抽出する。
     """
     try:
         steps = decompose_ast_to_steps(eq)
@@ -1186,87 +1504,89 @@ def extract_unified_step_samples(question, eq, values):
         return []
 
     samples = []
-    leaf_actions = {}
-    first_step_node = None
-    first_step_pair = None
+    board = dict(var_nodes)
 
-    for l_expr, op_s, r_expr, _res_expr in steps:
-        if l_expr in var_nodes and r_expr in var_nodes and l_expr != r_expr:
-            n1, n2 = var_nodes[l_expr], var_nodes[r_expr]
-            if n1["var_order"] < n2["var_order"]:
-                nodeL, nodeR = n1, n2
-                is_lr = True
-            else:
-                nodeL, nodeR = n2, n1
-                is_lr = False
+    for step_idx, (l_expr, op_s, r_expr, _res_expr) in enumerate(steps, start=1):
+        if l_expr not in board or r_expr not in board or l_expr == r_expr:
+            break
 
-            if op_s == "+":
-                act = "ADD"
-            elif op_s == "-":
-                act = "SUB_LR" if is_lr else "SUB_RL"
-            elif op_s == "*":
-                act = "MUL"
-            elif op_s == "/":
-                act = "DIV_LR" if is_lr else "DIV_RL"
-            else:
-                continue
+        n1, n2 = board[l_expr], board[r_expr]
+        if step_idx >= 2 and n2["depth"] > n1["depth"]:
+            target_L, target_R = n2, n1
+            is_lr = False
+        elif step_idx >= 2 and n1["depth"] > n2["depth"]:
+            target_L, target_R = n1, n2
+            is_lr = True
+        elif n1["var_order"] <= n2["var_order"]:
+            target_L, target_R = n1, n2
+            is_lr = True
+        else:
+            target_L, target_R = n2, n1
+            is_lr = False
 
-            pair_key = (nodeL["name"], nodeR["name"])
-            leaf_actions[pair_key] = act
-            if first_step_node is None:
-                res_out = apply_step_operation(nodeL, nodeR, act, list(var_nodes.values()), q_ctx)
-                if res_out is not None:
-                    first_step_node, _ = res_out
-                    first_step_pair = pair_key
+        if op_s == "+":
+            true_act = "ADD"
+        elif op_s == "-":
+            true_act = "SUB_LR" if is_lr else "SUB_RL"
+        elif op_s == "*":
+            true_act = "MUL"
+        elif op_s == "/":
+            true_act = "DIV_LR" if is_lr else "DIV_RL"
+        else:
+            break
 
-    sorted_vars = sorted(var_nodes.keys(), key=lambda v: var_nodes[v]["var_order"])
-    for i in range(len(sorted_vars)):
-        for j in range(i + 1, len(sorted_vars)):
-            v_a, v_b = sorted_vars[i], sorted_vars[j]
-            nodeL, nodeR = var_nodes[v_a], var_nodes[v_b]
-            f_dict = extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1)
-            label = leaf_actions.get((v_a, v_b), "NONE")
-            samples.append((f_dict, label))
+        target_pair = (target_L["expr"], target_R["expr"])
+        board_list = sorted(board.values(), key=lambda x: (-x["depth"], x["var_order"]))
 
-    if first_step_node is not None and len(sorted_vars) >= 3:
-        rem_vars = [v for v in sorted_vars if v not in first_step_pair]
-        if len(steps) == 1:
-            for v_rem in rem_vars:
-                f_dict = extract_step_pair_features(first_step_node, var_nodes[v_rem], q_ctx, step_num=2)
-                samples.append((f_dict, "NONE"))
-        elif len(steps) >= 2:
-            l2_expr, op2_s, r2_expr, _ = steps[1]
-            for v_rem in rem_vars:
-                nodeC = var_nodes[v_rem]
-                f_dict = extract_step_pair_features(first_step_node, nodeC, q_ctx, step_num=2)
-                if l2_expr == v_rem or r2_expr == v_rem:
-                    is_res_left = (r2_expr == v_rem)
-                    if op2_s == "+":
-                        act2 = "ADD"
-                    elif op2_s == "-":
-                        act2 = "SUB_LR" if is_res_left else "SUB_RL"
-                    elif op2_s == "*":
-                        act2 = "MUL"
-                    elif op2_s == "/":
-                        act2 = "DIV_LR" if is_res_left else "DIV_RL"
-                    else:
-                        act2 = "NONE"
-                    samples.append((f_dict, act2))
+        for i in range(len(board_list)):
+            for j in range(i + 1, len(board_list)):
+                b1, b2 = board_list[i], board_list[j]
+                if step_idx >= 2 and b2["depth"] > b1["depth"]:
+                    cand_L, cand_R = b2, b1
+                elif step_idx >= 2 and b1["depth"] > b2["depth"]:
+                    cand_L, cand_R = b1, b2
+                elif b1["var_order"] <= b2["var_order"]:
+                    cand_L, cand_R = b1, b2
                 else:
-                    samples.append((f_dict, "NONE"))
+                    cand_L, cand_R = b2, b1
+
+                f_dict = extract_step_pair_features(cand_L, cand_R, q_ctx, step_num=step_idx)
+                lbl = true_act if (cand_L["expr"], cand_R["expr"]) == target_pair else "NONE"
+                samples.append((f_dict, lbl))
+
+        res_out = apply_step_operation(target_L, target_R, true_act, board_list, q_ctx)
+        if res_out is None:
+            break
+        new_node, _ = res_out
+        later_exprs = {x for st in steps[step_idx:] for x in (st[0], st[2])}
+        if l_expr not in later_exprs:
+            board.pop(l_expr, None)
+        if r_expr not in later_exprs:
+            board.pop(r_expr, None)
+        board[new_node["expr"]] = new_node
 
     return samples
 
 
 # ==========================================
-# 6. AST評価 ＆ 次元解析・非負チェック
+# 6. AST評価 ＆ 次元解析・非負・同単位未使用ペナルティチェック
 # ==========================================
 def evaluate_with_eval(expression, values):
     variables = {f"var{i + 1}": v for i, v in enumerate(values)}
     return float(eval(expression, {"__builtins__": {}}, variables))
 
 
-def check_ast_and_dimensional_bonus(expression, values, same_unit_pairs, diff_unit_pairs, q_match_vars):
+def check_ast_and_dimensional_bonus(
+    expression,
+    values,
+    same_unit_pairs,
+    diff_unit_pairs,
+    q_match_vars,
+    var_nodes=None,
+):
+    if is_self_canceling_or_invalid_duplicate(expression, num_vars_in_question=len(values)):
+        return False, -1e9, None
+
     try:
         tree = ast.parse(expression, mode="eval")
     except Exception:
@@ -1297,10 +1617,29 @@ def check_ast_and_dimensional_bonus(expression, values, same_unit_pairs, diff_un
                 return 0.0, None
 
             if isinstance(node.op, (ast.Add, ast.Sub)):
+                if var_nodes is not None:
+                    if (left_u in var_nodes and (var_nodes[left_u].get("is_frac_div") or var_nodes[left_u].get("is_mult_scale"))) or (
+                        right_u in var_nodes and (var_nodes[right_u].get("is_frac_div") or var_nodes[right_u].get("is_mult_scale"))
+                    ):
+                        valid = False
+                        return 0.0, None
                 if left_u is not None and right_u is not None and left_u != right_u:
                     pair = tuple(sorted([left_u, right_u]))
                     if pair in same_unit_pairs:
                         bonus += 1.5
+                        if var_nodes is not None and left_u in var_nodes and right_u in var_nodes:
+                            nL, nR = var_nodes[left_u], var_nodes[right_u]
+                            if isinstance(node.op, ast.Sub):
+                                if nR["cues_sub"] and not nL["cues_sub"]:
+                                    bonus += 1.8
+                                elif nL["cues_sub"] and not nR["cues_sub"]:
+                                    bonus -= 1.8
+                            else:
+                                if "discount" in (nL["cues_sub"] | nR["cues_sub"]):
+                                    bonus -= 2.5
+                                elif not nL["cues_sub"] and not nR["cues_sub"]:
+                                    if nL["cues_add"] or nR["cues_add"] or (nL.get("sent_id", -1) >= 0 and nL.get("sent_id") == nR.get("sent_id")):
+                                        bonus += 1.2
                     elif pair in diff_unit_pairs and len(same_unit_pairs) > 0:
                         bonus -= 4.5
                 rep_u = left_u or right_u
@@ -1312,7 +1651,25 @@ def check_ast_and_dimensional_bonus(expression, values, same_unit_pairs, diff_un
                 return res, rep_u
 
             if isinstance(node.op, ast.Mult):
+                if var_nodes is not None:
+                    r_left = var_nodes[left_u]["rate_units"] if left_u in var_nodes else set()
+                    u_left = var_nodes[left_u]["units"] if left_u in var_nodes else set()
+                    r_right = var_nodes[right_u]["rate_units"] if right_u in var_nodes else set()
+                    u_right = var_nodes[right_u]["units"] if right_u in var_nodes else set()
+                    if (r_left & u_right) and left_u is not None:
+                        bonus += 1.5
+                        return left_val * right_val, left_u
+                    if (r_right & u_left) and right_u is not None:
+                        bonus += 1.5
+                        return left_val * right_val, right_u
+                    if right_u in var_nodes and var_nodes[right_u].get("is_mult_scale") and left_u is not None:
+                        bonus += 1.4
+                        return left_val * right_val, left_u
+                    if left_u in var_nodes and var_nodes[left_u].get("is_mult_scale") and right_u is not None:
+                        bonus += 1.4
+                        return left_val * right_val, right_u
                 return left_val * right_val, None
+
             if isinstance(node.op, ast.Div):
                 if abs(right_val) < 1e-9:
                     valid = False
@@ -1323,6 +1680,9 @@ def check_ast_and_dimensional_bonus(expression, values, same_unit_pairs, diff_un
                         bonus -= 2.5
                     else:
                         bonus -= 0.5
+                if var_nodes is not None and right_u in var_nodes and var_nodes[right_u].get("is_frac_div"):
+                    bonus += 1.8
+                    return res, left_u
                 return res, None
 
         valid = False
@@ -1337,6 +1697,27 @@ def check_ast_and_dimensional_bonus(expression, values, same_unit_pairs, diff_un
         for v in q_match_vars:
             bonus += 0.6 if v in used_vars else -0.8
 
+    for v_a, v_b in same_unit_pairs:
+        if (v_a in used_vars) != (v_b in used_vars):
+            v_used = v_a if v_a in used_vars else v_b
+            v_unused = v_b if v_a in used_vars else v_a
+            if var_nodes is not None and v_used in var_nodes and v_unused in var_nodes:
+                nu, nun = var_nodes[v_used], var_nodes[v_unused]
+                if nu["rate_units"] and nun["rate_units"] and (nu["rate_units"] & nun["rate_units"]):
+                    bonus -= 5.5
+                elif "discount" in (nu["cues_sub"] | nun["cues_sub"]):
+                    bonus -= 4.5
+                elif bool(nun["cues_sub"] | nun["cues_add"]):
+                    bonus -= 3.8
+                elif v_used in q_match_vars and v_unused in q_match_vars:
+                    if nu.get("sent_id", -1) >= 0 and nu.get("sent_id") == nun.get("sent_id"):
+                        bonus -= 3.5
+                elif v_unused in q_match_vars and any(
+                    (v_used, v_other) in diff_unit_pairs or (v_other, v_used) in diff_unit_pairs
+                    for v_other in used_vars if v_other != v_used
+                ):
+                    bonus -= 2.0
+
     return True, bonus, final_val
 
 
@@ -1344,13 +1725,6 @@ def check_ast_and_dimensional_bonus(expression, values, same_unit_pairs, diff_un
 # 7. ビームサーチ（スタック型段階探索）＋ HalfKP型NNUE ハイブリッドモデル
 # ==========================================
 class MathNNUEModel:
-    """
-    スタック型ビームサーチ（段階探索）＋ HalfKP型NNUEハイブリッド評価関数:
-      1. 1手読みステップ評価器 (step_w, step_b) と単位・レート約分代数により、
-         ビーム幅 BEAM_WIDTH で盤面上の変数を1手ずつスタック的に縮約・探索する。
-      2. 大局的な HalfKP型NNUE + BoW線形ベースラインで数式全体の整合性を評価し、
-         ビームサーチの段階探索スコアと統合して最終的な数式・計算結果を出力する。
-    """
     def __init__(self, h1=HIDDEN1_SIZE, h2=HIDDEN2_SIZE, beam_width=BEAM_WIDTH):
         self.h1 = h1
         self.h2 = h2
@@ -1362,7 +1736,6 @@ class MathNNUEModel:
         self.num_formulas = 0
         self.num_words = 0
 
-        # HalfKP型NNUE テーブル
         self.weight1 = None
         self.b1 = None
         self.W2 = None
@@ -1371,72 +1744,125 @@ class MathNNUEModel:
         self.base_w = None
         self.base_b = None
 
-        # ビームサーチ用 1手読みステップ評価器テーブル
         self.step_actions = list(STEP_ACTIONS)
         self.step_act_to_id = {a: i for i, a in enumerate(self.step_actions)}
         self.step_words = []
         self.step_word_to_id = {}
-        self.step_w = None    # shape: [A_step, W_step]
-        self.step_b = None    # shape: [A_step]
+        self.step_w = None
+        self.step_b = None
 
         self.is_loaded = False
 
     def fit_and_save(self, dataset, weights_path=WEIGHTS_FILE):
-        X_dicts, y_labels = [], []
+        raw_X_dicts, raw_y_labels = [], []
         step_X_dicts, step_y_labels = [], []
 
-        for question, eq, values, _ans in dataset:
-            base_time_tokens, var_tb = tokenize_by_time(question)
-            X_dicts.append(time_tokens_to_feature_dict(base_time_tokens))
-            y_labels.append(eq)
+        for idx_row, item in enumerate(dataset):
+            question, eq, values, _ans = item[:4]
+            source_tag = item[4] if len(item) >= 5 else "MAWPS"
 
+            if is_self_canceling_or_invalid_duplicate(eq, num_vars_in_question=len(values)):
+                continue
+
+            # 1. 7クラス1手読み評価器 (step_clf) は MAWPS と GSM8K の全問題からステップを学習 (メモリ消費極小)
             for s_feat, s_lbl in extract_unified_step_samples(question, eq, values):
                 step_X_dicts.append(s_feat)
                 step_y_labels.append(s_lbl)
 
-            if len(values) == 2 and max_variable_index(eq) == 2:
-                sw_map = {"var1": "var2", "var2": "var1"}
-                sw_tokens, sw_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, sw_map)
-                X_dicts.append(time_tokens_to_feature_dict(sw_tokens))
-                y_labels.append(sw_eq)
+            base_time_tokens, var_tb = tokenize_by_time(question)
+            raw_X_dicts.append(time_tokens_to_feature_dict(base_time_tokens))
+            raw_y_labels.append((eq, source_tag))
 
-                sw_q, sw_eq2, sw_vals = permute_question_vars(question, eq, values, sw_map)
-                for s_feat, s_lbl in extract_unified_step_samples(sw_q, sw_eq2, sw_vals):
-                    step_X_dicts.append(s_feat)
-                    step_y_labels.append(s_lbl)
+            # 変数の入れ替え水増し (3! = 6倍) は MAWPS/ASDiv に対してのみ実行し、GSM8K長文でのクラス爆発を防ぐ
+            if source_tag == "MAWPS":
+                if len(values) == 2 and max_variable_index(eq) == 2:
+                    sw_map = {"var1": "var2", "var2": "var1"}
+                    sw_tokens, sw_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, sw_map)
+                    raw_X_dicts.append(time_tokens_to_feature_dict(sw_tokens))
+                    raw_y_labels.append((sw_eq, source_tag))
 
-                for mapping in (
-                    {"var1": "var1", "var2": "var3"},
-                    {"var1": "var2", "var2": "var3"},
-                    {"var1": "var3", "var2": "var1"},
-                    {"var1": "var3", "var2": "var2"},
-                ):
-                    sh_tokens, sh_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, mapping)
-                    X_dicts.append(time_tokens_to_feature_dict(sh_tokens))
-                    y_labels.append(sh_eq)
-
-            elif len(values) == 3 and max_variable_index(eq) == 3:
-                vars_3 = ("var1", "var2", "var3")
-                for p in permutations(vars_3):
-                    if p == vars_3:
-                        continue
-                    p_map = dict(zip(vars_3, p))
-                    perm_tokens, perm_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, p_map)
-                    X_dicts.append(time_tokens_to_feature_dict(perm_tokens))
-                    y_labels.append(perm_eq)
-
-                    p_q, p_eq2, p_vals = permute_question_vars(question, eq, values, p_map)
-                    for s_feat, s_lbl in extract_unified_step_samples(p_q, p_eq2, p_vals):
+                    sw_q, sw_eq2, sw_vals = permute_question_vars(question, eq, values, sw_map)
+                    for s_feat, s_lbl in extract_unified_step_samples(sw_q, sw_eq2, sw_vals):
                         step_X_dicts.append(s_feat)
                         step_y_labels.append(s_lbl)
 
+                    for mapping in (
+                        {"var1": "var1", "var2": "var3"},
+                        {"var1": "var2", "var2": "var3"},
+                        {"var1": "var3", "var2": "var1"},
+                        {"var1": "var3", "var2": "var2"},
+                    ):
+                        sh_tokens, sh_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, mapping)
+                        raw_X_dicts.append(time_tokens_to_feature_dict(sh_tokens))
+                        raw_y_labels.append((sh_eq, source_tag))
+
+                elif len(values) == 3 and max_variable_index(eq) == 3:
+                    vars_3 = ("var1", "var2", "var3")
+                    for p in permutations(vars_3):
+                        if p == vars_3:
+                            continue
+                        p_map = dict(zip(vars_3, p))
+                        perm_tokens, perm_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, p_map)
+                        raw_X_dicts.append(time_tokens_to_feature_dict(perm_tokens))
+                        raw_y_labels.append((perm_eq, source_tag))
+
+                        p_q, p_eq2, p_vals = permute_question_vars(question, eq, values, p_map)
+                        for s_feat, s_lbl in extract_unified_step_samples(p_q, p_eq2, p_vals):
+                            step_X_dicts.append(s_feat)
+                            step_y_labels.append(s_lbl)
+
         # ---------------------------------------------------------
-        # 1. 大局的BoW + HalfKP型NNUEの学習
+        # 省メモリフィルタリング:
+        # 大局NNUEテンプレート分類器 (clf) のクラス数 F <= MAX_GLOBAL_FORMULAS (280)、
+        # 語彙数 W <= MAX_GLOBAL_WORDS (10000) に絞り、L-BFGS-B の12GBメモリ確保エラーを完全に防止する
+        # （※ 希少な多段式はすべて 7クラスの step_clf + beam_stack_search 側が探索・構築する）
         # ---------------------------------------------------------
+        eq_counts = Counter()
+        mawps_eq_counts = Counter()
+        for eq_str, src_t in raw_y_labels:
+            eq_counts[eq_str] += 1
+            if src_t == "MAWPS":
+                mawps_eq_counts[eq_str] += 1
+
+        # MAWPSの頻出テンプレートと、全体で5回以上出現する汎用テンプレートを優先採用 (最大 MAX_GLOBAL_FORMULAS 個)
+        candidate_eqs = sorted(
+            eq_counts.keys(),
+            key=lambda e: (1 if mawps_eq_counts[e] >= 2 or eq_counts[e] >= 5 else 0, eq_counts[e]),
+            reverse=True,
+        )
+        allowed_eqs = set(candidate_eqs[:MAX_GLOBAL_FORMULAS])
+
+        filtered_X_dicts = []
+        y_labels = []
+        word_df = Counter()
+        for f_dict, (eq_str, _src_t) in zip(raw_X_dicts, raw_y_labels):
+            if eq_str in allowed_eqs:
+                filtered_X_dicts.append(f_dict)
+                y_labels.append(eq_str)
+                for w_key in f_dict.keys():
+                    word_df[w_key] += 1
+
+        del raw_X_dicts, raw_y_labels
+
+        valid_words_sorted = [
+            w for w, cnt in word_df.most_common()
+            if cnt >= MIN_WORD_DF
+        ][:MAX_GLOBAL_WORDS]
+        allowed_words = set(valid_words_sorted)
+
+        X_dicts = [
+            {k: v for k, v in fd.items() if k in allowed_words}
+            for fd in filtered_X_dicts
+        ]
+        del filtered_X_dicts, word_df, allowed_words
+        gc.collect()
+
         vectorizer = DictVectorizer(sparse=True)
         X_csr = vectorizer.fit_transform(X_dicts).astype(np.float32)
+        del X_dicts
+        gc.collect()
 
-        clf = LogisticRegression(C=0.5, max_iter=600)
+        clf = LogisticRegression(C=0.5, max_iter=400)
         clf.fit(X_csr, y_labels)
 
         self.words = [str(w) for w in vectorizer.get_feature_names_out()]
@@ -1456,6 +1882,9 @@ class MathNNUEModel:
         else:
             coef_mat = clf.coef_.astype(np.float32)
             intercept_vec = clf.intercept_.astype(np.float32)
+
+        del clf
+        gc.collect()
 
         word_scales = np.array(
             [1.0 if w.startswith("all::") else TIME_FEATURE_SCALE for w in self.words],
@@ -1477,8 +1906,11 @@ class MathNNUEModel:
             base_logits_copy[np.arange(N), y_ids] = -1e9
             top_neg = np.argpartition(-base_logits_copy, kth=K - 1, axis=1)[:, : K - 1]
             cands[:, 1:] = top_neg
+            del base_logits_copy
 
         base_cand_scores = base_logits[np.arange(N)[:, None], cands]
+        del base_logits, coef_mat
+        gc.collect()
 
         X_bin = X_csr.copy()
         X_bin.data = np.ones_like(X_bin.data)
@@ -1497,6 +1929,9 @@ class MathNNUEModel:
         pair_indices = rep_f_ids * W + rep_word_ids
 
         active_pids, compact_col_indices = np.unique(pair_indices, return_inverse=True)
+        del rep_word_ids, rep_f_ids, pair_indices, X_bin, X_csr
+        gc.collect()
+
         A = len(active_pids)
         M_active_csr = sparse.csr_matrix(
             (np.ones(total_nnz, dtype=np.float32), compact_col_indices.astype(np.int32), M_indptr),
@@ -1508,6 +1943,8 @@ class MathNNUEModel:
         svd = TruncatedSVD(n_components=n_comp, random_state=42)
         U_f = svd.fit_transform(scaled_coef).astype(np.float32)
         V_w = svd.components_.astype(np.float32)
+        del scaled_coef
+        gc.collect()
 
         rng = np.random.default_rng(42)
         act_f = active_pids // W
@@ -1569,11 +2006,14 @@ class MathNNUEModel:
                 v_hat = v_adam[idx_p] / (1.0 - beta2 ** epoch)
                 p -= lr_t * m_hat / (np.sqrt(v_hat) + eps)
 
+        del M_active_csr, m_adam, v_adam, base_cand_scores, cands
+        gc.collect()
+
         self.weight1 = np.zeros((F * W, H1), dtype=np.float32)
         self.weight1[active_pids] = w1_active
 
         # ---------------------------------------------------------
-        # 2. ビームサーチ用 1手読みステップ評価器 (step_clf) の学習
+        # 2. ビームサーチ用 7クラス1手読み評価器 (step_clf) の学習
         # ---------------------------------------------------------
         A_step = len(self.step_actions)
         if step_X_dicts:
@@ -1583,7 +2023,7 @@ class MathNNUEModel:
             self.step_word_to_id = {w: i for i, w in enumerate(self.step_words)}
             W_step = len(self.step_words)
 
-            step_clf = LogisticRegression(C=0.6, max_iter=600)
+            step_clf = LogisticRegression(C=0.6, max_iter=500)
             step_clf.fit(X_step_csr, step_y_labels)
 
             self.step_w = np.zeros((A_step, W_step), dtype=np.float32)
@@ -1601,15 +2041,14 @@ class MathNNUEModel:
                     act_id = self.step_act_to_id[str(cls_name)]
                     self.step_w[act_id] = step_clf.coef_[idx_c].astype(np.float32)
                     self.step_b[act_id] = float(step_clf.intercept_[idx_c])
+            del X_step_csr, step_X_dicts, step_y_labels, step_clf
+            gc.collect()
         else:
             self.step_words = []
             self.step_word_to_id = {}
             self.step_w = np.zeros((A_step, 0), dtype=np.float32)
             self.step_b = np.zeros(A_step, dtype=np.float32)
 
-        # ---------------------------------------------------------
-        # 3. 重みファイルへ保存
-        # ---------------------------------------------------------
         sparse_weight1 = {}
         keep_mask = np.max(np.abs(w1_active), axis=1) > 2e-3
         for idx_a in np.where(keep_mask)[0]:
@@ -1628,7 +2067,7 @@ class MathNNUEModel:
         }
 
         save_data = {
-            "format_version": "beam_stack_nnue_v4",
+            "format_version": "beam_stack_nnue_v8",
             "h1": self.h1,
             "h2": self.h2,
             "beam_width": self.beam_width,
@@ -1653,7 +2092,7 @@ class MathNNUEModel:
         self.is_loaded = True
         print(
             f"ビームサーチ+NNUE重みファイルを保存しました: {weights_path} "
-            f"(数式数: {F}, 語彙数: {W}, ステップ特徴数: {len(self.step_words)})"
+            f"(大局数式数: {F}, 大局語彙数: {W}, ステップ特徴数: {len(self.step_words)})"
         )
 
     def load(self, weights_path=WEIGHTS_FILE):
@@ -1662,7 +2101,7 @@ class MathNNUEModel:
         try:
             with open(weights_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if data.get("format_version") != "beam_stack_nnue_v4":
+            if data.get("format_version") != "beam_stack_nnue_v8":
                 return False
 
             self.h1 = int(data["h1"])
@@ -1709,10 +2148,6 @@ class MathNNUEModel:
             return False
 
     def score_step_pair(self, nodeL, nodeR, q_ctx, step_num=1):
-        """
-        盤面上の2つのノード (nodeL, nodeR) に対し、step_clf を用いて
-        6種類の演算それぞれのステップスコアを計算する。
-        """
         if self.step_w is None or self.step_w.shape[1] == 0:
             return {act: 0.0 for act in ACTIVE_ACTIONS}
 
@@ -1732,7 +2167,7 @@ class MathNNUEModel:
             logits = self.step_b.copy()
 
         none_id = self.step_act_to_id.get("NONE", -1)
-        none_logit = float(logits[none_id]) * 0.35 if none_id >= 0 else 0.0
+        none_logit = float(logits[none_id]) * 0.25 if none_id >= 0 else 0.0
 
         scores = {}
         for act in ACTIVE_ACTIONS:
@@ -1741,27 +2176,22 @@ class MathNNUEModel:
         return scores
 
     def beam_stack_search(self, masked_question, values):
-        """
-        ビーム幅 self.beam_width で1手ずつ変数を結合・縮約するスタック型段階探索を実行し、
-        発見された各数式 expr の (段階探索スコア, 計算値) の辞書を返す。
-        """
         var_nodes, q_ctx = extract_rich_question_info(masked_question, values)
         sorted_vars = sorted(var_nodes.keys(), key=lambda v: var_nodes[v]["var_order"])
         initial_board = [var_nodes[v] for v in sorted_vars]
 
         if len(initial_board) < 2:
-            return {}
+            return {}, var_nodes
 
-        # ビームの状態: (累計スコア, 現在の盤面ノードリスト)
-        beam = [(0.0, initial_board)]
-        discovered_formulas = {}  # expr -> (best_beam_score, final_val)
+        beam = [(0.0, initial_board, False)]
+        discovered_formulas = {}
 
-        max_steps = len(initial_board) - 1
+        max_steps = len(initial_board)
         for step_idx in range(1, max_steps + 1):
             next_candidates = []
             seen_states = set()
 
-            for cum_score, board in beam:
+            for cum_score, board, used_keep_base in beam:
                 m = len(board)
                 if m < 2:
                     continue
@@ -1769,7 +2199,6 @@ class MathNNUEModel:
                 for i in range(m):
                     for j in range(i + 1, m):
                         n1, n2 = board[i], board[j]
-                        # 1手目は出現順、2手目以降は直前に合成された中間ノードを左(L)に配置して評価
                         if step_idx >= 2 and n2["depth"] > n1["depth"]:
                             nodeL, nodeR = n2, n1
                         elif step_idx >= 2 and n1["depth"] > n2["depth"]:
@@ -1789,18 +2218,27 @@ class MathNNUEModel:
                             new_node, dim_bonus = res_out
                             step_score = cum_score + op_scores[act] + dim_bonus
 
-                            # 完成した部分式が質問のターゲット単位に合致し、レート分母が解消されていればゴール加点
                             goal_bonus = 0.0
                             if new_node["q_match"]:
-                                goal_bonus += 0.8
+                                goal_bonus += 1.2
                             if not new_node["rate_units"] and not q_ctx["q_asks_rate"]:
-                                goal_bonus += 0.6
+                                goal_bonus += 0.8
                             elif new_node["rate_units"] and not q_ctx["q_asks_rate"]:
-                                goal_bonus -= 1.2
+                                goal_bonus -= 1.8
 
-                            # 盤面にまだ同じレート単位の変数やターゲット一致変数が未使用で残っている場合の調整
-                            unused_q_match = sum(1 for rn in rem_nodes if rn["q_match"])
-                            final_expr_score = (step_score / step_idx) + goal_bonus - (0.5 * unused_q_match)
+                            unused_penalty = 0.0
+                            for rn in rem_nodes:
+                                if rn["q_match"]:
+                                    unused_penalty += 1.5
+                                if (rn["units"] & new_node["units"]) and (
+                                    rn["rate_units"] or rn["cues_sub"] or rn["cues_add"]
+                                ):
+                                    unused_penalty += 3.8
+                                elif rn["cues_sub"] or rn["cues_add"]:
+                                    unused_penalty += 2.2
+
+                            norm_div = 1.0 + 0.30 * (step_idx - 1)
+                            final_expr_score = (step_score / norm_div) + goal_bonus - unused_penalty
 
                             expr_str = new_node["expr"]
                             if (
@@ -1814,14 +2252,30 @@ class MathNNUEModel:
                                 state_sig = tuple(sorted(n["expr"] for n in new_board))
                                 if state_sig not in seen_states:
                                     seen_states.add(state_sig)
-                                    next_candidates.append((step_score, new_board))
+                                    next_candidates.append((step_score, new_board, used_keep_base))
+
+                            if (
+                                not used_keep_base
+                                and act in ("MUL", "DIV_LR")
+                                and nodeL["depth"] == 0
+                                and (
+                                    nodeR.get("is_frac_div")
+                                    or nodeR.get("is_mult_scale")
+                                    or q_ctx.get("wants_combine_all")
+                                )
+                            ):
+                                keep_board = [nodeL, new_node] + rem_nodes
+                                keep_sig = tuple(sorted(n["expr"] for n in keep_board))
+                                if keep_sig not in seen_states:
+                                    seen_states.add(keep_sig)
+                                    next_candidates.append((step_score - 0.2, keep_board, True))
 
             if not next_candidates:
                 break
             next_candidates.sort(key=lambda x: x[0], reverse=True)
             beam = next_candidates[: self.beam_width]
 
-        return discovered_formulas
+        return discovered_formulas, var_nodes
 
     def predict(self, masked_question, values):
         time_tokens, same_u, diff_u, q_match, _ = analyze_question_structure(masked_question)
@@ -1831,21 +2285,19 @@ class MathNNUEModel:
         active_word_ids = [self.word_to_id[w] for w in feat_dict.keys() if w in self.word_to_id]
         active_w_arr = np.array(active_word_ids, dtype=np.int32)
 
-        # 1. スタック型ビームサーチ（ビーム幅 = self.beam_width）による段階探索を実行
-        beam_results = self.beam_stack_search(masked_question, values)
+        beam_results, var_nodes = self.beam_stack_search(masked_question, values)
 
         best_eq = None
         best_score = float("-inf")
         best_ans = None
         W = self.num_words
 
-        # 2. 学習済み数式候補の大局的NNUEスコア + 次元解析ボーナス + ビーム探索スコアの統合評価
         for f_id, eq in enumerate(self.equations):
             if max_variable_index(eq) > num_vars:
                 continue
 
             ok, ast_bonus, final_val = check_ast_and_dimensional_bonus(
-                eq, values, same_u, diff_u, q_match
+                eq, values, same_u, diff_u, q_match, var_nodes=var_nodes
             )
             if not ok:
                 continue
@@ -1874,16 +2326,15 @@ class MathNNUEModel:
                 best_eq = eq
                 best_ans = final_val
 
-        # 3. 学習データに存在しなかった未知の複合式がビームサーチで高スコア発見された場合のフォールバック評価
-        for expr_str, (b_score, b_val) in beam_results.items():
+        for expr_str, (b_score, _b_val) in beam_results.items():
             if expr_str in self.eq_to_id:
                 continue
             ok, ast_bonus, final_val = check_ast_and_dimensional_bonus(
-                expr_str, values, same_u, diff_u, q_match
+                expr_str, values, same_u, diff_u, q_match, var_nodes=var_nodes
             )
             if not ok:
                 continue
-            novel_total = b_score + ast_bonus
+            novel_total = (1.15 * b_score) + ast_bonus
             if novel_total > best_score:
                 best_score = novel_total
                 best_eq = expr_str
@@ -1893,22 +2344,131 @@ class MathNNUEModel:
 
 
 # ==========================================
-# 8. データ読み込み関数（初回学習・評価用）
+# 8. データ読み込み関数 ＆ GSM8K <<expr=res>> 数式木自動抽出パーサ
 # ==========================================
-def load_train_data(csv_path):
-    dataset = []
-    with open(csv_path, "r", encoding="utf-8", newline="") as file:
-        for row in csv.DictReader(file):
+def parse_gsm8k_solution_to_equation(masked_q, values, sol_text, true_ans):
+    """
+    GSM8Kの解答テキスト内の <<expr=res>> アノテーション列をボトムアップにトレースし、
+    values に対応する var1, var2, ... の正規化数式木を自動復元する。
+    """
+    calcs = re.findall(r"<<([^=<>]+)=([^=<>]+)>>", sol_text)
+    if not calcs or len(values) < 2:
+        return None
+
+    env = [(v, f"var{i + 1}", frozenset([f"var{i + 1}"])) for i, v in enumerate(values)]
+    num_tok_re = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
+
+    for expr_raw, res_raw in calcs:
+        expr_clean = expr_raw.strip().replace(",", "")
+        res_clean = res_raw.strip().replace(",", "")
+        try:
+            res_val = float(res_clean)
+        except Exception:
+            continue
+
+        used_in_step = set()
+        step_vars = set()
+        failed = False
+
+        def repl_num(m):
+            nonlocal failed, step_vars
+            s_num = m.group(0)
             try:
-                question = row["Question"].strip()
-                values = [float(v) for v in row["Numbers"].split()]
-                answer = float(row["Answer"])
-                masked_q = number_to_var(question)
-                eq = normalize_equation(row["Equation"], prefix=True)
-                if math.isclose(evaluate_with_eval(eq, values), answer, abs_tol=1e-5):
-                    dataset.append((masked_q, eq, values, answer))
+                v_num = float(s_num)
             except Exception:
-                continue
+                failed = True
+                return s_num
+
+            for idx_e in range(len(env) - 1, len(values) - 1, -1):
+                if idx_e not in used_in_step and math.isclose(env[idx_e][0], v_num, abs_tol=1e-5):
+                    used_in_step.add(idx_e)
+                    step_vars |= env[idx_e][2]
+                    return env[idx_e][1]
+
+            already_used_vars = set()
+            for idx_e in range(len(values), len(env)):
+                already_used_vars |= env[idx_e][2]
+            for idx_e in range(len(values)):
+                v_name = f"var{idx_e + 1}"
+                if (
+                    idx_e not in used_in_step
+                    and v_name not in already_used_vars
+                    and v_name not in step_vars
+                    and math.isclose(env[idx_e][0], v_num, abs_tol=1e-5)
+                ):
+                    used_in_step.add(idx_e)
+                    step_vars.add(v_name)
+                    return env[idx_e][1]
+
+            for idx_e in range(len(values)):
+                if idx_e not in used_in_step and math.isclose(env[idx_e][0], v_num, abs_tol=1e-5):
+                    used_in_step.add(idx_e)
+                    step_vars.add(env[idx_e][1])
+                    return env[idx_e][1]
+
+            failed = True
+            return s_num
+
+        mapped_expr = num_tok_re.sub(repl_num, expr_clean)
+        if failed:
+            continue
+        try:
+            norm_e = normalize_equation(f"({mapped_expr})", prefix=False)
+            eval_v = evaluate_with_eval(norm_e, values)
+            if math.isclose(eval_v, res_val, abs_tol=1e-3):
+                env.append((res_val, norm_e, frozenset(step_vars)))
+        except Exception:
+            continue
+
+    for val, expr_s, used_v in reversed(env[len(values) :]):
+        if math.isclose(val, true_ans, abs_tol=1e-3) and len(used_v) >= 2:
+            if not is_self_canceling_or_invalid_duplicate(expr_s, num_vars_in_question=len(values)):
+                return expr_s
+    return None
+
+
+def load_train_data(csv_path, gsm8k_train_path=GSM8K_TRAIN_FILE):
+    dataset = []
+    if os.path.exists(csv_path):
+        with open(csv_path, "r", encoding="utf-8", newline="") as file:
+            for row in csv.DictReader(file):
+                try:
+                    question = row["Question"].strip()
+                    values = [float(v) for v in row["Numbers"].split()]
+                    answer = float(row["Answer"])
+                    masked_q = number_to_var(question)
+                    eq = normalize_equation(row["Equation"], prefix=True)
+                    if math.isclose(evaluate_with_eval(eq, values), answer, abs_tol=1e-5):
+                        dataset.append((masked_q, eq, values, answer, "MAWPS"))
+                except Exception:
+                    continue
+
+    if gsm8k_train_path and os.path.exists(gsm8k_train_path):
+        gsm_added = 0
+        with open(gsm8k_train_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                    q_text = item.get("question", "").strip()
+                    ans_str = item.get("answer", "")
+                    if "####" not in ans_str:
+                        continue
+                    sol_part, num_part = ans_str.split("####", 1)
+                    true_ans = float(num_part.strip().replace(",", ""))
+                    masked_q, values = mask_numbers_in_question(q_text)
+                    if not (2 <= len(values) <= 6):
+                        continue
+                    eq = parse_gsm8k_solution_to_equation(masked_q, values, sol_part, true_ans)
+                    if eq is not None and math.isclose(evaluate_with_eval(eq, values), true_ans, abs_tol=1e-4):
+                        dataset.append((masked_q, eq, values, true_ans, "GSM8K"))
+                        gsm_added += 1
+                except Exception:
+                    continue
+        if gsm_added > 0:
+            print(f"GSM8K学習データから {gsm_added} 問の多段数式木を抽出して統合しました。")
+
     return dataset
 
 
@@ -1926,6 +2486,52 @@ def load_test_data(json_path):
     return dataset
 
 
+def download_and_load_extra_problems():
+    """
+    MultiArith と GSM8K の両方の外部問題集をダウンロードして読み込み、
+    データセット名ごとの問題リスト辞書 {dataset_name: [(q_text, true_eq, true_ans, dataset_name), ...]} を返す。
+    """
+    datasets_by_name = {}
+    for filename, url, fmt, ds_name in EXTRA_DATASET_URLS:
+        path = os.path.join(BASE_DIR, filename)
+        try:
+            if not os.path.exists(path) or os.path.getsize(path) < 1_000:
+                print(f"Downloading extra dataset: {filename} ...")
+                urllib.request.urlretrieve(url, path)
+            problems = []
+            if fmt == "multiarith_json":
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for item in data:
+                    q_text = item.get("sQuestion", "").strip()
+                    ans_list = item.get("lSolutions", [])
+                    eq_list = item.get("lEquations", [])
+                    if q_text and ans_list:
+                        true_ans = float(ans_list[0])
+                        true_eq = str(eq_list[0]) if eq_list else ""
+                        problems.append((q_text, true_eq, true_ans, ds_name))
+            elif fmt == "gsm8k_jsonl":
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        item = json.loads(line)
+                        q_text = item.get("question", "").strip()
+                        ans_str = item.get("answer", "")
+                        if "####" in ans_str:
+                            sol_part, num_part = ans_str.split("####", 1)
+                            num_clean = num_part.strip().replace(",", "")
+                            true_ans = float(num_clean)
+                            problems.append((q_text, sol_part.strip(), true_ans, ds_name))
+            if problems:
+                datasets_by_name[ds_name] = problems
+        except Exception as e:
+            print(f"Warning: {ds_name} ({filename}) の取得に失敗しました: {e}")
+            continue
+
+    return datasets_by_name
+
+
 # ==========================================
 # 9. 外部ファイルから import して使うための公開API
 # ==========================================
@@ -1939,7 +2545,7 @@ def ensure_model_loaded():
         return
     print("ビームサーチ+NNUEモデルの重みファイルを初回学習して保存します...")
     download_files()
-    train_data = load_train_data(TRAIN_FILE)
+    train_data = load_train_data(TRAIN_FILE, GSM8K_TRAIN_FILE)
     _GLOBAL_MODEL.fit_and_save(train_data, WEIGHTS_FILE)
 
 
@@ -1963,12 +2569,13 @@ def solve(question_text, check_is_math=False):
 
 
 # ==========================================
-# 10. 単体実行時の動作確認・精度評価
+# 10. 単体実行時の動作確認・精度評価・MultiArith & GSM8K 両対応出力
 # ==========================================
 def evaluate_dataset(model, dataset, title):
     correct_eq = 0
     correct_ans = 0
-    for q, true_eq, values, true_ans in dataset:
+    for item in dataset:
+        q, true_eq, values, true_ans = item[:4]
         pred_eq, _, pred_ans = model.predict(q, values)
         if pred_eq is None:
             continue
@@ -1986,10 +2593,10 @@ def main():
     ensure_model_loaded()
 
     if os.path.exists(TRAIN_FILE) and os.path.exists(TEST_FILE):
-        train_data = load_train_data(TRAIN_FILE)
+        ma_train_data = load_train_data(TRAIN_FILE, gsm8k_train_path=None)
         test_data = load_test_data(TEST_FILE)
-        evaluate_dataset(_GLOBAL_MODEL, train_data, "ビームサーチ+HalfKP型NNUE - 学習データ")
-        evaluate_dataset(_GLOBAL_MODEL, test_data,  "ビームサーチ+HalfKP型NNUE - SVAMPテストデータ")
+        evaluate_dataset(_GLOBAL_MODEL, ma_train_data, "ビームサーチ+HalfKP型NNUE - 学習データ(MAWPS/ASDiv)")
+        evaluate_dataset(_GLOBAL_MODEL, test_data,     "ビームサーチ+HalfKP型NNUE - SVAMPテストデータ")
 
     sample_math = (
         "Each pack of dvds costs 76 dollars. "
@@ -1999,15 +2606,74 @@ def main():
     sample_quiz = (
         "is an online knowledge engine developed by Research , released in 2009 . [ 1 ] It is offered as an online service that answers queries by computing answers from externally sourced data . [ 2 ][ 3 ]"
     )
+    sample_math3 = (
+        "For Halloween Debby and her sister combined the candy they received. "
+        "Debby had 32 pieces of candy while her sister had 42. "
+        "If they ate 35 pieces the first night, how many pieces do they have left?"
+    )
+    sample_math5 = (
+        "Janet’s ducks lay 16 eggs per day. "
+        "She eats three for breakfast every morning and bakes muffins for her friends every day with four. "
+        "She sells the remainder at the farmers' market daily for $2 per fresh duck egg. "
+        "How much in dollars does she make every day at the farmers' market?"
+    )
 
     print("=== solve(question_text) ＆ クイズ判定テスト ===")
+    masked_q1, vals1 = mask_numbers_in_question(sample_math)
+    pred_eq1, pred_score1, _ = _GLOBAL_MODEL.predict(masked_q1, vals1)
     print(f"問題1: {sample_math}")
     print(f"  -> 算数判定: {is_math_word_problem(sample_math)}")
+    print(f"  -> 選択された数式: {pred_eq1} (score: {pred_score1:.2f})")
     print(f"  -> solve() の返り値: {solve(sample_math)}\n")
 
     print(f"問題2: {sample_quiz}")
     print(f"  -> 算数判定: {is_math_word_problem(sample_quiz)}")
-    print(f"  -> solve(check_is_math=True) の返り値: {solve(sample_quiz, check_is_math=True)}")
+    print(f"  -> solve(check_is_math=True) の返り値: {solve(sample_quiz, check_is_math=True)}\n")
+
+    masked_q3, vals3 = mask_numbers_in_question(sample_math3)
+    pred_eq3, pred_score3, _ = _GLOBAL_MODEL.predict(masked_q3, vals3)
+    print(f"問題3: {sample_math3}")
+    print(f"  -> 算数判定: {is_math_word_problem(sample_math3)}")
+    print(f"  -> 選択された数式: {pred_eq3} (score: {pred_score3:.2f})")
+    print(f"  -> solve() の返り値: {solve(sample_math3)} (正解数値: 39)\n")
+
+    masked_q5, vals5 = mask_numbers_in_question(sample_math5)
+    pred_eq5, pred_score5, _ = _GLOBAL_MODEL.predict(masked_q5, vals5)
+    print(f"問題5 (GSM8K デバッグ対象): {sample_math5}")
+    print(f"  -> 算数判定: {is_math_word_problem(sample_math5)}")
+    print(f"  -> 選択された数式: {pred_eq5} (score: {pred_score5:.2f})")
+    print(f"  -> solve() の返り値: {solve(sample_math5)} (正解数値: 18)\n")
+
+    # MultiArith と GSM8K の両方をテストデータとして使って正解率と誤答例を表示
+    extra_datasets = download_and_load_extra_problems()
+    prob_idx = 6
+    for ds_name in ("MultiArith", "GSM8K"):
+        problems = extra_datasets.get(ds_name, [])
+        if not problems:
+            continue
+        wrong_examples = []
+        extra_correct = 0
+        eval_count = 0
+        for q_text, true_eq, true_ans, _ds in problems:
+            pred_val = solve(q_text)
+            eval_count += 1
+            if pred_val is not None and math.isclose(float(pred_val), true_ans, abs_tol=1e-4):
+                extra_correct += 1
+            elif len(wrong_examples) < 3:
+                mq, vals = mask_numbers_in_question(q_text)
+                p_eq, p_sc, _ = _GLOBAL_MODEL.predict(mq, vals) if vals else (None, 0.0, None)
+                wrong_examples.append((q_text, true_eq, true_ans, pred_val, p_eq, p_sc))
+
+        print(f"[{ds_name} 外部問題集テスト: {extra_correct} / {eval_count} ({extra_correct / max(eval_count, 1) * 100:.2f}%)]")
+        if wrong_examples:
+            w_text, w_true_eq, w_true_ans, w_pred_ans, w_pred_eq, w_score = wrong_examples[0]
+            ans_disp = int(round(w_true_ans)) if math.isclose(w_true_ans, round(w_true_ans), abs_tol=1e-6) else w_true_ans
+            print(f"問題{prob_idx} ({ds_name} より誤答例): {w_text}")
+            print(f"  -> 算数判定: {is_math_word_problem(w_text)}")
+            print(f"  -> 予測された数式: {w_pred_eq} (score: {w_score:.2f})")
+            print(f"  -> solve() の返り値 (誤答): {w_pred_ans}")
+            print(f"  -> 本来の正解数値: {ans_disp} (正解式/解法: {w_true_eq})\n")
+            prob_idx += 1
 
 
 if __name__ == "__main__":
