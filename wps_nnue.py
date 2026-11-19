@@ -1,2679 +1,3954 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+wps_nnue_ver12.py — ESR-NNUE v12.4
+(Soft-Typed Entity-State Register Machine + Delexicalized SCReLU NNUE + Beam Stack Search)
+
+外部LLM APIおよび事前学習済みTransformerを一切使用せず、ゼロから構築した前置詞境界・省略単位パーサ、
+高到達率の Soft-Typed 状態遷移生成器、置換表付き Beam Stack Search、および役割抽象化特徴 (Delexicalized
+Relational Features) + Dropout 付き AdamW で学習する 2ヘッド SCReLU NNUE 評価関数による算数文章題ソルバ。
+
+厳守インターフェース:
+  - solve(text, check_is_math=False)
+  - is_math_word_problem(text)
+  - download_files()
+  - TRAIN_FILE, TEST_FILE
+  - ENCYCLOPEDIA_PATTERNS, MATH_QUESTION_PATTERNS, NUMBER_RE, WORD_TO_NUM
+"""
+
+from __future__ import annotations
+
+import argparse
 import ast
 import csv
-import gc
 import json
 import math
 import os
 import re
 import urllib.request
-from collections import Counter, defaultdict
-from itertools import permutations
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
-from scipy import sparse
-from sklearn.decomposition import TruncatedSVD
-from sklearn.feature_extraction import DictVectorizer
-from sklearn.linear_model import LogisticRegression
 
-# ==========================================
-# 1. ファイルパス・定数設定
-# ==========================================
+# ==============================================================================
+# 0. パス定数・公開グローバルオブジェクト（is_true.py / is_quiz.py 完全互換）
+# ==============================================================================
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TRAIN_CSV_URL = (
-    "https://raw.githubusercontent.com/arkilpatel/SVAMP/main/"
-    "data/mawps-asdiv-a_svamp/train.csv"
+
+
+def _default_data_path(filename: str) -> str:
+    if os.path.exists(filename):
+        return filename
+    return os.path.join(BASE_DIR, filename)
+
+
+TRAIN_FILE: str = _default_data_path("mawps_asdiv.csv")
+TEST_FILE: str = _default_data_path("SVAMP.json")
+GSM8K_TRAIN_FILE: str = _default_data_path("gsm8k_train.jsonl")
+GSM8K_TEST_FILE: str = _default_data_path("gsm8k_test.jsonl")
+MODEL_WEIGHTS_FILE: str = os.path.join(BASE_DIR, "wps_nnue_ver12_weights.npz")
+
+DATASET_URLS: Dict[str, str] = {
+    "mawps_asdiv.csv": "https://raw.githubusercontent.com/arkilpatel/SVAMP/main/data/mawps-asdiv-a_svamp/train.csv",
+    "SVAMP.json": "https://raw.githubusercontent.com/arkilpatel/SVAMP/main/SVAMP.json",
+    "gsm8k_train.jsonl": "https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/train.jsonl",
+    "gsm8k_test.jsonl": "https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/test.jsonl",
+}
+
+WORD_TO_NUM: Dict[str, float] = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+    "hundred": 100, "thousand": 1000, "million": 1000000,
+    "twice": 2, "thrice": 3, "double": 2, "triple": 3,
+    "dozen": 12, "half": 0.5, "quarter": 0.25,
+}
+
+NUMBER_RE: re.Pattern = re.compile(
+    r"\b(?:number\d+|\d+(?:,\d{3})*(?:\.\d+)?(?:/\d+)?)\b",
+    re.IGNORECASE,
 )
-TEST_JSON_URL = "https://raw.githubusercontent.com/arkilpatel/SVAMP/main/SVAMP.json"
-GSM8K_TRAIN_URL = (
-    "https://raw.githubusercontent.com/openai/grade-school-math/master/"
-    "grade_school_math/data/train.jsonl"
+
+ENCYCLOPEDIA_PATTERNS: re.Pattern = re.compile(
+    r"\b(?:"
+    r"for\s+(?:10|ten)\s+points|"
+    r"ftp\b|"
+    r"name\s+this\s+|"
+    r"identify\s+this\s+|"
+    r"give\s+the\s+name\s+of|"
+    r"who\s+(?:was|is|were|wrote|invented|discovered|painted|composed|directed|founded|led|assassinated|coined|formulated|governed|ruled)|"
+    r"whom\s+did|"
+    r"which\s+(?:country|nation|city|state|planet|moon|star|element|compound|president|monarch|king|queen|emperor|war|battle|treaty|novel|poem|play|opera|symphony|author|poet|painter|composer|scientist|philosopher|river|ocean|sea|mountain|continent|dynasty|empire|organ|disease|hormone|religion|deity|god|goddess)|"
+    r"what\s+(?:country|nation|city|planet|element|president|dynasty|empire|war|battle|treaty|religion|language|instrument|philosopher|author|scientist)|"
+    r"what\s+(?:is|was|are|were)\s+the\s+(?:name|title|capital|nick\s*name|motto|official\s+language|chemical\s+symbol|atomic\s+number|scientific\s+name|genus|largest\s+city|longest\s+river|highest\s+mountain|largest\s+organ)|"
+    r"capital\s+(?:city\s+)?of\s+|"
+    r"(?:world|civil|revolutionary|peloponnesian|punic|crimean|vietnam|korean|boer|thirty\s+years|hundred\s+years)\s+war|"
+    r"nobel\s+prize|"
+    r"pulitzer\s+prize|"
+    r"academy\s+award|"
+    r"periodic\s+table|"
+    r"atomic\s+(?:number|mass|weight)|"
+    r"mythology|"
+    r"constellation|"
+    r"photosynthesis|"
+    r"mitochondri|"
+    r"chromosome|"
+    r"roman\s+empire|"
+    r"british\s+empire|"
+    r"ottoman\s+empire|"
+    r"byzantine|"
+    r"shakespeare|"
+    r"beethoven|"
+    r"mozart|"
+    r"supreme\s+court|"
+    r"constitutional\s+amendment|"
+    r"(?:novel|poem|play|opera|symphony|concerto|sonata|painting|treatise|manifesto)\s+by\s+|"
+    r"(?:written|directed|composed|painted|sculpted|invented|discovered|formulated)\s+by\s+[a-z]+|"
+    r"(?:born|died|assassinated|coronated|canonized)\s+in\s+\d{3,4}|"
+    r"(?:treaty|battle|siege|peace|edict|diet|council)\s+of\s+[a-z]+"
+    r")\b",
+    re.IGNORECASE,
 )
 
-# 追加の外部算数文章題データセットURL (MultiArith と GSM8K の両方を使用)
-EXTRA_DATASET_URLS = [
-    (
-        "MultiArith.json",
-        "https://raw.githubusercontent.com/wangxr14/Algebraic-Word-Problem-Solver/master/data/MultiArith.json",
-        "multiarith_json",
-        "MultiArith",
-    ),
-    (
-        "gsm8k_test.jsonl",
-        "https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/test.jsonl",
-        "gsm8k_jsonl",
-        "GSM8K",
-    ),
-]
-
-TRAIN_FILE = os.path.join(BASE_DIR, "mawps_asdiv.csv")
-GSM8K_TRAIN_FILE = os.path.join(BASE_DIR, "gsm8k_train.jsonl")
-TEST_FILE = os.path.join(BASE_DIR, "SVAMP.json")
-WEIGHTS_FILE = os.path.join(BASE_DIR, "math_lr_weights11.json")
-
-# 文末のピリオド (例: "while her sister had 42.") の直前の数値も確実に抽出する正規表現
-NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w]|\.\d)")
-VAR_RE = re.compile(r"\bvar(\d+)\b")
-TOKEN_VAR_RE = re.compile(r"(?<![a-zA-Z0-9])var(\d+)(?![a-zA-Z0-9])")
-OPS = {"+", "-", "*", "/"}
+MATH_QUESTION_PATTERNS: re.Pattern = re.compile(
+    r"(?:"
+    r"\bhow\s+(?:many|much|long|far|old|fast|tall|heavy|deep|wide|high|big|large|often|more|fewer|less)\b|"
+    r"\bwhat\s+(?:is|was|are|were|will(?:\s+be)?|would(?:\s+be)?)\s+"
+    r"(?:the\s+|his\s+|her\s+|their\s+|its\s+|a\s+|an\s+|final\s+|new\s+|current\s+|[a-z]+(?:'s|\s+'\s*s)?\s+){0,4}"
+    r"(?:total|sum|difference|product|quotient|average|mean|number|amount|value|cost|price|change|profit|loss|balance|"
+    r"remainder|remaining|rest|distance|length|width|height|depth|area|volume|perimeter|weight|mass|speed|rate|time|"
+    r"duration|age|score|grade|ratio|percent|percentage|fraction|portion|share|part|fee|tax|tip|discount|commission|"
+    r"interest|salary|wage|income|earnings|revenue|rent|bill|saving|savings|capacity|population|count)\b|"
+    r"\bwhat\s+(?:fraction|percent|percentage|portion|share|part|rate|speed|price|cost|amount|number|age|time|distance)\b|"
+    r"\bwhat\s+(?:did|does|do|will|would|can|could|should)\s+(?:[a-z]+(?:'s|\s+'\s*s)?\s+){1,5}"
+    r"(?:pay|cost|earn|spend|make|get|receive|have|owe|need|save|take|weigh|measure|score|charge|collect|sell|buy)\b|"
+    r"\b(?:find|calculate|compute|determine|work\s+out)\s+(?:the\s+|his\s+|her\s+|their\s+|how\s+|what\s+)|"
+    r"\bat\s+what\s+(?:rate|speed|price|cost|age|time)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
-def is_var_tok(w):
-    """トークンが 'var1', 'var2' 等の数値マスク変数であるかを厳密に判定する ('varies' 等を除外)"""
-    return len(w) > 3 and w.startswith("var") and w[3:].isdigit()
-
-
-# 時間帯分割の設定 (t0=序盤, t1=中盤, t2=終盤 + all=全体)
-N_TIME_BUCKETS = 3
-TIME_KEYS = ("all", "t0", "t1", "t2")
-TIME_FEATURE_SCALE = 0.35
-
-# NNUE & ビームサーチ（スタック型段階探索）・省メモリ制限設定
-HIDDEN1_SIZE = 16
-HIDDEN2_SIZE = 16
-TOP_K_CANDIDATES = 8
-NNUE_EPOCHS = 18
-NNUE_LR = 0.015
-NNUE_L2_DECAY = 1e-4
-
-# L-BFGS-B のメモリ爆発 (12GB ArrayMemoryError) を防ぐための大局テンプレート・語彙上限
-MAX_GLOBAL_FORMULAS = 400    # 大局NNUEモデルで保持する頻出数式テンプレート数の上限
-MAX_GLOBAL_WORDS = 30000     # 大局NNUEモデルで保持する有効語彙数の上限
-MIN_WORD_DF = 2              # 大局BoW特徴の最小出現文書数
-
-BEAM_WIDTH = 6               # 各ステップで残す部分盤面のビーム幅
-STEP_ACTIONS = ("ADD", "SUB_LR", "SUB_RL", "MUL", "DIV_LR", "DIV_RL", "NONE")
-ACTIVE_ACTIONS = ("ADD", "SUB_LR", "SUB_RL", "MUL", "DIV_LR", "DIV_RL")
-BEAM_SCORE_WEIGHT = 0.80     # ビームサーチの段階評価スコアの統合重み
+# ==============================================================================
+# 1. 正規化・語彙辞書・算数文章題ゲートキーパー
+# ==============================================================================
 
 TENS_MAP = {
     "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
     "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
 }
 ONES_MAP = {
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-    "six": 6, "seven": 7, "eight": 8, "nine": 9,
-}
-CARDINAL_WORD_TO_NUM = {
-    "two": "2", "three": "3", "four": "4", "five": "5",
-    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
-    "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
-    "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18",
-    "nineteen": "19", "twenty": "20", "thirty": "30", "forty": "40",
-    "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80",
-    "ninety": "90",
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
 }
 
-WORD_TO_NUM = {
-    "one": "1",
-    **CARDINAL_WORD_TO_NUM,
-    "hundred": "100",
-    "twice": "2 times",
-    "double": "2 times",
-    "triple": "3 times",
+WORD_FRACTIONS: List[Tuple[re.Pattern, str]] = [
+    # "an hour and a half" -> "1.5 hours", "two and a half" -> "2.5"
+    (re.compile(r"\b(?:an|one|1)\s+([a-z]+)\s+and\s+a\s+half\b", re.I), r"1.5 \1"),
+    (re.compile(r"\b(\d+)\s+and\s+a\s+half\b", re.I), r"\1.5"),
+    (re.compile(r"\ba\s+half\s*-\s*(hour|day|mile|pound|cup|gallon|liter|year)\b", re.I), r"0.5 \1"),
+    (re.compile(r"\b(?:one|a)\s*-\s*half\b|\bone\s+half\b", re.I), " 0.5 "),
+    (re.compile(r"\b(?:one|a)\s*-\s*third\b|\bone\s+third\b|\ba\s+third\s+of\b|\ba\s+third\b", re.I), " 1/3 of "),
+    (re.compile(r"\btwo\s*-\s*thirds?\b|\btwo\s+thirds?\b", re.I), " 2/3 "),
+    (re.compile(r"\b(?:one|a)\s*-\s*fourth\b|\bone\s+fourth\b|\b(?:one|a)\s*-\s*quarter\b|\ba\s+quarter\s+of\b|\bone\s+quarter\s+of\b", re.I), " 0.25 of "),
+    (re.compile(r"\bthree\s*-\s*fourths?\b|\bthree\s+fourths?\b|\bthree\s*-\s*quarters?\b|\bthree\s+quarters?\b", re.I), " 0.75 "),
+    (re.compile(r"\b(?:one|a)\s*-\s*fifth\b|\bone\s+fifth\b|\ba\s+fifth\s+of\b", re.I), " 0.2 of "),
+    (re.compile(r"\btwo\s*-\s*fifths?\b|\btwo\s+fifths?\b", re.I), " 0.4 "),
+    (re.compile(r"\bthree\s*-\s*fifths?\b|\bthree\s+fifths?\b", re.I), " 0.6 "),
+    (re.compile(r"\bfour\s*-\s*fifths?\b|\bfour\s+fifths?\b", re.I), " 0.8 "),
+]
+
+# 同義・上位語の部分正規化（"seashells" と "shells"、"rosebushes" と "bushes" 等の不一致を解消）
+IRREGULAR_SINGULAR: Dict[str, str] = {
+    "children": "child", "kids": "child", "kid": "child",
+    "boys": "boy", "girls": "girl", "men": "man", "women": "woman",
+    "people": "person", "persons": "person", "friends": "friend",
+    "students": "student", "pupils": "student", "pupil": "student",
+    "mice": "mouse", "geese": "goose", "teeth": "tooth", "feet": "foot",
+    "leaves": "leaf", "halves": "half", "loaves": "loaf", "knives": "knife",
+    "wives": "wife", "wolves": "wolf", "shelves": "shelf",
+    "berries": "berry", "strawberries": "strawberry", "blueberries": "blueberry",
+    "raspberries": "raspberry", "cherries": "cherry", "candies": "candy",
+    "cookies": "cookie", "brownies": "brownie", "pies": "pie", "donuts": "donut",
+    "doughnuts": "donut", "doughnut": "donut", "cupcakes": "cupcake",
+    "seashells": "shell", "seashell": "shell", "shells": "shell",
+    "rosebushes": "bush", "rosebush": "bush", "bushes": "bush",
+    "pennies": "cent", "penny": "cent", "cents": "cent",
+    "dollars": "dollar", "bucks": "dollar", "buck": "dollar",
+    "quarters": "quarter", "dimes": "dime", "nickels": "nickel",
+    "puppies": "puppy", "kitties": "kitty", "butterflies": "butterfly", "flies": "fly",
+    "boxes": "box", "peaches": "peach", "dishes": "dish",
+    "brushes": "brush", "watches": "watch", "sandwiches": "sandwich", "batches": "batch",
+    "inches": "inch", "branches": "branch", "bunches": "bunch", "benches": "bench",
+    "buses": "bus", "glasses": "glass", "classes": "class", "dresses": "dress",
+    "tomatoes": "tomato", "potatoes": "potato", "mangoes": "mango", "mangos": "mango",
+    "heroes": "hero", "fish": "fish", "fishes": "fish", "sheep": "sheep", "deer": "deer",
+    "series": "series", "species": "species", "clothes": "clothing", "dozens": "dozen",
+    "crunches": "crunch", "push-ups": "pushup", "pushups": "pushup", "sit-ups": "situp",
+    "dvds": "dvd", "cds": "cd", "erasers": "eraser", "customers": "customer",
+    "hrs": "hour", "hr": "hour", "mins": "minute", "min": "minute",
+    "secs": "second", "sec": "second", "lbs": "pound", "lb": "pound",
+    "oz": "ounce", "km": "kilometer", "kg": "kilogram",
 }
 
+UNIT_HYPERNYM: Dict[str, str] = {
+    "boy": "person", "girl": "person", "man": "person", "woman": "person",
+    "child": "person", "adult": "person", "student": "person", "teacher": "person",
+    "person": "person", "friend": "person", "member": "person", "worker": "person",
+    "player": "person", "guest": "person", "passenger": "person", "customer": "person",
+    "apple": "fruit", "banana": "fruit", "orange": "fruit", "peach": "fruit",
+    "pear": "fruit", "berry": "fruit", "strawberry": "fruit", "blueberry": "fruit",
+    "cherry": "fruit", "mango": "fruit", "plum": "fruit", "grape": "fruit",
+    "lemon": "fruit", "lime": "fruit", "melon": "fruit", "watermelon": "fruit", "fruit": "fruit",
+    "rose": "flower", "tulip": "flower", "daisy": "flower", "lily": "flower",
+    "sunflower": "flower", "orchid": "flower", "carnations": "flower", "flower": "flower",
+    "oak": "tree", "pine": "tree", "maple": "tree", "walnut": "tree", "tree": "tree",
+    "dog": "animal", "cat": "animal", "puppy": "animal", "kitty": "animal", "bird": "animal",
+    "stork": "animal", "sparrow": "animal", "crow": "animal", "robin": "animal", "duck": "animal",
+    "hen": "animal", "chicken": "animal", "rooster": "animal", "fish": "animal", "rabbit": "animal",
+    "cow": "animal", "horse": "animal", "sheep": "animal", "pig": "animal", "goat": "animal", "animal": "animal",
+    "shirt": "clothing", "dress": "clothing", "jacket": "clothing", "coat": "clothing",
+    "sweater": "clothing", "hat": "clothing", "pant": "clothing", "sock": "clothing", "clothing": "clothing",
+    "quarter": "coin", "dime": "coin", "nickel": "coin", "cent": "coin", "coin": "coin",
+    "cake": "pastry", "pie": "pastry", "cookie": "pastry", "cupcake": "pastry", "muffin": "pastry", "donut": "pastry",
+    "slice": "piece", "piece": "piece",
+}
 
-def download_if_needed(url, path, minimum_size):
-    if not os.path.exists(path) or os.path.getsize(path) < minimum_size:
-        print(f"Downloading {os.path.basename(path)} ...")
-        urllib.request.urlretrieve(url, path)
+CATEGORY_TARGET_UNITS: Set[str] = {
+    "person", "student", "child", "member", "player", "guest", "passenger", "worker",
+    "fruit", "flower", "tree", "animal", "bird", "clothing", "coin", "pastry", "piece", "item",
+}
 
+TIME_UNITS: Set[str] = {"second", "minute", "hour", "day", "week", "month", "year", "morning"}
 
-def download_files():
-    download_if_needed(TRAIN_CSV_URL, TRAIN_FILE, minimum_size=10_000)
-    download_if_needed(TEST_JSON_URL, TEST_FILE, minimum_size=50_000)
-    try:
-        download_if_needed(GSM8K_TRAIN_URL, GSM8K_TRAIN_FILE, minimum_size=100_000)
-    except Exception:
-        pass
+MULTIPLIER_CONTAINER_UNITS: Set[str] = {
+    "box", "bag", "pack", "package", "packet", "carton", "crate", "basket", "jar",
+    "bottle", "can", "tray", "row", "column", "shelf", "stack", "pile", "bunch",
+    "bundle", "group", "team", "class", "bus", "car", "van", "truck", "boat", "table",
+    "page", "letter", "book", "album", "folder", "day", "week", "month", "year",
+    "hour", "minute", "second", "morning", "afternoon", "evening", "night",
+    "time", "trip", "round", "lap", "batch", "set", "pair", "dozen", "bill",
+    "roll", "sheet", "bowl", "plate", "cup", "omelet", "pie", "pizza", "cake",
+    "necklace", "bracelet", "friend", "child", "boy", "girl", "person", "student", "worker",
+    "chair", "spider", "dog", "cat", "bird", "cow", "chicken", "garden", "bed", "vase", "pot",
+}
 
+# 単位探索を直ちに打ち切る前置詞境界（"eats 3 for breakfast", "6 during dinner", "5 in the basket" での誤単位化を根絶！）
+BOUNDARY_PREPOSITIONS: Set[str] = {
+    "in", "on", "at", "for", "from", "to", "with", "by", "into", "onto",
+    "during", "after", "before", "until", "under", "over", "between", "among",
+    "across", "through", "without", "behind", "near", "around", "inside", "outside",
+}
 
-# ==========================================
-# 2. クイズ vs 算数文章題のルーティング判定器
-# ==========================================
-ENCYCLOPEDIA_PATTERNS = re.compile(
-    r"\b("
-    r"who is|who was|who were|whom|whose|"
-    r"what is the name|what was the name|what is the capital|what country|what city|"
-    r"which country|which city|which planet|which element|which president|which king|"
-    r"where is|where was|in what year|in which year|what year did|"
-    r"known as|famous for|written by|directed by|invented by|discovered by|founded by"
+GROSS_EVENT_VERBS: Set[str] = {
+    "bake", "cook", "buy", "sell", "eat", "drink", "give", "pick", "collect",
+    "lose", "plant", "cut", "read", "write", "catch", "throw", "break", "find",
+    "pack", "print", "serve", "lay",
+}
+
+VERB_LEMMA: Dict[str, str] = {
+    "has": "have", "had": "have", "having": "have",
+    "bought": "buy", "buys": "buy", "buying": "buy", "purchased": "buy", "purchases": "buy",
+    "sold": "sell", "sells": "sell", "selling": "sell",
+    "gave": "give", "gives": "give", "given": "give", "giving": "give", "handed": "give", "passed": "give", "donated": "give",
+    "got": "get", "gets": "get", "gotten": "get", "getting": "get", "received": "get", "receives": "get",
+    "ate": "eat", "eats": "eat", "eaten": "eat", "eating": "eat",
+    "drank": "drink", "drinks": "drink", "drinking": "drink",
+    "spent": "spend", "spends": "spend", "spending": "spend",
+    "paid": "pay", "pays": "pay", "paying": "pay",
+    "cost": "cost", "costs": "cost", "costing": "cost",
+    "earned": "earn", "earns": "earn", "earning": "earn",
+    "made": "make", "makes": "make", "making": "make",
+    "baked": "bake", "bakes": "bake", "baking": "bake",
+    "cooked": "cook", "cooks": "cook",
+    "picked": "pick", "picks": "pick", "picking": "pick",
+    "found": "find", "finds": "find", "finding": "find",
+    "lost": "lose", "loses": "lose", "losing": "lose",
+    "broke": "break", "breaks": "break", "broken": "break",
+    "used": "use", "uses": "use", "using": "use",
+    "took": "take", "takes": "take", "taken": "take", "taking": "take",
+    "brought": "bring", "brings": "bring", "bringing": "bring",
+    "caught": "catch", "catches": "catch",
+    "collected": "collect", "collects": "collect",
+    "planted": "plant", "plants": "plant",
+    "read": "read", "reads": "read", "reading": "read",
+    "wrote": "write", "writes": "write", "written": "write",
+    "walked": "walk", "walks": "walk",
+    "ran": "run", "runs": "run",
+    "drove": "drive", "drives": "drive",
+    "saved": "save", "saves": "save", "saving": "save",
+    "left": "leave", "leaves": "leave", "leaving": "leave",
+    "packed": "pack", "packs": "pack",
+    "produced": "produce", "produces": "produce",
+    "printed": "print", "prints": "print",
+    "cut": "cut", "cuts": "cut", "cutting": "cut",
+    "threw": "throw", "throws": "throw", "thrown": "throw",
+    "added": "add", "adds": "add", "adding": "add",
+    "removed": "remove", "removes": "remove", "removing": "remove",
+    "organized": "organize", "organizes": "organize",
+    "played": "play", "plays": "play", "playing": "play",
+    "jumped": "jump", "jumps": "jump",
+    "laid": "lay", "lays": "lay", "served": "serve", "serves": "serve",
+    "mowed": "mow", "mows": "mow", "shoveled": "shovel", "shovels": "shovel",
+}
+
+MATH_OPERATION_CUES: re.Pattern = re.compile(
+    r"\b(?:"
+    r"there\s+(?:are|is|were|was)|are\s+in\s+the|is\s+in\s+the|"
+    r"have|has|had|start|started|begin|began|left|remain|remaining|rest|"
+    r"more|less|lesser|fewer|farther|longer|bigger|smaller|empty|total|altogether|all|combined|together|sum|difference|"
+    r"each|every|per|apiece|average|equally|equal|split|share|shared|divide|divided|organized|groups|"
+    r"times|twice|double|doubled|triple|tripled|thrice|half|halved|quarter|dozen|pair|"
+    r"percent|percentage|discount|off|tax|tip|interest|profit|change|"
+    r"bought|buy|sold|sell|gave|give|got|get|received|ate|eat|spent|spend|paid|pay|cost|costs|"
+    r"earned|earn|made|make|baked|picked|found|lost|broke|used|uses|took|taken|brought|collected|planted|saved|packed|wrote|read|cut|threw|added|removed|played|jumped|served|laid"
     r")\b",
     re.IGNORECASE,
 )
 
-MATH_QUESTION_PATTERNS = re.compile(
-    r"\b("
-    r"how many|how much|how long|how far|how old|how heavy|how fast|how tall|how deep|"
-    r"how big|how wide|how high|how often|"
-    r"what is the|what was the|what will be the|what would be the|"
-    r"what fraction|what percent|what percentage|what rate|"
-    r"calculate|find the|compute"
+QUIZBOWL_CLUE_PATTERNS: re.Pattern = re.compile(
+    r"\b(?:"
+    r"this\s+(?:country|nation|city|island|river|author|poet|novel|play|film|painter|scientist|king|emperor|war|battle|treaty|theory|effect|law|element|compound|process|organ|disease|conflict|tragedy|comedy)|"
+    r"its\s+(?:capital|author|protagonist|narrator|founder|discoverer|atomic|stable\s+isotope)|"
+    r"his\s+(?:most\s+famous\s+novel|symphony|painting|treatise|reign|presidency)|"
+    r"her\s+(?:most\s+famous\s+novel|reign)|"
+    r"discovered\s+by\s+[a-z]+\s+[a-z]+"
     r")\b",
     re.IGNORECASE,
 )
 
-IMPLICIT_NUM_WORDS = set(WORD_TO_NUM.keys()) | {
-    "quarter", "quarters", "dime", "dimes", "nickel", "nickels", "penny", "pennies",
-    "dozen", "pair", "pairs", "half", "halves", "twice", "double", "triple",
-    "week", "weeks", "year", "years", "hour", "hours", "minute", "minutes",
-}
 
-MATH_OPERATION_CUES = {
-    "each", "every", "per", "apiece", "total", "altogether", "together", "combined",
-    "left", "remain", "remaining", "rest", "away", "lose", "lost", "give", "gave",
-    "spend", "spent", "buy", "bought", "cost", "costs", "pay", "paid", "price",
-    "discount", "change", "sell", "sold", "earn", "earned", "save", "saved",
-    "split", "share", "shared", "divide", "divided", "equally", "equal",
-    "more", "less", "fewer", "difference", "add", "added", "plus", "times",
-    "half", "twice", "double", "dozen", "pair",
-    "dollar", "dollars", "cent", "cents", "yen", "pound", "pounds",
-    "pack", "packs", "box", "boxes", "bag", "bags",
-    "have", "has", "had", "make", "made", "take", "took", "get", "got",
-    "find", "found", "collect", "collected", "plant", "planted", "bake", "baked",
-    "eat", "ate", "drink", "drank", "use", "used", "read", "walk", "walked",
-    "run", "ran", "drive", "drove", "fly", "flew", "work", "worked",
-    "all", "now", "first", "start", "started", "begin", "began", "finish", "finished",
-    "need", "needed", "want", "wanted", "already", "still", "another", "other",
-    "group", "groups", "row", "rows", "team", "teams", "page", "pages",
-    "hour", "hours", "minute", "minutes", "day", "days", "week", "weeks",
-    "mile", "miles", "foot", "feet", "inch", "inches", "meter", "meters",
-    "liter", "liters", "gram", "grams", "kilogram", "kilograms",
-}
+def lemmatize_noun(word: str) -> str:
+    w = word.lower().strip(".,?!:;\"'()[]{}")
+    if not w:
+        return ""
+    if w in IRREGULAR_SINGULAR:
+        return IRREGULAR_SINGULAR[w]
+    if len(w) <= 3:
+        return w
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    if w.endswith("ves") and len(w) > 4:
+        return w[:-3] + "f"
+    if re.search(r"(?:ch|sh|x|z|ss)es$", w):
+        return w[:-2]
+    if w.endswith("s") and not w.endswith(("ss", "us", "is", "chaos", "cosmos", "ics", "news", "less")):
+        return w[:-1]
+    return w
 
 
-def is_math_word_problem(text):
+def lemmatize_verb(word: str) -> str:
+    w = word.lower().strip(".,?!:;\"'()[]{}")
+    if w in VERB_LEMMA:
+        return VERB_LEMMA[w]
+    if len(w) > 4 and w.endswith("ed"):
+        if w[-3] == w[-4]:
+            return w[:-3]
+        return w[:-2]
+    if len(w) > 5 and w.endswith("ing"):
+        return w[:-3]
+    if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        return w[:-1]
+    return w
+
+
+class TextNormalizer:
+    _SPACED_DEC_RE = re.compile(r"(?<=\d)\s*\.\s*(?=\d)")
+    _SPACED_COMMA_NUM_RE = re.compile(r"(?<=\d)\s*,\s*(?=\d{3}\b)")
+    _SPACED_FRAC_RE = re.compile(r"\b(\d+)\s*/\s*(\d+)\b")
+    _SPACED_APOS_RE = re.compile(r"\b([A-Za-z]+)\s*'\s*(s|t|re|ve|ll|d|m)\b", re.I)
+    _SPACED_DOLLAR_RE = re.compile(r"\$\s*(number\d+|\d+(?:\.\d+)?)", re.I)
+    _SPACED_PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+    _COMPOUND_NOUN_RE = re.compile(
+        r"\b(action\s+figures?|push\s*-\s*ups?|sit\s*-\s*ups?|jumping\s+jacks?|ice\s+creams?|video\s+games?|baseball\s+cards?|apple\s+pies?|school\s+buses|candy\s+bars?)\b",
+        re.I,
+    )
+    _HYPHEN_NUM_RE = re.compile(
+        r"\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s*-\s*"
+        r"(one|two|three|four|five|six|seven|eight|nine)\b",
+        re.I,
+    )
+    _ADJ_TENS_ONES_RE = re.compile(
+        r"\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s+"
+        r"(one|two|three|four|five|six|seven|eight|nine)\b",
+        re.I,
+    )
+    _HYPHEN_UNIT_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*-\s*([A-Za-z]+)\b")
+
+    @classmethod
+    def normalize(cls, text: str) -> str:
+        if not text:
+            return ""
+        s = text.replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'")
+        s = s.replace("—", " - ").replace("–", "-")
+        s = cls._SPACED_DEC_RE.sub(".", s)
+        for _ in range(2):
+            s = cls._SPACED_COMMA_NUM_RE.sub("", s)
+        s = cls._SPACED_FRAC_RE.sub(r"\1/\2", s)
+        s = cls._SPACED_APOS_RE.sub(r"\1'\2", s)
+        s = cls._SPACED_DOLLAR_RE.sub(r"$\1", s)
+        s = cls._SPACED_PERCENT_RE.sub(r"\1%", s)
+
+        def _repl_tens(m: re.Match) -> str:
+            return str(TENS_MAP[m.group(1).lower()] + ONES_MAP[m.group(2).lower()])
+
+        s = cls._HYPHEN_NUM_RE.sub(_repl_tens, s)
+        s = cls._ADJ_TENS_ONES_RE.sub(_repl_tens, s)
+
+        def _repl_comp(m: re.Match) -> str:
+            raw_c = re.sub(r"[\s-]+", "_", m.group(1).lower())
+            if raw_c.startswith("push_up"):
+                return "pushups" if raw_c.endswith("s") else "pushup"
+            if raw_c.startswith("sit_up"):
+                return "situps" if raw_c.endswith("s") else "situp"
+            if raw_c.startswith("action_figure"):
+                return "figures" if raw_c.endswith("s") else "figure"
+            if raw_c.startswith("school_bus"):
+                return "buses"
+            if raw_c.startswith("apple_pie"):
+                return "apple pies"
+            return m.group(0)
+
+        s = cls._COMPOUND_NOUN_RE.sub(_repl_comp, s)
+
+        for pat, rep in WORD_FRACTIONS:
+            s = pat.sub(rep, s)
+
+        s = cls._HYPHEN_UNIT_RE.sub(r"\1 \2", s)
+        s = re.sub(r"\s+([.,?!:;])", r"\1", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    @classmethod
+    def convert_word_numbers_in_clause(cls, clause: str) -> str:
+        tokens = clause.split()
+        out: List[str] = []
+        i = 0
+        n = len(tokens)
+        while i < n:
+            raw = tokens[i]
+            clean = raw.lower().strip(".,?!:;\"'()[]{}")
+            punct_suffix = raw[len(raw.rstrip(".,?!:;\"')]}")) :]
+            punct_prefix = raw[: len(raw) - len(raw.lstrip("(\"'[{"))]
+
+            if clean in ("a", "one") and i + 1 < n:
+                nxt = tokens[i + 1].lower().strip(".,?!:;\"'()[]{}")
+                if nxt == "dozen":
+                    nxt_suf = tokens[i + 1][len(tokens[i + 1].rstrip(".,?!:;\"')]}")) :]
+                    out.append(f"{punct_prefix}12{nxt_suf}")
+                    i += 2
+                    continue
+                if nxt in ("pair", "couple") and not (i + 2 < n and tokens[i + 2].lower() == "of"):
+                    nxt_suf = tokens[i + 1][len(tokens[i + 1].rstrip(".,?!:;\"')]}")) :]
+                    out.append(f"{punct_prefix}2{nxt_suf}")
+                    i += 2
+                    continue
+
+            if re.fullmatch(r"\d+(?:\.\d+)?", clean) and i + 1 < n:
+                nxt = tokens[i + 1].lower().strip(".,?!:;\"'()[]{}")
+                if nxt == "dozen":
+                    nxt_suf = tokens[i + 1][len(tokens[i + 1].rstrip(".,?!:;\"')]}")) :]
+                    val = float(clean) * 12.0
+                    sval = str(int(val)) if abs(val - round(val)) < 1e-9 else str(val)
+                    out.append(f"{punct_prefix}{sval}{nxt_suf}")
+                    i += 2
+                    continue
+
+            if clean in ("one", "ones"):
+                prev_w = out[-1].lower().strip(".,?!") if out else ""
+                next_w = tokens[i + 1].lower().strip(".,?!") if i + 1 < n else ""
+                if clean == "ones" or prev_w in ("each", "every", "this", "that", "another", "which", "any", "only", "the", "then", "when", "if", "old", "new", "red", "green", "blue", "big", "small", "gets", "got") or next_w == "again":
+                    out.append(raw)
+                    i += 1
+                    continue
+                if not next_w:
+                    out.append(raw)
+                    i += 1
+                    continue
+
+            if clean in ONES_MAP or clean in TENS_MAP:
+                total = 0
+                current = ONES_MAP.get(clean, TENS_MAP.get(clean, 0))
+                j = i + 1
+                last_suf = punct_suffix
+                while j < n:
+                    w_j = tokens[j].lower().strip(".,?!:;\"'()[]{}")
+                    suf_j = tokens[j][len(tokens[j].rstrip(".,?!:;\"')]}")) :]
+                    if w_j == "and" and j + 1 < n:
+                        w_k = tokens[j + 1].lower().strip(".,?!:;\"'()[]{}")
+                        if w_k in ONES_MAP or w_k in TENS_MAP:
+                            j += 1
+                            continue
+                        break
+                    if w_j == "hundred":
+                        current = max(1, current) * 100
+                        last_suf = suf_j
+                        j += 1
+                    elif w_j == "thousand":
+                        total += max(1, current) * 1000
+                        current = 0
+                        last_suf = suf_j
+                        j += 1
+                    elif w_j == "dozen":
+                        current = max(1, current) * 12
+                        last_suf = suf_j
+                        j += 1
+                    elif w_j in TENS_MAP:
+                        current += TENS_MAP[w_j]
+                        last_suf = suf_j
+                        j += 1
+                    elif w_j in ONES_MAP:
+                        current += ONES_MAP[w_j]
+                        last_suf = suf_j
+                        j += 1
+                    else:
+                        break
+                val_num = total + current
+                out.append(f"{punct_prefix}{val_num}{last_suf}")
+                i = j
+                continue
+
+            out.append(raw)
+            i += 1
+        return " ".join(out)
+
+
+def is_math_word_problem(text: str) -> bool:
     if not text or not isinstance(text, str):
         return False
 
-    text_clean = text.strip()
-    text_low = text_clean.lower()
+    norm = TextNormalizer.normalize(text)
+    t_low = norm.lower()
 
-    if ENCYCLOPEDIA_PATTERNS.search(text_low):
+    if ENCYCLOPEDIA_PATTERNS.search(t_low) or QUIZBOWL_CLUE_PATTERNS.search(t_low):
         return False
 
-    if not MATH_QUESTION_PATTERNS.search(text_low):
-        if not ("?" in text_low and re.search(r"\bhow\b", text_low)):
-            return False
-
-    masked_vars = re.findall(r"\b(?:number|var)\d+\b", text_low)
+    if not MATH_QUESTION_PATTERNS.search(t_low):
+        return False
 
     scrubbed = re.sub(
-        r"\b(in|from|to|since|during|year|years|released in|born in|founded in)\s+(1[0-9]{3}|20[0-9]{2})\b",
+        r"\b(?:in|from|to|since|during|year|years|war|apollo|century)\s+\d{1,4}\b",
         " ",
-        text_low,
+        t_low,
+    )
+    scrubbed = re.sub(r"\b(?:a|one)\s+dozen\b", " 12 ", scrubbed)
+    scrubbed = re.sub(r"\b(?:a|one)\s+(?:pair|couple)\b", " 2 ", scrubbed)
+    scrubbed = re.sub(r"\b(?:half|halved)\b", " 0.5 ", scrubbed)
+    scrubbed = re.sub(r"\b(?:twice|double|doubled)\b", " 2 ", scrubbed)
+    scrubbed = re.sub(r"\b(?:thrice|triple|tripled)\b", " 3 ", scrubbed)
+    implicit_time_hits = len(
+        re.findall(r"\b(?:a\s+week|per\s+day|an\s+hour|per\s+minute|a\s+year|per\s+month|quarters|dimes|nickels)\b", scrubbed)
     )
 
     nums = NUMBER_RE.findall(scrubbed)
-    total_num_count = len(nums) + len(masked_vars)
+    w_nums = [w for w in re.findall(r"[a-z]+", scrubbed) if w in WORD_TO_NUM]
+    if len(nums) + len(w_nums) + (1 if implicit_time_hits >= 2 else 0) < 2:
+        return False
 
-    if total_num_count < 2:
-        word_nums = [w for w in re.findall(r"[a-z]+", scrubbed) if w in IMPLICIT_NUM_WORDS]
-        per_a = re.findall(r"\b(?:a|an)\s+(?:minute|hour|day|week|month|year|pie|pack|box|bag|group|shirt|car)\b", scrubbed)
-        if total_num_count + len(word_nums) + len(per_a) < 2:
-            return False
-
-    words_in_text = set(re.findall(r"[a-z]+", text_low))
-    if not (words_in_text & MATH_OPERATION_CUES) and "$" not in text_low and "%" not in text_low:
+    if not MATH_OPERATION_CUES.search(t_low):
         return False
 
     return True
 
 
-# ==========================================
-# 3. 数式の変換・正規化・ボトムアップAST分解
-# ==========================================
-def number_to_var(text):
-    return re.sub(r"\bnumber(\d+)\b", lambda m: f"var{int(m.group(1)) + 1}", text)
+# ==============================================================================
+# 2. 構文・節・前置詞境界・省略単位抽出と型付きレジスタ状態モデル
+# ==============================================================================
+
+STOP_CAPITAL_WORDS: Set[str] = {
+    "the", "a", "an", "and", "but", "or", "so", "yet", "nor", "there", "here",
+    "if", "when", "while", "after", "before", "since", "because", "although",
+    "though", "in", "on", "at", "for", "from", "to", "with", "by", "during",
+    "over", "under", "between", "among", "each", "every", "some", "many", "most",
+    "all", "both", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "how", "what", "which", "who", "where", "why", "find",
+    "calculate", "compute", "determine", "suppose", "assume", "today", "yesterday",
+    "tomorrow", "now", "then", "next", "later", "finally", "first", "second",
+    "third", "last", "monday", "tuesday", "wednesday", "thursday", "friday",
+    "saturday", "sunday", "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december", "spring",
+    "summer", "autumn", "fall", "winter", "his", "her", "their", "its", "he",
+    "she", "they", "it", "we", "you", "i", "this", "that", "these", "those",
+    "grade", "class", "room", "chapter", "mr", "mrs", "ms", "dr", "once", "twice",
+    "together", "altogether", "grandma", "grandpa", "park", "city", "town",
+    "half", "quarter", "double", "triple", "thrice", "few", "several",
+    "rest", "remainder", "another", "other", "others", "each", "neither", "either",
+}
+
+FEMALE_NAMES_HINT: Set[str] = {
+    "mary", "jessica", "jennifer", "linda", "patricia", "elizabeth", "barbara",
+    "susan", "sarah", "karen", "nancy", "lisa", "betty", "margaret", "sandra",
+    "ashley", "kimberly", "emily", "donna", "michelle", "dorothy", "carol", "amanda",
+    "melissa", "deborah", "stephanie", "rebecca", "sharon", "laura", "cynthia",
+    "kathleen", "amy", "angela", "shirley", "anna", "brenda", "pamela", "emma",
+    "nicole", "helen", "samantha", "katherine", "christine", "debra", "rachel",
+    "carolyn", "janet", "catherine", "maria", "heather", "diane", "ruth", "julie",
+    "julia", "olivia", "joyce", "virginia", "victoria", "kelly", "lauren", "christina",
+    "joan", "evelyn", "judith", "megan", "cheryl", "andrea", "hannah", "jacqueline",
+    "martha", "gloria", "teresa", "ann", "sara", "madison", "frances", "kathryn",
+    "janice", "jean", "abigail", "alice", "judy", "sophia", "grace", "denise",
+    "amber", "doris", "marilyn", "danielle", "beverly", "isabella", "theresa",
+    "diana", "natalie", "natalia", "brittany", "charlotte", "marie", "kayla", "alexis",
+    "lori", "tara", "lucy", "claire", "chloe", "lily", "zoe", "mia", "ella", "jane",
+    "sally", "molly", "holly", "jenny", "kate", "katie", "beth", "ellen", "rosa",
+    "carmen", "wendy", "cindy", "becky", "tina", "gina", "nina", "rita", "eva",
+    "weng", "nell", "suzy", "harriet",
+}
+
+ROLE_OWNERS: Set[str] = {
+    "farmer", "baker", "teacher", "chef", "cook", "grocer", "florist", "carpenter",
+    "painter", "tailor", "driver", "pilot", "doctor", "nurse", "librarian", "cashier",
+    "waiter", "waitress", "clerk", "manager", "worker", "builder", "gardener",
+    "parents", "grandparents", "mother", "father", "mom", "dad",
+    "store", "shop", "bakery", "restaurant", "cafe", "booth", "factory", "company",
+    "farm", "library", "school", "club", "team", "theater", "cinema", "zoo",
+    "museum", "hotel", "hospital", "printer", "basket", "barn", "vase",
+}
+
+ADJECTIVE_MODIFIERS: Set[str] = {
+    "red", "blue", "green", "yellow", "orange", "purple", "pink", "black", "white",
+    "brown", "gray", "grey", "golden", "silver", "big", "large", "huge", "giant",
+    "small", "little", "tiny", "medium", "short", "long", "tall", "high", "low",
+    "heavy", "light", "new", "old", "young", "fresh", "rotten", "ripe", "unripe",
+    "sweet", "sour", "hot", "cold", "warm", "chocolate", "vanilla", "strawberry",
+    "lemon", "mango", "apple", "cherry", "cheese", "pepperoni", "wooden", "plastic",
+    "metal", "paper", "glass", "clean", "dirty", "broken", "whole", "full", "empty",
+    "extra", "adult", "male", "female", "hardcover", "paperback", "fiction",
+    "nonfiction", "regular", "special", "different", "morning", "afternoon", "evening",
+    "yesterday", "today", "tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "april", "may", "june", "july", "january", "february", "march", "august",
+    "september", "october", "november", "december",
+}
+
+NON_UNIT_WORDS: Set[str] = {
+    "of", "the", "a", "an", "in", "on", "at", "to", "for", "from", "with", "by",
+    "and", "or", "but", "if", "than", "as", "is", "are", "was", "were", "be",
+    "been", "have", "has", "had", "do", "does", "did", "he", "she", "it", "they",
+    "we", "you", "his", "her", "their", "its", "him", "them", "who", "which",
+    "that", "there", "here", "now", "then", "left", "more", "less", "lesser", "fewer",
+    "away", "out", "up", "down", "back", "off", "over", "each", "every", "per",
+    "altogether", "together", "total", "combined", "already", "still", "also",
+    "too", "only", "just", "about", "around", "nearly", "almost", "enough", "ones", "one",
+    "currently", "today", "yesterday", "tomorrow", "daily", "weekly", "monthly",
+}
+
+CONTENT_STOPWORDS: Set[str] = NON_UNIT_WORDS | {
+    "how", "many", "much", "what", "when", "where", "did", "does", "do", "will", "would",
+    "can", "could", "should", "got", "get", "gets", "had", "has", "have",
+}
+
+UNIT_CONVERSIONS: Dict[Tuple[str, str], float] = {
+    ("cent", "dollar"): 0.01,
+    ("dollar", "cent"): 100.0,
+    ("nickel", "dollar"): 0.05,
+    ("dime", "dollar"): 0.10,
+    ("quarter", "dollar"): 0.25,
+    ("minute", "hour"): 1.0 / 60.0,
+    ("hour", "minute"): 60.0,
+    ("second", "minute"): 1.0 / 60.0,
+    ("minute", "second"): 60.0,
+    ("hour", "day"): 1.0 / 24.0,
+    ("day", "hour"): 24.0,
+    ("day", "week"): 1.0 / 7.0,
+    ("week", "day"): 7.0,
+    ("month", "year"): 1.0 / 12.0,
+    ("year", "month"): 12.0,
+    ("week", "year"): 1.0 / 52.0,
+    ("year", "week"): 52.0,
+    ("inch", "foot"): 1.0 / 12.0,
+    ("foot", "inch"): 12.0,
+    ("foot", "yard"): 1.0 / 3.0,
+    ("yard", "foot"): 3.0,
+    ("gram", "kilogram"): 0.001,
+    ("kilogram", "gram"): 1000.0,
+    ("milliliter", "liter"): 0.001,
+    ("liter", "milliliter"): 1000.0,
+    ("ounce", "pound"): 1.0 / 16.0,
+    ("pound", "ounce"): 16.0,
+    ("dozen", "item"): 12.0,
+}
 
 
-def prefix_to_infix(expression):
-    tokens = number_to_var(expression).split()
-    index = 0
-
-    def parse():
-        nonlocal index
-        token = tokens[index]
-        index += 1
-        if token in OPS:
-            left = parse()
-            right = parse()
-            return f"({left} {token} {right})"
-        return token
-
-    return parse()
-
-
-def canonicalize_ast(expression):
-    tree = ast.parse(expression, mode="eval")
-
-    def collect_assoc(node, op_type):
-        if isinstance(node, ast.BinOp) and isinstance(node.op, op_type):
-            return collect_assoc(node.left, op_type) + collect_assoc(node.right, op_type)
-        return [node]
-
-    def to_str(node):
-        if isinstance(node, ast.Expression):
-            return to_str(node.body)
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Constant):
-            val = float(node.value)
-            return str(int(val)) if val.is_integer() else str(val)
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-            return f"(-{to_str(node.operand)})"
-        if isinstance(node, ast.BinOp):
-            if isinstance(node.op, ast.Add):
-                terms = sorted(to_str(n) for n in collect_assoc(node, ast.Add))
-                res = terms[0]
-                for t in terms[1:]:
-                    res = f"({res} + {t})"
-                return res
-            if isinstance(node.op, ast.Mult):
-                terms = sorted(to_str(n) for n in collect_assoc(node, ast.Mult))
-                res = terms[0]
-                for t in terms[1:]:
-                    res = f"({res} * {t})"
-                return res
-            left_s, right_s = to_str(node.left), to_str(node.right)
-            if isinstance(node.op, ast.Sub):
-                return f"({left_s} - {right_s})"
-            if isinstance(node.op, ast.Div):
-                return f"({left_s} / {right_s})"
-        raise ValueError("Unsupported AST node")
-
-    return to_str(tree)
+@dataclass(frozen=True)
+class QuantReg:
+    reg_id: int
+    value: float
+    owner: str = "global"
+    unit: str = "item"
+    per_unit: Optional[str] = None
+    attr: str = ""
+    stage: str = "INIT"
+    action: str = "have"
+    clause_idx: int = 0
+    ref_owner: str = ""
+    is_implicit: bool = False
+    is_remaining_frac: bool = False
+    depth: int = 0
+    origin_mask: int = 0
+    left_win: Tuple[str, ...] = ()
+    right_win: Tuple[str, ...] = ()
+    clause_words: Tuple[str, ...] = ()
 
 
-def normalize_equation(expression, prefix=False):
-    expression = expression.strip()
-    expression = prefix_to_infix(expression) if prefix else number_to_var(expression)
-    expression = re.sub(r"\s+", " ", expression).replace("( ", "(").replace(" )", ")")
-    try:
-        return canonicalize_ast(expression)
-    except Exception:
-        return expression
+@dataclass
+class GoalSpec:
+    target_owner: str = "global"
+    second_owner: str = ""
+    target_unit: str = "item"
+    second_unit: str = ""
+    per_unit: Optional[str] = None
+    target_attr: str = ""
+    second_attr: str = ""
+    query_type: str = "COUNT"
+    action_lemma: str = "have"
+    question_tokens: Set[str] = field(default_factory=set)
+    question_bigrams: Set[str] = field(default_factory=set)
+    q_focus_modifiers: Set[str] = field(default_factory=set)
+    known_entities: Set[str] = field(default_factory=set)
+    has_the_rest_cue: bool = False
+    unknown_some_stage: str = ""
+    unknown_some_clause: int = -1
 
 
-def max_variable_index(expression):
-    return max((int(idx) for idx in VAR_RE.findall(expression)), default=0)
+@dataclass
+class ClauseInfo:
+    idx: int
+    raw_text: str
+    norm_text: str
+    tokens: List[str]
+    owner: str
+    verb_lemma: str
+    stage_hint: str
+    transfer_to: str = ""
+    transfer_from: str = ""
+    has_remaining_cue: bool = False
+    has_unknown_some: bool = False
+    cue_tokens: Set[str] = field(default_factory=set)
 
 
-def is_self_canceling_or_invalid_duplicate(expression, num_vars_in_question=None):
-    """
-    1. ((var1 + var2) - var2) や ((var1 * var2) / var2) のように同じ変数を足して引く・掛けて割る自己相殺式を除外する。
-    2. (var1 + (var1 * var2)) や (var1 + (var1 / var2)) のような「基準量 + 基準量の倍数/端数」は有効とする。
-       ただし問題文中にまだ未使用の変数があるのに変数を重複使用している式は除外する。
-    """
-    occ = VAR_RE.findall(expression)
-    unique_occ = set(occ)
-    if len(occ) == len(unique_occ):
-        return False
-
-    if num_vars_in_question is not None and len(unique_occ) < num_vars_in_question:
-        return True
-
-    test_primes = [13.37, 29.71, 41.19, 53.83, 67.29, 79.43, 89.61, 97.17]
-    max_idx = max((int(x) for x in unique_occ), default=1)
-    test_vals = {f"var{i + 1}": test_primes[i % len(test_primes)] + i * 100.0 for i in range(max_idx)}
-    try:
-        val = float(eval(expression, {"__builtins__": {}}, test_vals))
-    except Exception:
-        return True
-
-    if abs(val) < 1e-6 or abs(val - 1.0) < 1e-6:
-        return True
-    for v_val in test_vals.values():
-        if math.isclose(val, v_val, abs_tol=1e-5):
-            return True
-
-    try:
-        tree = ast.parse(expression, mode="eval")
-    except Exception:
-        return True
-
-    invalid_dup = False
-
-    def check_node(node):
-        nonlocal invalid_dup
-        if isinstance(node, ast.Expression):
-            return check_node(node.body)
-        if isinstance(node, ast.Name):
-            return {node.id}, False
-        if isinstance(node, ast.Constant):
-            return set(), False
-        if isinstance(node, ast.UnaryOp):
-            return check_node(node.operand)
-        if isinstance(node, ast.BinOp):
-            l_vars, l_has_scale = check_node(node.left)
-            r_vars, r_has_scale = check_node(node.right)
-            overlap = l_vars & r_vars
-            is_scale = isinstance(node.op, (ast.Mult, ast.Div))
-            if overlap:
-                if isinstance(node.op, (ast.Add, ast.Sub)) and len(overlap) == 1:
-                    if (isinstance(node.left, ast.Name) and r_has_scale) or (
-                        isinstance(node.right, ast.Name) and l_has_scale
-                    ):
-                        return l_vars | r_vars, True
-                invalid_dup = True
-            return l_vars | r_vars, (is_scale or l_has_scale or r_has_scale)
-        return set(), False
-
-    check_node(tree)
-    return invalid_dup
-
-
-def decompose_ast_to_steps(expression):
-    """
-    正規化された数式 (例: '((var1 - var2) * var3)') のASTをボトムアップに分解し、
-    1手ずつの (left_expr, op_str, right_expr, result_expr) のリストを返す。
-    """
-    tree = ast.parse(expression, mode="eval")
-    steps = []
-
-    def visit(node):
-        if isinstance(node, ast.Expression):
-            return visit(node.body)
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Constant):
-            val = float(node.value)
-            return str(int(val)) if val.is_integer() else str(val)
-        if isinstance(node, ast.BinOp):
-            l_expr = visit(node.left)
-            r_expr = visit(node.right)
-            if isinstance(node.op, ast.Add):
-                op_s = "+"
-            elif isinstance(node.op, ast.Sub):
-                op_s = "-"
-            elif isinstance(node.op, ast.Mult):
-                op_s = "*"
-            elif isinstance(node.op, ast.Div):
-                op_s = "/"
-            else:
-                raise ValueError("Unsupported op")
-            res_expr = normalize_equation(f"({l_expr} {op_s} {r_expr})", prefix=False)
-            steps.append((l_expr, op_s, r_expr, res_expr))
-            return res_expr
-        raise ValueError("Unsupported node")
-
-    visit(tree)
-    return steps
-
-
-# ==========================================
-# 4. 数値マスクと時間帯別・構造・単位特徴トークン抽出
-# ==========================================
-def preprocess_implicit_numbers(text):
-    """
-    桁区切りカンマ、英語の数詞 (two〜ninety, twenty-five等)、倍数語 (twice, double, triple)、
-    分数語 (half, a third, a quarter)、およびダース・ペア表現を数値に正規化する。
-    """
-    s = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)
-
-    s = re.sub(r"\bhalf\s+a\s+dozen\b", "6", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(a|one)\s+dozen\b", "12", s, flags=re.IGNORECASE)
-    s = re.sub(r"\btwo\s+dozen\b", "24", s, flags=re.IGNORECASE)
-    s = re.sub(r"\bthree\s+dozen\b", "36", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(a|one)\s+pair\s+of\b", "2", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(a|one)\s+couple\s+(?:of\s+)?", "2 ", s, flags=re.IGNORECASE)
-
-    def repl_compound(m):
-        t_w = m.group(1).lower()
-        o_w = m.group(2).lower()
-        return str(TENS_MAP[t_w] + ONES_MAP[o_w])
-
-    s = re.sub(
-        r"\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b",
-        repl_compound,
-        s,
-        flags=re.IGNORECASE,
+class ClauseRoleParser:
+    _PRE_QUESTION_SPLIT_RE = re.compile(
+        r",\s+(?=(?:how|what|find|calculate|determine|at\s+what|in\s+how)\b)"
+        r"|(?<=[a-z0-9])\s+(?=(?:How|What)\s+(?:many|much|long|far|old|fast|big|large|tall|heavy|deep|often|is|was|are|were|did|does|do|will|would|fraction|percent)\b)"
     )
 
-    s = re.sub(r"\b(twice|double)\b", "2 times", s, flags=re.IGNORECASE)
-    s = re.sub(r"\btriple\b", "3 times", s, flags=re.IGNORECASE)
+    _CLAUSE_SPLIT_RE = re.compile(
+        r"(?<=[.?!;])\s+"
+        r"|,\s+(?=(?:and|but|then|so|while|whereas|after|before|if|when|who|which)\b)"
+        r"|(?<=[a-zA-Z0-9])\s+(?=(?:and\s+then|and\s+now|and\s+finally|and\s+today|and\s+yesterday|and\s+tomorrow|after\s+that|but\s+\d+)\b)"
+        r"|\s+and\s+(?=(?:a|an|one|each)\s+(?:[a-z]+\s+)?[a-z]+\s+(?:has|have|had|holds?|contains?|costs?|takes?|requires?)\b)"
+        r"|\s+(?:and|but)\s+(?=(?:gave|give|ate|eat|bought|buy|sold|sell|spent|spend|lost|lose|got|get|received|earned|earn|made|baked|bakes|picked|threw|cut|removed|packed|shared|divided|added|poured|paid|served|serves|\d+\s+(?:less|lesser|fewer|more)\b)\b)",
+        re.IGNORECASE,
+    )
 
-    def repl_cardinal(m):
-        w = m.group(1).lower()
-        return CARDINAL_WORD_TO_NUM.get(w, m.group(0))
+    _FRONTED_SUBORD_SPLIT_RE = re.compile(
+        r"^((?:after|before|when|while|if|since)\s+[^,]+),\s+(.+)$",
+        re.IGNORECASE,
+    )
 
-    card_pat = r"\b(" + "|".join(CARDINAL_WORD_TO_NUM.keys()) + r")\b"
-    s = re.sub(card_pat, repl_cardinal, s, flags=re.IGNORECASE)
+    _LABEL_NOISE_RE = re.compile(
+        r"\b(?:grade|room|chapter|section|part|type|model|version|bus|route|highway|apollo|war)\s+\d+\b"
+        r"|\b\d+(?:st|nd|rd|th)\s+(?:grade|floor|street|avenue|century|birthday)\b",
+        re.IGNORECASE,
+    )
 
-    s = re.sub(r"\bhalf\b(?!\s+\d)", "half 2", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(?:a|one)[-\s]+third\b(?!\s+\d)", "third 3", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(?:a|one)[-\s]+(?:quarter|fourth)\b(?!\s+\d)", "quarter 4", s, flags=re.IGNORECASE)
+    @classmethod
+    def parse(cls, text: str, placeholder_map: Optional[Dict[str, float]] = None) -> Tuple[List[QuantReg], List[ClauseInfo], GoalSpec]:
+        norm_full = TextNormalizer.normalize(text)
+        if not norm_full:
+            return [], [], GoalSpec()
 
-    return s
+        norm_q_sep = cls._PRE_QUESTION_SPLIT_RE.sub(". ", norm_full)
+        prelim_clauses = [c.strip() for c in cls._CLAUSE_SPLIT_RE.split(norm_q_sep) if c.strip()]
 
+        raw_clauses: List[str] = []
+        for pc in prelim_clauses:
+            m_fr = cls._FRONTED_SUBORD_SPLIT_RE.match(pc)
+            if m_fr:
+                raw_clauses.append(m_fr.group(1).strip())
+                raw_clauses.append(m_fr.group(2).strip())
+            else:
+                raw_clauses.append(pc)
 
-def mask_numbers_in_question(text):
-    text_norm = preprocess_implicit_numbers(text)
-    values = []
+        expanded_clauses: List[str] = []
+        for rc in raw_clauses:
+            m_nocomma = re.match(
+                r"^((?:after|before|when)\s+(?:some|[a-z]+)\s+(?:left|ate|came|went|broke|died|joined|fell))\s+((?:he|she|it|they|there|[A-Z][a-z]+)\s+.+)$",
+                rc,
+                re.I,
+            )
+            if m_nocomma:
+                expanded_clauses.append(m_nocomma.group(1).strip())
+                expanded_clauses.append(m_nocomma.group(2).strip())
+            else:
+                expanded_clauses.append(rc)
+        raw_clauses = expanded_clauses or [norm_full]
 
-    def replace(match):
-        values.append(float(match.group()))
-        return f"var{len(values)}"
+        q_idx = len(raw_clauses) - 1
+        for idx in range(len(raw_clauses) - 1, -1, -1):
+            if "?" in raw_clauses[idx] or MATH_QUESTION_PATTERNS.search(raw_clauses[idx]):
+                q_idx = idx
+                break
 
-    return NUMBER_RE.sub(replace, text_norm), values
+        body_raw = raw_clauses[:q_idx]
+        question_raw = " ".join(raw_clauses[q_idx:])
 
+        known_entities: Set[str] = set()
+        for seg in raw_clauses:
+            for w in seg.split():
+                clean = w.strip(".,?!:;\"'()[]{}")
+                if clean.endswith("'s"):
+                    clean = clean[:-2]
+                if len(clean) >= 2 and clean[0].isupper() and clean.lower() not in STOP_CAPITAL_WORDS:
+                    lw = clean.lower()
+                    if lw not in ADJECTIVE_MODIFIERS and lw not in ("dollars", "cents", "pounds", "hours", "minutes", "days", "weeks"):
+                        known_entities.add(lw)
 
-def mask_numbers_in_equation(equation, values):
-    used_indices = set()
+        entity_stack: List[Tuple[str, str]] = []
+        clauses_info: List[ClauseInfo] = []
+        registers: List[QuantReg] = []
+        next_reg_id = 0
 
-    def replace(match):
-        value = float(match.group())
-        candidates = [
-            i for i, num in enumerate(values)
-            if i not in used_indices and math.isclose(num, value, abs_tol=1e-9)
-        ]
-        if not candidates:
-            candidates = [i for i, num in enumerate(values) if math.isclose(num, value, abs_tol=1e-9)]
-        if not candidates:
-            raise ValueError("Equation number not in question")
-        chosen = candidates[0]
-        used_indices.add(chosen)
-        return f"var{chosen + 1}"
+        for c_i, c_raw in enumerate(body_raw):
+            c_clean_labels = cls._LABEL_NOISE_RE.sub(" ", c_raw)
+            c_conv = TextNormalizer.convert_word_numbers_in_clause(c_clean_labels)
+            c_info, c_regs, next_reg_id = cls._parse_body_clause(
+                c_i, c_raw, c_conv, entity_stack, known_entities, next_reg_id, placeholder_map
+            )
+            if c_i > 0 and c_raw.lower().startswith("and ") and c_info.verb_lemma == "have":
+                if not (set(c_info.tokens) & {"have", "has", "had", "is", "are", "was", "were"}):
+                    prev_ci = clauses_info[-1]
+                    c_info.verb_lemma = prev_ci.verb_lemma
+                    c_info.stage_hint = prev_ci.stage_hint
+                    c_info.owner = prev_ci.owner
+                    for r_k in range(len(c_regs)):
+                        rk = c_regs[r_k]
+                        inh_st = "COST_OUT" if (rk.unit == "dollar" and prev_ci.verb_lemma in ("buy", "spend", "pay")) else prev_ci.stage_hint
+                        if rk.stage == "INIT":
+                            c_regs[r_k] = QuantReg(**{**rk.__dict__, "owner": prev_ci.owner, "action": prev_ci.verb_lemma, "stage": inh_st})
+            clauses_info.append(c_info)
+            registers.extend(c_regs)
 
-    return NUMBER_RE.sub(replace, equation)
+        for idx in range(len(registers)):
+            r = registers[idx]
+            if r.owner == "global" and r.clause_idx + 1 < len(clauses_info):
+                c_cur = clauses_info[r.clause_idx].raw_text.lower()
+                nxt_owner = clauses_info[r.clause_idx + 1].owner
+                if c_cur.startswith(("after ", "before ", "when ", "while ")) and nxt_owner not in ("global", "GROUP"):
+                    registers[idx] = QuantReg(**{**r.__dict__, "owner": nxt_owner})
 
+        goal, q_regs, next_reg_id = cls._parse_question_clause(
+            len(clauses_info), question_raw, entity_stack, known_entities, registers, clauses_info, next_reg_id, placeholder_map
+        )
+        registers.extend(q_regs)
 
-STOP_WORDS = {
-    "a", "an", "the", "he", "her", "hers", "him", "his", "it",
-    "she", "their", "them", "they", "there", "am", "are", "be",
-    "been", "being", "is", "was", "were", "do", "does", "did",
-    "can", "could", "will", "would", "some", "that", "this",
-    "these", "those", "mr", "mrs", "ms", "you", "your", "i", "we",
-    "who", "what", "where",
-}
+        registers = cls._inject_implicit_domain_constants(registers, norm_full, goal, next_reg_id)
+        registers = cls._propagate_missing_units(registers, clauses_info, goal)
+        registers = cls._link_indefinite_unit_rates(registers, clauses_info, goal)
+        registers = cls._backfill_coordinated_comparative_refs(registers)
 
-DET_BOUNDARY_WORDS = {
-    "the", "a", "an", "this", "that", "these", "those",
-    "his", "her", "their", "my", "your", "our", "its",
-}
+        return registers, clauses_info, goal
 
-IRREGULAR_LEMMAS = {
-    "bought": "buy", "buys": "buy", "buying": "buy",
-    "gave": "give", "gives": "give", "given": "give",
-    "went": "go", "gone": "go",
-    "lost": "lose", "loses": "lose", "losing": "lose",
-    "spent": "spend", "spends": "spend",
-    "took": "take", "takes": "take", "taken": "take",
-    "told": "tell", "made": "make", "makes": "make",
-    "ate": "eat", "eaten": "eat", "eating": "eat",
-    "paid": "pay", "pays": "pay",
-    "sold": "sell", "sells": "sell",
-    "found": "find", "finds": "find",
-    "caught": "catch", "cut": "cut", "put": "put", "left": "left",
-    "flew": "fly", "flies": "fly",
-    "children": "child", "men": "man", "women": "woman",
-    "feet": "foot", "inches": "inch", "boxes": "box",
-    "packs": "pack", "bags": "bag", "dollars": "dollar",
-    "cents": "cent", "hours": "hour", "minutes": "minute",
-    "days": "day", "weeks": "week", "months": "month",
-    "years": "year", "times": "time", "halves": "half",
-    "candies": "candy", "berries": "berry", "cookies": "cookie",
-    "pennies": "penny", "loaves": "loaf", "leaves": "leaf",
-}
+    @classmethod
+    def _link_indefinite_unit_rates(
+        cls, regs: List[QuantReg], clauses: Sequence[ClauseInfo], goal: GoalSpec
+    ) -> List[QuantReg]:
+        """'A large pizza has 16 slices' や 'charges $15 to mow a lawn' のような不定冠詞レート定義を既出単位と結合"""
+        problem_units = {r.unit for r in regs if r.unit not in ("item", "scalar", "percent", "dollar")}
+        if goal.target_unit not in ("item", "scalar", "percent", "dollar"):
+            problem_units.add(goal.target_unit)
+        if not problem_units:
+            return regs
 
-ES_SUFFIXES = ("ches", "shes", "sses", "xes", "zes")
-MONEY_UNITS = {"dollar", "cent", "money", "price", "cost", "penny", "dime", "quarter", "nickel", "buck", "yen"}
-TIME_UNITS = {"hour", "minute", "second", "day", "week", "month", "year", "morn", "afternoon", "night"}
-DIST_UNITS = {"mile", "foot", "inch", "yard", "meter", "kilometer", "centimeter"}
-WEIGHT_UNITS = {"pound", "ounce", "gram", "kilogram", "ton"}
+        out = list(regs)
+        for idx, r in enumerate(out):
+            if r.per_unit is not None or r.is_implicit or r.clause_idx >= len(clauses):
+                continue
+            if r.stage not in ("INIT", "GAIN", "COST_OUT"):
+                continue
+            c_low = " ".join(clauses[r.clause_idx].tokens)
+            for m_ind in re.finditer(r"\b(?:a|an|one|each|every)\s+(?:([a-z]+)\s+)?([a-z]+)\b", c_low):
+                adj_w = m_ind.group(1) or ""
+                u_cand = lemmatize_noun(m_ind.group(2))
+                if u_cand in problem_units and u_cand != r.unit:
+                    has_other_qty = (u_cand == goal.target_unit and goal.query_type == "COUNT") or any(
+                        k != idx and out[k].unit == u_cand for k in range(len(out))
+                    )
+                    if has_other_qty:
+                        new_attr = adj_w if (adj_w in ADJECTIVE_MODIFIERS and not r.attr) else r.attr
+                        new_st = "COST_RATE" if (r.unit == "dollar" and r.action in ("buy", "spend", "pay")) else "RATE"
+                        out[idx] = QuantReg(**{**r.__dict__, "per_unit": u_cand, "attr": new_attr, "stage": new_st})
+                        break
+        return out
 
-NON_UNIT_WORDS = {
-    "of", "in", "on", "at", "to", "for", "from", "with", "by", "into", "among", "between",
-    "and", "or", "but", "if", "when", "while", "after", "before", "than", "as", "until",
-    "each", "every", "per", "apiece", "all", "both", "more", "less", "fewer", "other", "another",
-    "left", "remain", "remaining", "away", "back", "out", "up", "down", "off", "over",
-    "now", "then", "still", "already", "only", "just", "also", "too", "together", "altogether",
-    "total", "how", "many", "much", "long", "far", "old", "heavy",
-    "first", "second", "third", "fourth", "quarter", "half", "next", "last", "same", "daily",
-}
+    @classmethod
+    def _backfill_coordinated_comparative_refs(cls, regs: List[QuantReg]) -> List[QuantReg]:
+        out = list(regs)
+        for idx in range(len(out) - 1):
+            r_cur = out[idx]
+            r_nxt = out[idx + 1]
+            if r_cur.stage == "INIT" and r_nxt.stage in ("COMP_MORE", "COMP_LESS") and r_nxt.ref_owner and abs(r_nxt.clause_idx - r_cur.clause_idx) <= 1:
+                if "more" in r_cur.right_win or "more" in r_cur.left_win:
+                    out[idx] = QuantReg(**{**r_cur.__dict__, "stage": "COMP_MORE", "ref_owner": r_nxt.ref_owner, "owner": r_nxt.owner if r_cur.owner == "global" else r_cur.owner})
+                elif any(w in ("less", "lesser", "fewer") for w in r_cur.right_win + r_cur.left_win):
+                    out[idx] = QuantReg(**{**r_cur.__dict__, "stage": "COMP_LESS", "ref_owner": r_nxt.ref_owner, "owner": r_nxt.owner if r_cur.owner == "global" else r_cur.owner})
+        return out
 
-CLAUSE_BREAK_WORDS = {".", ",", "?", ";", "if", "when", "while", "after", "before", "but", "so", "how", "and"}
-UNIT_STOP_WORDS = CLAUSE_BREAK_WORDS | {
-    "on", "in", "at", "to", "for", "from", "with", "by", "into", "among", "between",
-    "each", "every", "per", "apiece", "than", "as", "until", "or",
-}
+    @classmethod
+    def _resolve_pronoun_entity(cls, pron: str, stack: Sequence[Tuple[str, str]]) -> str:
+        if pron in ("her", "she"):
+            for ent, g in reversed(stack):
+                if g == "F":
+                    return ent
+        if pron in ("him", "he", "his"):
+            for ent, g in reversed(stack):
+                if g == "M":
+                    return ent
+        if pron in ("it", "its"):
+            for ent, g in reversed(stack):
+                if g == "N":
+                    return ent
+        return stack[-1][0] if stack else ""
 
-SUB_CUES = {
-    "give", "lose", "spend", "eat", "take", "drop", "break", "broken", "burn", "melt",
-    "throw", "delete", "miss", "sell", "use", "used", "drink", "leave", "left", "quit",
-    "fly", "away", "off", "out", "back", "discount", "change", "less", "fewer", "than",
-    "difference", "remain", "remaining", "rest", "still", "need", "needed", "want", "wanted",
-    "already", "only",
-}
+    @classmethod
+    def _detect_entities_in_tokens(
+        cls, raw_tokens: List[str], known_entities: Set[str], entity_stack: List[Tuple[str, str]]
+    ) -> Tuple[str, List[str]]:
+        prev_stack = list(entity_stack)
+        first_words = [t.lower().strip(".,?!:;\"'()[]{}") for t in raw_tokens[:6]]
 
-ADD_CUES = {
-    "add", "added", "plus", "more", "total", "altogether", "together", "combined", "sum",
-    "another", "extra", "additional", "new", "receive", "received", "get", "got", "find",
-    "pick", "picked", "grow", "collect", "collected", "join", "joined", "came", "come",
-    "born", "plant", "planted", "bake", "baked", "earn", "earned", "save", "saved", "win",
-}
+        if first_words and first_words[0] in ("who", "which") and prev_stack:
+            rel_subj = prev_stack[-1][0]
+            return rel_subj, [rel_subj]
 
-MATH_CORE_WORDS = NON_UNIT_WORDS | SUB_CUES | ADD_CUES | MONEY_UNITS | TIME_UNITS | DIST_UNITS | WEIGHT_UNITS | {
-    "buy", "cost", "pay", "price", "split", "share", "shared", "divide", "divided",
-    "equally", "equal", "group", "row", "box", "pack", "bag", "team", "page",
-    "piece", "pair", "dozen", "half", "twice", "double", "time", "have", "had", "has",
-    "make", "put", "hold", "fill", "filled", "fit",
-}
+        if len(first_words) >= 2 and first_words[0] in ("one", "another") and lemmatize_noun(first_words[1]) in ("boy", "girl", "child", "student", "friend", "person", "man", "woman"):
+            return "one_individual", []
+        if len(first_words) >= 3 and first_words[0] == "then" and first_words[1] == "one":
+            return "one_individual", []
 
-ELLIPSIS_BLOCK_PREV = {
-    "into", "by", "page", "grade", "level", "step", "chapter", "number", "group", "team", "row",
-    "half", "third", "quarter", "fourth",
-}
-ELLIPSIS_VERB_PREV = {
-    "had", "have", "has", "buy", "get", "find", "make", "eat", "give", "take",
-    "lose", "spend", "sell", "pick", "collect", "bake", "plant", "earn", "save",
-    "receive", "received", "caught", "catch", "read", "drink", "with",
-}
+        pron_subj = ""
+        for fw in first_words[:4]:
+            fw_base = fw[:-2] if fw.endswith("'s") else fw
+            if fw_base in known_entities or fw_base in ROLE_OWNERS:
+                break
+            if fw in ("she", "he", "it"):
+                pron_subj = cls._resolve_pronoun_entity(fw, prev_stack)
+                break
+            if fw in ("they", "them"):
+                pron_subj = "GROUP"
+                break
 
-
-def simple_lemmatize(word):
-    if word in IRREGULAR_LEMMAS:
-        return IRREGULAR_LEMMAS[word]
-    if len(word) > 4 and word.endswith("ies"):
-        return word[:-3] + "y"
-    if len(word) > 4 and word.endswith(ES_SUFFIXES):
-        return word[:-2]
-    if len(word) > 4 and word.endswith("ing"):
-        return word[:-3]
-    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
-        return word[:-1]
-    return word
-
-
-def get_time_bucket(index, total_length, n_buckets=N_TIME_BUCKETS):
-    if total_length <= 0:
-        return "t0"
-    b = int((index / total_length) * n_buckets)
-    return f"t{min(b, n_buckets - 1)}"
-
-
-def extract_strict_units_with_ellipsis(raw_tokens):
-    """
-    raw_tokens から各変数の直後単位 (u1, u2) を抽出し、
-    単位が省略されている変数 (例: "while her sister had 42." や "She eats 3 for breakfast ... with 4.")
-    に対して先行・後続変数の単位を補完する。
-    """
-    var_strict_units = {}
-    var_sent_id = {}
-    var_order_list = []
-    var_prev_lem = {}
-    sent_id = 0
-
-    for idx_r, tok in enumerate(raw_tokens):
-        if tok in (".", "?", ";"):
-            sent_id += 1
-        if is_var_tok(tok):
-            var_sent_id[tok] = sent_id
-            var_order_list.append(tok)
-            prev_w = raw_tokens[idx_r - 1] if idx_r > 0 else "NONE"
-            var_prev_lem[tok] = simple_lemmatize(prev_w)
-
-            u_list = []
-            prev_was_of = False
-            for offset in range(1, 6):
-                if idx_r + offset >= len(raw_tokens):
-                    break
-                cand_raw = raw_tokens[idx_r + offset]
-                if cand_raw == "of":
-                    prev_was_of = True
+        mentioned: List[str] = []
+        for idx_t, tok in enumerate(raw_tokens):
+            clean = tok.strip(".,?!:;\"'()[]{}")
+            has_pos = clean.endswith("'s")
+            if has_pos:
+                clean = clean[:-2]
+            low = clean.lower()
+            if not low:
+                continue
+            if has_pos and idx_t + 1 < len(raw_tokens):
+                nxt_low = raw_tokens[idx_t + 1].lower().strip(".,?!")
+                if nxt_low in ("mother", "father", "mom", "dad", "brother", "sister", "friend"):
+                    comp_ent = f"{low}_{nxt_low}"
+                    if comp_ent not in mentioned:
+                        mentioned.append(comp_ent)
+                        entity_stack.append((comp_ent, "F" if nxt_low in ("mother", "mom", "sister") else "M"))
                     continue
-                if cand_raw in DET_BOUNDARY_WORDS:
-                    if prev_was_of:
-                        continue
-                    break
-                cand = simple_lemmatize(cand_raw)
-                if cand in UNIT_STOP_WORDS or is_var_tok(cand):
-                    break
-                if cand not in NON_UNIT_WORDS and cand not in STOP_WORDS:
-                    u_list.append(cand)
-                    prev_was_of = False
-                if len(u_list) >= 2:
-                    break
-
-            var_strict_units[tok] = (
-                u_list[0] if len(u_list) >= 1 else "NONE",
-                u_list[1] if len(u_list) >= 2 else "NONE",
-            )
-
-    # 単位省略 (Unit Ellipsis) の補完
-    for idx_v, v in enumerate(var_order_list):
-        if var_strict_units[v] == ("NONE", "NONE") and var_prev_lem.get(v) not in ELLIPSIS_BLOCK_PREV:
-            for prev_v in reversed(var_order_list[:idx_v]):
-                if var_sent_id[prev_v] == var_sent_id[v] and var_strict_units[prev_v] != ("NONE", "NONE"):
-                    var_strict_units[v] = var_strict_units[prev_v]
-                    break
-            if var_strict_units[v] == ("NONE", "NONE"):
-                for next_v in var_order_list[idx_v + 1 :]:
-                    if var_sent_id[next_v] == var_sent_id[v] and var_strict_units[next_v] != ("NONE", "NONE"):
-                        var_strict_units[v] = var_strict_units[next_v]
-                        break
-            if var_strict_units[v] == ("NONE", "NONE") and idx_v > 0:
-                if var_prev_lem.get(v) in ELLIPSIS_VERB_PREV:
-                    prev_v = var_order_list[idx_v - 1]
-                    if var_strict_units[prev_v] != ("NONE", "NONE"):
-                        var_strict_units[v] = var_strict_units[prev_v]
-
-    return var_strict_units, var_sent_id
-
-
-def get_var_spans(words):
-    clauses, curr = [], []
-    for w in words:
-        if w in (".", ",", "?", ";") or w in ("if", "when", "while", "after", "before", "but", "so", "how", "and"):
-            if curr:
-                clauses.append(curr)
-            curr = [w] if w not in (".", ",", "?", ";", "and") else []
-        else:
-            curr.append(w)
-    if curr:
-        clauses.append(curr)
-
-    var_spans = {}
-    intro_cues = set()
-    seen_any_var = False
-    for c in clauses:
-        var_indices = [idx for idx, w in enumerate(c) if is_var_tok(w)]
-        if not var_indices:
-            if not seen_any_var:
-                intro_cues |= (set(c) & (ADD_CUES | SUB_CUES))
-        else:
-            seen_any_var = True
-            if len(var_indices) == 1:
-                var_spans[c[var_indices[0]]] = c
-            else:
-                for k, v_idx in enumerate(var_indices):
-                    start = 0 if k == 0 else min(v_idx, var_indices[k - 1] + 2)
-                    end = len(c) if k == len(var_indices) - 1 else min(var_indices[k + 1], v_idx + 3)
-                    var_spans[c[v_idx]] = c[start:end]
-
-    if (intro_cues & {"combined", "together", "altogether", "total", "sum"}) and "var2" in var_spans:
-        var_spans["var2"] = list(var_spans["var2"]) + list(intro_cues & {"combined", "together", "altogether", "total", "sum"})
-
-    return clauses, var_spans
-
-
-def analyze_question_structure(text):
-    text_low = re.sub(r"[\u2018\u2019`]", "'", text.lower())
-    text_low = re.sub(r"'s\b", "", text_low)
-    text_low = re.sub(r"\$\s*(var\d+)", r"\1 dollar ", text_low)
-    text_low = re.sub(r"[\u00a5\uffe5]\s*(var\d+)", r"\1 yen ", text_low)
-    text_low = text_low.replace("%", " percent ")
-    text_low = re.sub(r"(?<=[a-z0-9])\s*/\s*(?=[a-z])", " per ", text_low)
-    text_low = re.sub(r"[:!]", ".", text_low)
-    raw_tokens = re.findall(r"var\d+|[a-z]+|[.,?;]", text_low)
-    words = []
-    for w in raw_tokens:
-        if w in (".", ",", "?", ";") or is_var_tok(w):
-            words.append(w)
-        elif w not in STOP_WORDS:
-            words.append(simple_lemmatize(w))
-
-    _, var_spans = get_var_spans(words)
-    clean_words = [w for w in words if w not in (".", ",", "?", ";")]
-    n_words = len(clean_words)
-
-    q_idx = 0
-    for idx in range(n_words - 1, -1, -1):
-        if clean_words[idx] in ("how", "what"):
-            q_idx = idx
-            break
-    q_words = clean_words[q_idx:]
-    q_words_set = set(q_words)
-
-    var_strict_units, _ = extract_strict_units_with_ellipsis(raw_tokens)
-
-    var_units, var_time_buckets = {}, {}
-    for i, w in enumerate(clean_words):
-        if is_var_tok(w):
-            var_time_buckets[w] = get_time_bucket(i, n_words)
-            var_units[w] = var_strict_units.get(w, ("NONE", "NONE"))
-
-    each_nouns = set()
-    for i, w in enumerate(clean_words):
-        if w in ("each", "every", "per", "apiece"):
-            for off in range(1, 4):
-                if i + off < n_words and not is_var_tok(clean_words[i + off]):
-                    cand_e = clean_words[i + off]
-                    if cand_e in UNIT_STOP_WORDS:
-                        break
-                    if cand_e not in NON_UNIT_WORDS:
-                        each_nouns.add(cand_e)
-            if i - 1 >= 0 and not is_var_tok(clean_words[i - 1]):
-                each_nouns.add(clean_words[i - 1])
-
-    q_rate_nouns = set()
-    for i, w in enumerate(q_words):
-        if w in ("each", "every", "per", "apiece", "one"):
-            if i + 1 < len(q_words) and not is_var_tok(q_words[i + 1]):
-                q_rate_nouns.add(q_words[i + 1])
-        elif w == "daily":
-            q_rate_nouns.add("day")
-
-    asks_money = bool(q_words_set & {"pay", "spend", "cost", "price", "money", "dollar", "cent", "change", "earn", "save"}) or (
-        "how" in q_words and "much" in q_words and not (q_words_set & WEIGHT_UNITS)
-    )
-    asks_time = (
-        ("how" in q_words and "long" in q_words)
-        or bool((q_words_set - q_rate_nouns) & TIME_UNITS)
-    ) and not asks_money
-    asks_dist = ("how" in q_words and "far" in q_words) or bool((q_words_set - q_rate_nouns) & DIST_UNITS)
-    asks_weight = ("how" in q_words and "heavy" in q_words) or "weigh" in q_words_set or bool((q_words_set - q_rate_nouns) & WEIGHT_UNITS)
-
-    q_var_units = {q_words[i + 1] for i, w in enumerate(q_words) if is_var_tok(w) and i + 1 < len(q_words)}
-    q_target_nouns = {
-        w for i, w in enumerate(q_words)
-        if w not in NON_UNIT_WORDS and not is_var_tok(w) and w not in q_rate_nouns
-        and not (w in q_var_units and "many" not in q_words[:i])
-    }
-
-    double_match_vars = {
-        v for v, (u1, u2) in var_units.items()
-        if u1 != "NONE" and u2 != "NONE" and u1 in q_target_nouns and u2 in q_target_nouns
-    }
-
-    q_match_vars = set()
-    if double_match_vars:
-        q_match_vars = double_match_vars
-    else:
-        for v, (u1, u2) in var_units.items():
-            if (
-                (u1 != "NONE" and u1 in q_target_nouns)
-                or (u2 != "NONE" and u2 in q_target_nouns)
-                or (asks_money and (u1 in MONEY_UNITS or u2 in MONEY_UNITS))
-                or (asks_time and (u1 in TIME_UNITS or u2 in TIME_UNITS))
-                or (asks_dist and (u1 in DIST_UNITS or u2 in DIST_UNITS))
-                or (asks_weight and (u1 in WEIGHT_UNITS or u2 in WEIGHT_UNITS))
-            ):
-                q_match_vars.add(v)
-
-    same_unit_pairs, diff_unit_pairs = set(), set()
-    var_keys = sorted(var_units.keys())
-    for i in range(len(var_keys)):
-        for j in range(i + 1, len(var_keys)):
-            v1, v2 = var_keys[i], var_keys[j]
-            u1_a, u1_b = var_units[v1]
-            u2_a, u2_b = var_units[v2]
-            exact_match = (u1_a != "NONE" and u1_a == u2_a)
-            head_match = (u1_b != "NONE" and u1_b == u2_b) or (u1_a != "NONE" and u1_a == u2_b) or (u1_b != "NONE" and u1_b == u2_a)
-            cat_match = (
-                ({u1_a, u1_b} & MONEY_UNITS and {u2_a, u2_b} & MONEY_UNITS)
-                or ({u1_a, u1_b} & TIME_UNITS and {u2_a, u2_b} & TIME_UNITS)
-            )
-            if exact_match or cat_match:
-                same_unit_pairs.add((v1, v2))
-            elif head_match and u1_a not in q_target_nouns and u2_a not in q_target_nouns:
-                same_unit_pairs.add((v1, v2))
-            else:
-                diff_unit_pairs.add((v1, v2))
-
-    time_tokens = {k: set() for k in TIME_KEYS}
-
-    def add_tok(t_b, tok):
-        time_tokens["all"].add(tok)
-        if t_b in time_tokens:
-            time_tokens[t_b].add(tok)
-
-    for i, w in enumerate(clean_words):
-        if is_var_tok(w):
-            t_b = get_time_bucket(i, n_words)
-            u1, u2 = var_units[w]
-            prev1 = clean_words[i - 1] if i > 0 and clean_words[i - 1] in MATH_CORE_WORDS else "OBJ"
-            prev2 = clean_words[i - 2] if i > 1 and clean_words[i - 2] in MATH_CORE_WORDS else "OBJ"
-            add_tok(t_b, f"PREV1_{w}_{prev1}")
-            add_tok(t_b, f"PREV2_{w}_{prev2}_{prev1}")
-
-            span_set = set(var_spans.get(w, []))
-            if span_set & {"each", "every", "per", "apiece"}:
-                add_tok(t_b, f"EACH_IN_SPAN_{w}")
-            for sh in (span_set & SUB_CUES):
-                add_tok(t_b, f"SPAN_SUB_{w}_{sh}")
-            if span_set & SUB_CUES:
-                add_tok(t_b, f"SPAN_ANY_SUB_{w}")
-            for ah in (span_set & ADD_CUES):
-                add_tok(t_b, f"SPAN_ADD_{w}_{ah}")
-            if span_set & ADD_CUES:
-                add_tok(t_b, f"SPAN_ANY_ADD_{w}")
-
-            add_tok(t_b, f"Q_UNIT_MATCH_{w}" if w in q_match_vars else f"Q_UNIT_NOMATCH_{w}")
-            if (u1 != "NONE" and u1 in each_nouns) or (u2 != "NONE" and u2 in each_nouns):
-                add_tok(t_b, f"ROLE_EACH_NOUN_{w}")
-            if w in q_words_set:
-                add_tok(t_b, f"IN_Q_CLAUSE_{w}")
-
-    for v1, v2 in same_unit_pairs:
-        time_tokens["all"].add(f"SAME_UNIT_EXACT_{v1}_{v2}")
-    for v1, v2 in diff_unit_pairs:
-        time_tokens["all"].add(f"DIFF_UNIT_{v1}_{v2}")
-
-    abstract_items = []
-    for i, w in enumerate(clean_words):
-        t_b = get_time_bucket(i, n_words)
-        if is_var_tok(w) or w in MATH_CORE_WORDS:
-            abstract_items.append((w, t_b))
-        elif not abstract_items or abstract_items[-1][0] != "OBJ":
-            abstract_items.append(("OBJ", t_b))
-
-    for w, t_b in abstract_items:
-        if w != "OBJ":
-            add_tok(t_b, w)
-    for i in range(len(abstract_items) - 1):
-        (w1, tb1), (w2, tb2) = abstract_items[i], abstract_items[i + 1]
-        if w1 != "OBJ" or w2 != "OBJ":
-            add_tok(tb2 if is_var_tok(w2) else tb1, f"{w1}_{w2}")
-
-    q_abstract = [
-        (clean_words[idx], get_time_bucket(idx, n_words))
-        for idx in range(q_idx, n_words)
-        if is_var_tok(clean_words[idx]) or clean_words[idx] in MATH_CORE_WORDS
-    ]
-    for w, t_b in q_abstract:
-        add_tok(t_b, f"Q_{w}")
-    for i in range(len(q_abstract) - 1):
-        (w1, tb1), (w2, _tb2) = q_abstract[i], q_abstract[i + 1]
-        add_tok(tb1, f"QBI_{w1}_{w2}")
-
-    return time_tokens, same_unit_pairs, diff_unit_pairs, q_match_vars, var_time_buckets
-
-
-def tokenize_by_time(text):
-    time_tokens, _, _, _, var_time_buckets = analyze_question_structure(text)
-    return time_tokens, var_time_buckets
-
-
-def permute_time_tokens_and_eq(time_tokens, var_time_buckets, eq, mapping):
-    def repl(m):
-        v = f"var{m.group(1)}"
-        return mapping.get(v, v)
-
-    def map_tok(t):
-        t_mapped = TOKEN_VAR_RE.sub(repl, t)
-        m_pair = re.match(r"^(SAME_UNIT_EXACT|DIFF_UNIT)_(var\d+)_(var\d+)$", t_mapped)
-        if m_pair:
-            prefix, v_a, v_b = m_pair.groups()
-            if v_a > v_b:
-                v_a, v_b = v_b, v_a
-            t_mapped = f"{prefix}_{v_a}_{v_b}"
-        return t_mapped
-
-    new_eq = normalize_equation(TOKEN_VAR_RE.sub(repl, eq), prefix=False)
-    orig_vars = sorted([k for k in mapping.keys() if k in var_time_buckets], key=lambda v: int(v[3:]))
-    orig_buckets = [var_time_buckets[v] for v in orig_vars]
-    vars_by_new_order = sorted(orig_vars, key=lambda v: int(mapping[v][3:]))
-
-    var_to_new_bucket, bucket_map_candidates = {}, defaultdict(set)
-    for r, orig_v in enumerate(vars_by_new_order):
-        old_b, new_b = var_time_buckets[orig_v], orig_buckets[r]
-        var_to_new_bucket[orig_v] = new_b
-        bucket_map_candidates[old_b].add(new_b)
-
-    bucket_map = {old_b: next(iter(new_bs)) for old_b, new_bs in bucket_map_candidates.items() if len(new_bs) == 1}
-    new_time_tokens = {k: set() for k in TIME_KEYS}
-    for t_key, tok_set in time_tokens.items():
-        if t_key == "all":
-            for tok in tok_set:
-                new_time_tokens["all"].add(map_tok(tok))
-        else:
-            for tok in tok_set:
-                vars_in_tok = [f"var{m}" for m in TOKEN_VAR_RE.findall(tok)]
-                if len(vars_in_tok) == 1 and vars_in_tok[0] in var_to_new_bucket:
-                    target_b = var_to_new_bucket[vars_in_tok[0]]
-                else:
-                    target_b = bucket_map.get(t_key, t_key)
-                new_time_tokens[target_b].add(map_tok(tok))
-
-    return new_time_tokens, new_eq
-
-
-def time_tokens_to_feature_dict(time_tokens):
-    feat = {}
-    for t_key, tok_set in time_tokens.items():
-        scale = 1.0 if t_key == "all" else TIME_FEATURE_SCALE
-        for w in tok_set:
-            feat[f"{t_key}::{w}"] = scale
-    return feat
-
-
-# ==========================================
-# 5. ビームサーチ（スタック型段階探索）用の状態・単位代数・特徴抽出
-# ==========================================
-def extract_rich_question_info(text, values=None):
-    text_low = re.sub(r"[\u2018\u2019`]", "'", text.lower())
-    text_low = re.sub(r"'s\b", "", text_low)
-    text_low = re.sub(r"\$\s*(var\d+)", r"\1 dollar ", text_low)
-    text_low = re.sub(r"[\u00a5\uffe5]\s*(var\d+)", r"\1 yen ", text_low)
-    text_low = text_low.replace("%", " percent ")
-    text_low = re.sub(r"(?<=[a-z0-9])\s*/\s*(?=[a-z])", " per ", text_low)
-    text_low = re.sub(r"[:!]", ".", text_low)
-    raw_tokens = re.findall(r"var\d+|[a-z]+|[.,?;]", text_low)
-
-    words = []
-    for w in raw_tokens:
-        if w in (".", ",", "?", ";") or is_var_tok(w):
-            words.append(w)
-        elif w not in STOP_WORDS:
-            words.append(simple_lemmatize(w))
-
-    clauses, var_spans = get_var_spans(words)
-    clean_words = [w for w in words if w not in (".", ",", "?", ";")]
-    n_words = len(clean_words)
-
-    q_idx = 0
-    for idx in range(n_words - 1, -1, -1):
-        if clean_words[idx] in ("how", "what"):
-            q_idx = idx
-            break
-    q_words = clean_words[q_idx:]
-    q_words_set = set(q_words)
-
-    var_clause_id = {}
-    var_full_clause = {}
-    for c_id, c in enumerate(clauses):
-        for w in c:
-            if is_var_tok(w):
-                var_clause_id[w] = c_id
-                var_full_clause[w] = c
-
-    var_strict_units, var_sent_id = extract_strict_units_with_ellipsis(raw_tokens)
-
-    q_asks_rate = bool(q_words_set & {"each", "every", "per", "apiece", "one", "daily"})
-    q_rate_nouns = set()
-    for i, w in enumerate(q_words):
-        if w in ("each", "every", "per", "apiece", "one"):
-            for off in range(1, 4):
-                if i + off < len(q_words) and not is_var_tok(q_words[i + off]):
-                    if q_words[i + off] in UNIT_STOP_WORDS:
-                        break
-                    if q_words[i + off] not in NON_UNIT_WORDS:
-                        q_rate_nouns.add(q_words[i + off])
-        elif w == "daily":
-            q_rate_nouns.add("day")
-
-    if "day" in q_rate_nouns:
-        q_rate_nouns.update({"morn", "afternoon", "night"})
-
-    asks_money = bool(q_words_set & {"pay", "spend", "cost", "price", "money", "dollar", "cent", "change", "earn", "save"}) or (
-        "how" in q_words and "much" in q_words and not (q_words_set & WEIGHT_UNITS)
-    )
-    asks_time = (
-        ("how" in q_words and "long" in q_words)
-        or bool((q_words_set - q_rate_nouns) & TIME_UNITS)
-    ) and not asks_money
-    asks_dist = ("how" in q_words and "far" in q_words) or bool((q_words_set - q_rate_nouns) & DIST_UNITS)
-    asks_weight = ("how" in q_words and "heavy" in q_words) or "weigh" in q_words_set or bool((q_words_set - q_rate_nouns) & WEIGHT_UNITS)
-
-    q_var_units = {q_words[i + 1] for i, w in enumerate(q_words) if is_var_tok(w) and i + 1 < len(q_words)}
-    q_target_nouns = {
-        w for i, w in enumerate(q_words)
-        if w not in NON_UNIT_WORDS and not is_var_tok(w) and w not in q_rate_nouns
-        and not (w in q_var_units and "many" not in q_words[:i])
-    }
-
-    each_nouns = set()
-    for i, w in enumerate(clean_words):
-        if w in ("each", "every", "per", "apiece"):
-            for off in range(1, 4):
-                if i + off < n_words and not is_var_tok(clean_words[i + off]):
-                    cand_e = clean_words[i + off]
-                    if cand_e in UNIT_STOP_WORDS:
-                        break
-                    if cand_e not in NON_UNIT_WORDS:
-                        each_nouns.add(cand_e)
-            if i - 1 >= 0 and not is_var_tok(clean_words[i - 1]):
-                each_nouns.add(clean_words[i - 1])
-
-    var_nodes = {}
-    for i, w in enumerate(clean_words):
-        if is_var_tok(w):
-            v_num = int(w[3:])
-            val = float(values[v_num - 1]) if values is not None and v_num - 1 < len(values) else float(v_num)
-            u1, u2 = var_strict_units.get(w, ("NONE", "NONE"))
-            units = {u for u in (u1, u2) if u != "NONE"}
-
-            span = var_spans.get(w, [])
-            full_c = var_full_clause.get(w, span)
-            span_set = set(span)
-            full_c_set = set(full_c)
-
-            rate_units = set()
-            for seq in (span, full_c):
-                for idx_s, sw in enumerate(seq):
-                    if sw in ("each", "every", "per", "apiece"):
-                        for off in range(1, 4):
-                            if idx_s + off >= len(seq):
-                                break
-                            cand_r = seq[idx_s + off]
-                            if cand_r in UNIT_STOP_WORDS or is_var_tok(cand_r):
-                                break
-                            if cand_r not in NON_UNIT_WORDS and cand_r not in units:
-                                rate_units.add(cand_r)
-                        if idx_s - 1 >= 0 and sw in ("each", "apiece"):
-                            cand_r = seq[idx_s - 1]
-                            if (
-                                not is_var_tok(cand_r)
-                                and cand_r not in NON_UNIT_WORDS
-                                and cand_r not in units
-                            ):
-                                rate_units.add(cand_r)
-
-            if q_rate_nouns and (rate_units & q_rate_nouns):
-                rate_units = rate_units - q_rate_nouns
-
-            prev1 = clean_words[i - 1] if i > 0 and clean_words[i - 1] in MATH_CORE_WORDS else "OBJ"
-            prev2 = clean_words[i - 2] if i > 1 and clean_words[i - 2] in MATH_CORE_WORDS else "OBJ"
-
-            cues_sub = set(span_set & SUB_CUES)
-            cues_add = set(span_set & ADD_CUES)
-            if "take" in cues_sub and ("take" in q_words_set or bool(q_words_set & {"total", "altogether", "combined", "all"})):
-                cues_sub.discard("take")
-
-            if (units & MONEY_UNITS) and rate_units and asks_money and ("sell" in cues_sub):
-                cues_sub.discard("sell")
-
-            if prev1 == "with" and "bake" in cues_add:
-                cues_add.discard("bake")
-                cues_sub.add("use")
-
-            is_frac_div = prev1 in ("half", "third", "quarter", "fourth")
-            is_mult_scale = ("time" in units) or (i + 1 < n_words and clean_words[i + 1] == "time")
-
-            is_q_match = bool(
-                (units & q_target_nouns)
-                or (asks_money and (units & MONEY_UNITS))
-                or (asks_time and (units & TIME_UNITS))
-                or (asks_dist and (units & DIST_UNITS))
-                or (asks_weight and (units & WEIGHT_UNITS))
-            )
-
-            var_nodes[w] = {
-                "name": w,
-                "expr": w,
-                "val": val,
-                "u1": u1,
-                "u2": u2,
-                "units": units,
-                "rate_units": rate_units,
-                "cues_sub": cues_sub,
-                "cues_add": cues_add,
-                "has_each": bool(rate_units) or bool((span_set | full_c_set) & {"each", "every", "per", "apiece"}),
-                "role_each_noun": bool(units & each_nouns),
-                "in_q_clause": w in q_words_set,
-                "q_match": is_q_match,
-                "is_frac_div": is_frac_div,
-                "is_mult_scale": is_mult_scale,
-                "prev1": prev1,
-                "prev2": prev2,
-                "pos_idx": i,
-                "var_order": v_num,
-                "clause_id": var_clause_id.get(w, -1),
-                "sent_id": var_sent_id.get(w, -1),
-                "vars_used": frozenset([w]),
-                "depth": 0,
-                "last_op": "INIT",
-            }
-
-    remainder_positions = [
-        idx for idx, w in enumerate(clean_words)
-        if w in ("remainder", "remaining", "rest") and idx < q_idx
-    ]
-    if remainder_positions:
-        rem_pos = remainder_positions[0]
-        early_vars = [
-            vn for vn in sorted(var_nodes.values(), key=lambda x: x["var_order"])
-            if vn["pos_idx"] < rem_pos
-        ]
-        if len(early_vars) >= 2:
-            base_u = early_vars[0]["units"]
-            for ev in early_vars[1:]:
-                if ev["units"] & base_u:
-                    ev["cues_sub"].add("leave")
-                    ev["cues_add"].clear()
-
-    q_abstract = [
-        clean_words[idx]
-        for idx in range(q_idx, n_words)
-        if is_var_tok(clean_words[idx]) or clean_words[idx] in MATH_CORE_WORDS
-    ]
-
-    wants_combine_all = bool(
-        set(clean_words) & {"total", "altogether", "together", "combined", "all", "both"}
-    )
-
-    q_ctx = {
-        "clean_words": clean_words,
-        "q_words": q_words,
-        "q_words_set": q_words_set,
-        "q_abstract": q_abstract,
-        "q_target_nouns": q_target_nouns,
-        "q_asks_rate": q_asks_rate,
-        "q_rate_nouns": q_rate_nouns,
-        "asks_money": asks_money,
-        "asks_time": asks_time,
-        "asks_dist": asks_dist,
-        "asks_weight": asks_weight,
-        "each_nouns": each_nouns,
-        "wants_combine_all": wants_combine_all,
-        "num_vars": len(var_nodes),
-    }
-    return var_nodes, q_ctx
-
-
-def apply_step_operation(nodeL, nodeR, action, board_nodes, q_ctx):
-    if action == "ADD":
-        op_L, op_R, op_sym = nodeL, nodeR, "+"
-    elif action == "SUB_LR":
-        op_L, op_R, op_sym = nodeL, nodeR, "-"
-    elif action == "SUB_RL":
-        op_L, op_R, op_sym = nodeR, nodeL, "-"
-    elif action == "MUL":
-        op_L, op_R, op_sym = nodeL, nodeR, "*"
-    elif action == "DIV_LR":
-        op_L, op_R, op_sym = nodeL, nodeR, "/"
-    elif action == "DIV_RL":
-        op_L, op_R, op_sym = nodeR, nodeL, "/"
-    else:
-        return None
-
-    val_L, val_R = op_L["val"], op_R["val"]
-    if op_sym == "+":
-        new_val = val_L + val_R
-    elif op_sym == "-":
-        new_val = val_L - val_R
-        if new_val <= 1e-9:
-            return None
-    elif op_sym == "*":
-        new_val = val_L * val_R
-        if new_val <= 1e-9:
-            return None
-    elif op_sym == "/":
-        if abs(val_R) < 1e-9:
-            return None
-        new_val = val_L / val_R
-        if new_val <= 1e-9:
-            return None
-    else:
-        return None
-
-    uL, uR = op_L["units"], op_R["units"]
-    rL, rR = op_L["rate_units"], op_R["rate_units"]
-
-    same_unit = bool(
-        (uL & uR)
-        or ((uL & MONEY_UNITS) and (uR & MONEY_UNITS))
-        or ((uL & TIME_UNITS) and (uR & TIME_UNITS))
-    )
-    diff_unit = bool(uL and uR and not same_unit)
-
-    step_dim_bonus = 0.0
-    other_nodes = [
-        n for n in board_nodes
-        if n["expr"] != nodeL["expr"] and n["expr"] != nodeR["expr"]
-    ]
-
-    if op_sym in ("+", "-"):
-        if op_L.get("is_frac_div") or op_R.get("is_frac_div") or op_L.get("is_mult_scale") or op_R.get("is_mult_scale"):
-            return None
-        new_units = uL | uR
-        new_rate_units = rL | rR
-        if same_unit:
-            step_dim_bonus += 1.5
-            if rL and rR and (rL & rR):
-                step_dim_bonus += 2.2
-            elif bool(rL) != bool(rR) and (op_L["last_op"] == "*" or op_R["last_op"] == "*"):
-                step_dim_bonus -= 4.0
-
-            if op_sym == "-":
-                if op_R["cues_sub"] and not op_L["cues_sub"]:
-                    step_dim_bonus += 2.4
-                elif op_L["cues_sub"] and not op_R["cues_sub"] and op_L["depth"] == 0:
-                    step_dim_bonus -= 2.5
-                elif not op_L["cues_sub"] and not op_R["cues_sub"]:
-                    if any(bool(n["cues_sub"]) and bool(n["units"] & new_units) for n in other_nodes):
-                        step_dim_bonus -= 2.2
-                    elif q_ctx.get("wants_combine_all"):
-                        step_dim_bonus -= 1.8
-            else:
-                if "discount" in (op_L["cues_sub"] | op_R["cues_sub"]):
-                    step_dim_bonus -= 3.0
-                elif op_R["cues_sub"] and not op_R["cues_add"] and "leave" in op_R["cues_sub"]:
-                    step_dim_bonus -= 2.5
-                elif not op_L["cues_sub"] and not op_R["cues_sub"]:
-                    if (
-                        (op_L["cues_add"] or op_R["cues_add"])
-                        or (op_L.get("sent_id", -1) >= 0 and op_L.get("sent_id") == op_R.get("sent_id"))
-                        or any(bool(n["cues_sub"]) and bool(n["units"] & new_units) for n in other_nodes)
-                        or q_ctx.get("wants_combine_all")
-                    ):
-                        step_dim_bonus += 1.6
-        elif diff_unit:
-            step_dim_bonus -= 4.5
-
-    elif op_sym == "*":
-        cancel_lr = bool(rL & uR)
-        cancel_rl = bool(rR & uL)
-        if cancel_lr and not cancel_rl:
-            new_units = set(uL)
-            new_rate_units = set()
-            step_dim_bonus += 2.2
-            if op_L["depth"] >= 1 or op_R["depth"] >= 1:
-                step_dim_bonus += 2.5
-            else:
-                if any(bool(n["units"] & uL) and bool(n["rate_units"] & rL) for n in other_nodes):
-                    if op_L["cues_sub"] or any(bool(n["cues_sub"]) for n in other_nodes if bool(n["units"] & uL)):
-                        step_dim_bonus -= 4.0
-                    else:
-                        step_dim_bonus -= 1.5
-                if any(bool(n["units"] & uR) and bool(n["cues_sub"] | n["cues_add"]) for n in other_nodes):
-                    step_dim_bonus -= 3.5
-        elif cancel_rl and not cancel_lr:
-            new_units = set(uR)
-            new_rate_units = set()
-            step_dim_bonus += 2.2
-            if op_R["depth"] >= 1 or op_L["depth"] >= 1:
-                step_dim_bonus += 2.5
-            else:
-                if any(bool(n["units"] & uR) and bool(n["rate_units"] & rR) for n in other_nodes):
-                    if op_R["cues_sub"] or any(bool(n["cues_sub"]) for n in other_nodes if bool(n["units"] & uR)):
-                        step_dim_bonus -= 4.0
-                    else:
-                        step_dim_bonus -= 1.5
-                if any(bool(n["units"] & uL) and bool(n["cues_sub"] | n["cues_add"]) for n in other_nodes):
-                    step_dim_bonus -= 3.5
-        elif op_R.get("is_mult_scale") and not op_L.get("is_mult_scale"):
-            new_units = set(uL)
-            new_rate_units = set(rL)
-            step_dim_bonus += 2.2
-        elif op_L.get("is_mult_scale") and not op_R.get("is_mult_scale"):
-            new_units = set(uR)
-            new_rate_units = set(rR)
-            step_dim_bonus += 2.2
-        else:
-            new_units = uL if op_L["q_match"] else (uR if op_R["q_match"] else (uL | uR))
-            new_rate_units = set()
-            if same_unit and uL:
-                step_dim_bonus -= 2.0
-
-    else:  # "/"
-        if abs(new_val - round(new_val)) > 1e-6:
-            if abs(new_val * 4 - round(new_val * 4)) > 1e-5 and abs(new_val * 10 - round(new_val * 10)) > 1e-5:
-                step_dim_bonus -= 2.5
-            else:
-                step_dim_bonus -= 0.5
-        if op_R.get("is_frac_div") and not op_L.get("is_frac_div"):
-            new_units = set(uL)
-            new_rate_units = set(rL)
-            step_dim_bonus += 2.6
-        elif same_unit and rR:
-            new_units = set(rR)
-            new_rate_units = set()
-            step_dim_bonus += 1.5
-        elif diff_unit:
-            new_units = set(uL)
-            new_rate_units = set(uR)
-            if q_ctx["q_asks_rate"]:
-                step_dim_bonus += 1.2
-        else:
-            new_units = set(uL)
-            new_rate_units = set()
-
-    raw_expr = f"({op_L['expr']} {op_sym} {op_R['expr']})"
-    norm_expr = normalize_equation(raw_expr, prefix=False)
-    if is_self_canceling_or_invalid_duplicate(norm_expr):
-        return None
-
-    is_q_match = bool(
-        (new_units & q_ctx["q_target_nouns"])
-        or (q_ctx["asks_money"] and (new_units & MONEY_UNITS))
-        or (q_ctx["asks_time"] and (new_units & TIME_UNITS))
-        or (q_ctx["asks_dist"] and (new_units & DIST_UNITS))
-        or (q_ctx["asks_weight"] and (new_units & WEIGHT_UNITS))
-    )
-
-    new_node = {
-        "name": norm_expr,
-        "expr": norm_expr,
-        "val": new_val,
-        "u1": next(iter(new_units), "NONE"),
-        "u2": "NONE",
-        "units": new_units,
-        "rate_units": new_rate_units,
-        "cues_sub": (op_L["cues_sub"] | op_R["cues_sub"]) if op_sym != "-" else set(),
-        "cues_add": set(),
-        "has_each": bool(new_rate_units),
-        "role_each_noun": False,
-        "in_q_clause": op_L["in_q_clause"] or op_R["in_q_clause"],
-        "q_match": is_q_match,
-        "is_frac_div": False,
-        "is_mult_scale": False,
-        "prev1": op_L["prev1"],
-        "prev2": op_L["prev2"],
-        "pos_idx": min(op_L["pos_idx"], op_R["pos_idx"]),
-        "var_order": max(op_L["var_order"], op_R["var_order"]),
-        "clause_id": op_L["clause_id"],
-        "sent_id": op_L.get("sent_id", -1),
-        "vars_used": op_L["vars_used"] | op_R["vars_used"],
-        "depth": max(op_L["depth"], op_R["depth"]) + 1,
-        "last_op": op_sym,
-    }
-    return new_node, step_dim_bonus
-
-
-def extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=1):
-    feat = {}
-    uL, uR = nodeL["units"], nodeR["units"]
-    rL, rR = nodeL["rate_units"], nodeR["rate_units"]
-
-    same_unit = bool(
-        (uL & uR)
-        or ((uL & MONEY_UNITS) and (uR & MONEY_UNITS))
-        or ((uL & TIME_UNITS) and (uR & TIME_UNITS))
-    )
-    diff_unit = bool(uL and uR and not same_unit)
-
-    feat[f"S{min(step_num, 3)}::BIAS"] = 1.0
-    feat[f"NVARS::{min(q_ctx['num_vars'], 5)}"] = 1.0
-
-    if same_unit:
-        feat["PAIR::SAME_UNIT"] = 1.0
-    elif diff_unit:
-        feat["PAIR::DIFF_UNIT"] = 1.0
-
-    if rL and rR and (rL & rR):
-        feat["PAIR::SAME_RATE_DENOM"] = 1.0
-    if bool(rL) != bool(rR) and same_unit:
-        feat["PAIR::RATE_MISMATCH"] = 1.0
-
-    if rL & uR:
-        feat["PAIR::CANCEL_LR"] = 1.0
-    if rR & uL:
-        feat["PAIR::CANCEL_RL"] = 1.0
-
-    if nodeL["clause_id"] == nodeR["clause_id"] and nodeL["clause_id"] >= 0:
-        feat["PAIR::SAME_CLAUSE"] = 1.0
-    if nodeL.get("sent_id", -1) == nodeR.get("sent_id", -1) and nodeL.get("sent_id", -1) >= 0:
-        feat["PAIR::SAME_SENT"] = 1.0
-
-    feat[f"L::LAST_OP_{nodeL['last_op']}"] = 1.0
-    feat[f"L::PREV1_{nodeL['prev1']}"] = 1.0
-    feat[f"L::PREV2_{nodeL['prev2']}_{nodeL['prev1']}"] = 1.0
-    if nodeL["has_each"]:
-        feat["L::HAS_EACH"] = 1.0
-    if nodeL["role_each_noun"]:
-        feat["L::ROLE_EACH_NOUN"] = 1.0
-    if nodeL["q_match"]:
-        feat["L::Q_MATCH"] = 1.0
-    else:
-        feat["L::Q_NOMATCH"] = 1.0
-    if nodeL["in_q_clause"]:
-        feat["L::IN_Q_CLAUSE"] = 1.0
-    if nodeL["cues_sub"]:
-        feat["L::ANY_SUB"] = 1.0
-        for sh in nodeL["cues_sub"]:
-            feat[f"L::SUB_{sh}"] = 1.0
-    if nodeL["cues_add"]:
-        feat["L::ANY_ADD"] = 1.0
-        for ah in nodeL["cues_add"]:
-            feat[f"L::ADD_{ah}"] = 1.0
-
-    feat[f"R::LAST_OP_{nodeR['last_op']}"] = 1.0
-    feat[f"R::PREV1_{nodeR['prev1']}"] = 1.0
-    feat[f"R::PREV2_{nodeR['prev2']}_{nodeR['prev1']}"] = 1.0
-    if nodeR["has_each"]:
-        feat["R::HAS_EACH"] = 1.0
-    if nodeR["role_each_noun"]:
-        feat["R::ROLE_EACH_NOUN"] = 1.0
-    if nodeR.get("is_frac_div"):
-        feat["R::IS_FRAC_DIV"] = 1.0
-    if nodeR.get("is_mult_scale"):
-        feat["R::IS_MULT_SCALE"] = 1.0
-    if nodeR["q_match"]:
-        feat["R::Q_MATCH"] = 1.0
-    else:
-        feat["R::Q_NOMATCH"] = 1.0
-    if nodeR["in_q_clause"]:
-        feat["R::IN_Q_CLAUSE"] = 1.0
-    if nodeR["cues_sub"]:
-        feat["R::ANY_SUB"] = 1.0
-        for sh in nodeR["cues_sub"]:
-            feat[f"R::SUB_{sh}"] = 1.0
-    if nodeR["cues_add"]:
-        feat["R::ANY_ADD"] = 1.0
-        for ah in nodeR["cues_add"]:
-            feat[f"R::ADD_{ah}"] = 1.0
-
-    if same_unit and nodeR["cues_sub"] and not nodeL["cues_sub"]:
-        feat["COMBO::SAME_U_R_SUB"] = 1.0
-    if same_unit and nodeL["cues_sub"] and not nodeR["cues_sub"]:
-        feat["COMBO::SAME_U_L_SUB"] = 1.0
-    if same_unit and (nodeR["cues_add"] or (nodeL.get("sent_id", -1) == nodeR.get("sent_id", -1) and not nodeL["cues_sub"] and not nodeR["cues_sub"])):
-        feat["COMBO::SAME_U_R_ADD"] = 1.0
-    if (rL & uR) and not nodeL["cues_sub"]:
-        feat["COMBO::CLEAN_RATE_MUL_LR"] = 1.0
-    if (rR & uL) and not nodeR["cues_sub"]:
-        feat["COMBO::CLEAN_RATE_MUL_RL"] = 1.0
-
-    if q_ctx["q_asks_rate"]:
-        feat["Q::ASKS_RATE"] = 1.0
-    for qw in q_ctx["q_abstract"]:
-        if not is_var_tok(qw):
-            feat[f"Q::{qw}"] = 0.6
-    for idx_q in range(len(q_ctx["q_abstract"]) - 1):
-        w1, w2 = q_ctx["q_abstract"][idx_q], q_ctx["q_abstract"][idx_q + 1]
-        if not is_var_tok(w1) and not is_var_tok(w2):
-            feat[f"QBI::{w1}_{w2}"] = 0.6
-
-    return feat
-
-
-def permute_question_vars(question, eq, values, mapping):
-    def repl(m):
-        v = f"var{m.group(1)}"
-        return mapping.get(v, v)
-
-    new_q = TOKEN_VAR_RE.sub(repl, question)
-    new_eq = normalize_equation(TOKEN_VAR_RE.sub(repl, eq), prefix=False)
-    max_v = max(len(values), max((int(v[3:]) for v in mapping.values()), default=0))
-    new_values = [1.0] * max_v
-    for idx_old, val in enumerate(values):
-        v_old = f"var{idx_old + 1}"
-        v_new = mapping.get(v_old, v_old)
-        new_idx = int(v_new[3:]) - 1
-        if 0 <= new_idx < max_v:
-            new_values[new_idx] = val
-    return new_q, new_eq, new_values
-
-
-def extract_unified_step_samples(question, eq, values):
-    """
-    任意の深さのAST (2変数〜6変数以上の多段式) をボトムアップに1手ずつシミュレートし、
-    各ステップの盤面における正例アクションと負例(NONE)ペアをすべて抽出する。
-    """
-    try:
-        steps = decompose_ast_to_steps(eq)
-    except Exception:
-        return []
-    if not steps:
-        return []
-
-    var_nodes, q_ctx = extract_rich_question_info(question, values)
-    if len(var_nodes) < 2:
-        return []
-
-    samples = []
-    board = dict(var_nodes)
-
-    for step_idx, (l_expr, op_s, r_expr, _res_expr) in enumerate(steps, start=1):
-        if l_expr not in board or r_expr not in board or l_expr == r_expr:
-            break
-
-        n1, n2 = board[l_expr], board[r_expr]
-        if step_idx >= 2 and n2["depth"] > n1["depth"]:
-            target_L, target_R = n2, n1
-            is_lr = False
-        elif step_idx >= 2 and n1["depth"] > n2["depth"]:
-            target_L, target_R = n1, n2
-            is_lr = True
-        elif n1["var_order"] <= n2["var_order"]:
-            target_L, target_R = n1, n2
-            is_lr = True
-        else:
-            target_L, target_R = n2, n1
-            is_lr = False
-
-        if op_s == "+":
-            true_act = "ADD"
-        elif op_s == "-":
-            true_act = "SUB_LR" if is_lr else "SUB_RL"
-        elif op_s == "*":
-            true_act = "MUL"
-        elif op_s == "/":
-            true_act = "DIV_LR" if is_lr else "DIV_RL"
-        else:
-            break
-
-        target_pair = (target_L["expr"], target_R["expr"])
-        board_list = sorted(board.values(), key=lambda x: (-x["depth"], x["var_order"]))
-
-        for i in range(len(board_list)):
-            for j in range(i + 1, len(board_list)):
-                b1, b2 = board_list[i], board_list[j]
-                if step_idx >= 2 and b2["depth"] > b1["depth"]:
-                    cand_L, cand_R = b2, b1
-                elif step_idx >= 2 and b1["depth"] > b2["depth"]:
-                    cand_L, cand_R = b1, b2
-                elif b1["var_order"] <= b2["var_order"]:
-                    cand_L, cand_R = b1, b2
-                else:
-                    cand_L, cand_R = b2, b1
-
-                f_dict = extract_step_pair_features(cand_L, cand_R, q_ctx, step_num=step_idx)
-                lbl = true_act if (cand_L["expr"], cand_R["expr"]) == target_pair else "NONE"
-                samples.append((f_dict, lbl))
-
-        res_out = apply_step_operation(target_L, target_R, true_act, board_list, q_ctx)
-        if res_out is None:
-            break
-        new_node, _ = res_out
-        later_exprs = {x for st in steps[step_idx:] for x in (st[0], st[2])}
-        if l_expr not in later_exprs:
-            board.pop(l_expr, None)
-        if r_expr not in later_exprs:
-            board.pop(r_expr, None)
-        board[new_node["expr"]] = new_node
-
-    return samples
-
-
-# ==========================================
-# 6. AST評価 ＆ 次元解析・非負・同単位未使用ペナルティチェック
-# ==========================================
-def evaluate_with_eval(expression, values):
-    variables = {f"var{i + 1}": v for i, v in enumerate(values)}
-    return float(eval(expression, {"__builtins__": {}}, variables))
-
-
-def check_ast_and_dimensional_bonus(
-    expression,
-    values,
-    same_unit_pairs,
-    diff_unit_pairs,
-    q_match_vars,
-    var_nodes=None,
-):
-    if is_self_canceling_or_invalid_duplicate(expression, num_vars_in_question=len(values)):
-        return False, -1e9, None
-
-    try:
-        tree = ast.parse(expression, mode="eval")
-    except Exception:
-        return False, -1e9, None
-
-    variables = {f"var{i + 1}": v for i, v in enumerate(values)}
-    bonus = 0.0
-    valid = True
-
-    def eval_node(node):
-        nonlocal bonus, valid
-        if isinstance(node, ast.Expression):
-            return eval_node(node.body)
-        if isinstance(node, ast.Name):
-            if node.id not in variables:
-                valid = False
-                return 0.0, None
-            return variables[node.id], node.id
-        if isinstance(node, ast.Constant):
-            return float(node.value), None
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-            val, u_var = eval_node(node.operand)
-            return -val, u_var
-        if isinstance(node, ast.BinOp):
-            left_val, left_u = eval_node(node.left)
-            right_val, right_u = eval_node(node.right)
-            if not valid:
-                return 0.0, None
-
-            if isinstance(node.op, (ast.Add, ast.Sub)):
-                if var_nodes is not None:
-                    if (left_u in var_nodes and (var_nodes[left_u].get("is_frac_div") or var_nodes[left_u].get("is_mult_scale"))) or (
-                        right_u in var_nodes and (var_nodes[right_u].get("is_frac_div") or var_nodes[right_u].get("is_mult_scale"))
-                    ):
-                        valid = False
-                        return 0.0, None
-                if left_u is not None and right_u is not None and left_u != right_u:
-                    pair = tuple(sorted([left_u, right_u]))
-                    if pair in same_unit_pairs:
-                        bonus += 1.5
-                        if var_nodes is not None and left_u in var_nodes and right_u in var_nodes:
-                            nL, nR = var_nodes[left_u], var_nodes[right_u]
-                            if isinstance(node.op, ast.Sub):
-                                if nR["cues_sub"] and not nL["cues_sub"]:
-                                    bonus += 1.8
-                                elif nL["cues_sub"] and not nR["cues_sub"]:
-                                    bonus -= 1.8
-                            else:
-                                if "discount" in (nL["cues_sub"] | nR["cues_sub"]):
-                                    bonus -= 2.5
-                                elif not nL["cues_sub"] and not nR["cues_sub"]:
-                                    if nL["cues_add"] or nR["cues_add"] or (nL.get("sent_id", -1) >= 0 and nL.get("sent_id") == nR.get("sent_id")):
-                                        bonus += 1.2
-                    elif pair in diff_unit_pairs and len(same_unit_pairs) > 0:
-                        bonus -= 4.5
-                rep_u = left_u or right_u
-                if isinstance(node.op, ast.Add):
-                    return left_val + right_val, rep_u
-                res = left_val - right_val
-                if res <= 0:
-                    valid = False
-                return res, rep_u
-
-            if isinstance(node.op, ast.Mult):
-                if var_nodes is not None:
-                    r_left = var_nodes[left_u]["rate_units"] if left_u in var_nodes else set()
-                    u_left = var_nodes[left_u]["units"] if left_u in var_nodes else set()
-                    r_right = var_nodes[right_u]["rate_units"] if right_u in var_nodes else set()
-                    u_right = var_nodes[right_u]["units"] if right_u in var_nodes else set()
-                    if (r_left & u_right) and left_u is not None:
-                        bonus += 1.5
-                        return left_val * right_val, left_u
-                    if (r_right & u_left) and right_u is not None:
-                        bonus += 1.5
-                        return left_val * right_val, right_u
-                    if right_u in var_nodes and var_nodes[right_u].get("is_mult_scale") and left_u is not None:
-                        bonus += 1.4
-                        return left_val * right_val, left_u
-                    if left_u in var_nodes and var_nodes[left_u].get("is_mult_scale") and right_u is not None:
-                        bonus += 1.4
-                        return left_val * right_val, right_u
-                return left_val * right_val, None
-
-            if isinstance(node.op, ast.Div):
-                if abs(right_val) < 1e-9:
-                    valid = False
-                    return 0.0, None
-                res = left_val / right_val
-                if abs(res - round(res)) > 1e-6:
-                    if abs(res * 4 - round(res * 4)) > 1e-5 and abs(res * 10 - round(res * 10)) > 1e-5:
-                        bonus -= 2.5
-                    else:
-                        bonus -= 0.5
-                if var_nodes is not None and right_u in var_nodes and var_nodes[right_u].get("is_frac_div"):
-                    bonus += 1.8
-                    return res, left_u
-                return res, None
-
-        valid = False
-        return 0.0, None
-
-    final_val, _ = eval_node(tree)
-    if not valid or final_val <= 0:
-        return False, -1e9, None
-
-    used_vars = {f"var{idx}" for idx in VAR_RE.findall(expression)}
-    if q_match_vars:
-        for v in q_match_vars:
-            bonus += 0.6 if v in used_vars else -0.8
-
-    for v_a, v_b in same_unit_pairs:
-        if (v_a in used_vars) != (v_b in used_vars):
-            v_used = v_a if v_a in used_vars else v_b
-            v_unused = v_b if v_a in used_vars else v_a
-            if var_nodes is not None and v_used in var_nodes and v_unused in var_nodes:
-                nu, nun = var_nodes[v_used], var_nodes[v_unused]
-                if nu["rate_units"] and nun["rate_units"] and (nu["rate_units"] & nun["rate_units"]):
-                    bonus -= 5.5
-                elif "discount" in (nu["cues_sub"] | nun["cues_sub"]):
-                    bonus -= 4.5
-                elif bool(nun["cues_sub"] | nun["cues_add"]):
-                    bonus -= 3.8
-                elif v_used in q_match_vars and v_unused in q_match_vars:
-                    if nu.get("sent_id", -1) >= 0 and nu.get("sent_id") == nun.get("sent_id"):
-                        bonus -= 3.5
-                elif v_unused in q_match_vars and any(
-                    (v_used, v_other) in diff_unit_pairs or (v_other, v_used) in diff_unit_pairs
-                    for v_other in used_vars if v_other != v_used
+            prev_tok_low = raw_tokens[idx_t - 1].lower().strip(".,?!") if idx_t > 0 else ""
+            if low in known_entities:
+                if prev_tok_low in ("than", "to", "from", "for", "with"):
+                    gender = "F" if low in FEMALE_NAMES_HINT else "M"
+                    entity_stack.append((low, gender))
+                    continue
+                if low not in mentioned:
+                    mentioned.append(low)
+                    gender = "F" if low in FEMALE_NAMES_HINT else "M"
+                    entity_stack.append((low, gender))
+            elif low in ROLE_OWNERS and low not in STOP_CAPITAL_WORDS:
+                prev2_low = raw_tokens[idx_t - 2].lower().strip(".,?!") if idx_t > 1 else ""
+                if prev_tok_low in ("than", "to", "from", "in", "on", "at", "into", "of", "for") or (
+                    prev_tok_low in ("his", "her", "their", "the", "a", "an") and prev2_low in ("in", "on", "at", "into", "to", "from", "for")
                 ):
-                    bonus -= 2.0
+                    continue
+                if low not in mentioned:
+                    mentioned.append(low)
+                    g = "N" if low in {"store", "shop", "bakery", "booth", "club", "team", "school", "basket", "barn", "factory", "printer", "vase", "restaurant", "theater"} else "M"
+                    entity_stack.append((low, g))
 
-    return True, bonus, final_val
+        if pron_subj:
+            return pron_subj, mentioned
 
+        if not mentioned:
+            for fw in first_words:
+                if fw in ("his", "her") and prev_stack:
+                    resolved = cls._resolve_pronoun_entity(fw, prev_stack)
+                    if resolved:
+                        return resolved, mentioned
 
-# ==========================================
-# 7. ビームサーチ（スタック型段階探索）＋ HalfKP型NNUE ハイブリッドモデル
-# ==========================================
-class MathNNUEModel:
-    def __init__(self, h1=HIDDEN1_SIZE, h2=HIDDEN2_SIZE, beam_width=BEAM_WIDTH):
-        self.h1 = h1
-        self.h2 = h2
-        self.beam_width = beam_width
-        self.equations = []
-        self.eq_to_id = {}
-        self.words = []
-        self.word_to_id = {}
-        self.num_formulas = 0
-        self.num_words = 0
+        if len(mentioned) >= 2 and "and" in first_words[:4]:
+            subj = "GROUP"
+        elif mentioned:
+            subj = mentioned[0]
+        elif prev_stack:
+            subj = prev_stack[-1][0]
+        else:
+            subj = "global"
 
-        self.weight1 = None
-        self.b1 = None
-        self.W2 = None
-        self.b2 = None
-        self.W3 = None
-        self.base_w = None
-        self.base_b = None
+        return subj, mentioned
 
-        self.step_actions = list(STEP_ACTIONS)
-        self.step_act_to_id = {a: i for i, a in enumerate(self.step_actions)}
-        self.step_words = []
-        self.step_word_to_id = {}
-        self.step_w = None
-        self.step_b = None
+    @classmethod
+    def _classify_clause_verb_and_transfer(
+        cls, low_text: str, low_tokens: List[str], subj: str, mentioned: List[str], known_entities: Set[str]
+    ) -> Tuple[str, str, str, str]:
+        transfer_to = ""
+        transfer_from = ""
 
-        self.is_loaded = False
+        m_to = re.search(
+            r"\b(?:gave|give|gives|handed|passed|lent|donated)\b.*?\bto\s+(?:(?:her|his|their|the|a|an)\s+)?([a-z]+)\b",
+            low_text,
+        )
+        if m_to:
+            cand = m_to.group(1)
+            if cand in known_entities or cand in ROLE_OWNERS or cand in ("her", "him", "student", "students", "friend", "friends", "child", "children", "kid", "kids", "boy", "boys", "girl", "girls", "brother", "sister"):
+                transfer_to = cand
 
-    def fit_and_save(self, dataset, weights_path=WEIGHTS_FILE):
-        raw_X_dicts, raw_y_labels = [], []
-        step_X_dicts, step_y_labels = [], []
+        if not transfer_to:
+            m_ditrans = re.search(r"\b(?:gave|give|gives|handed|lent)\s+(her|him|[a-z]+)\s+(?:\$?\d+|some\b)", low_text)
+            if m_ditrans:
+                cand = m_ditrans.group(1)
+                if cand in known_entities or cand in ("her", "him"):
+                    transfer_to = cand
 
-        for idx_row, item in enumerate(dataset):
-            question, eq, values, _ans = item[:4]
-            source_tag = item[4] if len(item) >= 5 else "MAWPS"
+        m_from = re.search(
+            r"\b(?:got|get|gets|received|receives|borrowed|took|take|bought|buy)\b.*?\bfrom\s+([a-z]+)\b",
+            low_text,
+        )
+        if m_from:
+            cand = m_from.group(1)
+            if cand in known_entities or cand in ROLE_OWNERS:
+                transfer_from = cand
 
-            if is_self_canceling_or_invalid_duplicate(eq, num_vars_in_question=len(values)):
+        verb_lemma = "have"
+        for tok in low_tokens:
+            if tok in ("decided", "wanted", "tried", "went", "started", "began", "caused", "cause", "bring", "poured", "created", "placed"):
+                continue
+            lem = lemmatize_verb(tok)
+            if lem in {
+                "buy", "sell", "give", "get", "eat", "drink", "spend", "pay", "cost",
+                "earn", "make", "bake", "cook", "pick", "find", "lose", "break", "use",
+                "take", "bring", "catch", "collect", "plant", "read", "write", "walk",
+                "run", "drive", "save", "leave", "pack", "produce", "print", "cut",
+                "throw", "add", "remove", "organize", "play", "jump", "lay", "serve", "have",
+            }:
+                if lem != "have" or verb_lemma == "have":
+                    verb_lemma = lem
+                    if lem != "have":
+                        break
+
+        if re.search(r"\b(?:saving\s+money\s+for|wants\s+to\s+buy|needs\s+\$?\d+|which\s+costs\s+\$?\d+)\b", low_text):
+            stage = "TARGET_GOAL"
+        elif re.search(
+            r"\b(?:left\s+over|had\s+\$?\d+\s+.*?left|has\s+\$?\d+\s+.*?left|now\s+has|now\s+have|there\s+are\s+now|are\s+\d+\s+.*?now\b|were\s+\d+\s+.*?remaining|are\s+\d+\s+.*?remaining|still\s+had|still\s+has|still\s+have|ended\s+up\s+with|remained)\b",
+            low_text,
+        ):
+            stage = "FINAL"
+        elif re.search(r"\b(?:paid\s+with|gave\s+(?:the\s+)?cashier|handed\s+(?:the\s+)?cashier)\b", low_text):
+            stage = "PAID_BILL"
+        elif transfer_to:
+            stage = "LOSE"
+        elif transfer_from:
+            stage = "GAIN"
+        elif re.search(
+            r"\b(?:discount\s+of|ate|eats|eaten|lost|lose|spent|spend|sold|sell|broke|broken|dropped|threw\s+away|threw|flew\s+away|ran\s+away|went\s+away|moved\s+away|gave\s+away|drank|melted|spilled|wasted|rotten|defective|died|fell\s+off|cut\s+off|taken\s+away|taken|removed|subtracted|deducted|has\s+to\s+pay|had\s+to\s+pay|owes|owed|some\s+left|bakes\s+[a-z]+\s+.*?with\s+\d+)\b",
+            low_text,
+        ):
+            stage = "LOSE"
+        elif re.search(
+            r"\b(?:bought|buy|purchased|found|find|got|received|earned|earn|collected|picked|baked|made|added|poured|grew|caught|won|saved|saves|came\s+to\s+join|joined|cut\s+some\s+more|more\s+[a-z]+|another\s+\d+)\b",
+            low_text,
+        ):
+            stage = "GAIN"
+        else:
+            stage = "INIT"
+
+        if low_text.startswith(("after eating", "after giving", "after losing", "after spending", "after using", "after selling")):
+            stage = "LOSE"
+        elif low_text.startswith(("after buying", "after finding", "after getting", "after receiving", "after earning", "after baking", "after making")):
+            stage = "GAIN"
+
+        return verb_lemma, stage, transfer_to, transfer_from
+
+    @classmethod
+    def _extract_unit_and_rate_around(
+        cls, tokens: List[str], pos: int, raw_num_str: str, clause_low: str
+    ) -> Tuple[str, Optional[str], str]:
+        unit = "item"
+        per_unit: Optional[str] = None
+        attrs: List[str] = []
+
+        if raw_num_str.startswith("$"):
+            unit = "dollar"
+        elif raw_num_str.endswith("%"):
+            unit = "percent"
+
+        n = len(tokens)
+        if pos >= 2 and tokens[pos - 1].lower().strip(".,?!") in ("of", "with", "holding", "containing"):
+            prev_container = lemmatize_noun(tokens[pos - 2])
+            if prev_container in MULTIPLIER_CONTAINER_UNITS:
+                per_unit = prev_container
+
+        m_cut_into = re.search(r"\b(?:each|every)\s+([a-z]+)\s+into\s+\d+", clause_low)
+        if m_cut_into:
+            cp = lemmatize_noun(m_cut_into.group(1))
+            if cp and cp not in NON_UNIT_WORDS:
+                per_unit = cp
+
+        direct_obj_before_to = ""
+        if pos >= 2 and tokens[pos - 1].lower().strip(".,?!") == "to":
+            cand_obj = lemmatize_noun(tokens[pos - 2])
+            if cand_obj and cand_obj not in NON_UNIT_WORDS and cand_obj not in VERB_LEMMA:
+                direct_obj_before_to = cand_obj
+
+        j = pos + 1
+        if j < n and tokens[j].lower().strip(".,?!") == "of":
+            j += 1
+            while j < n and tokens[j].lower().strip(".,?!") in ("the", "his", "her", "their", "its", "these", "those", "remaining", "rest"):
+                j += 1
+
+        end_scan = min(n, pos + 8)
+        for scan_k in range(pos + 1, end_scan):
+            tk_clean = tokens[scan_k].strip(".,?!:;\"'()[]{}")
+            if re.fullmatch(r"\$?\d+(?:\.\d+)?%?|\d+/\d+|number\d+", tk_clean, re.I):
+                end_scan = scan_k
+                break
+            if tk_clean.lower() in ("and", "or", "but", "who", "which", "while", "if", "when", "before", "after", "than"):
+                end_scan = scan_k
+                break
+
+        # 単位名詞の探索: 前置詞境界 (BOUNDARY_PREPOSITIONS: in/on/for/during/with/at 等) に到達した時点で打ち切る！
+        # これにより "eats 3 for breakfast" や "6 during dinner" や "5 in the basket" で誤って前置詞目的語を単位にせず unit="item" (先行単位継承) になる！
+        for k in range(j, end_scan):
+            w = tokens[k].lower().strip(".,?!:;\"'()[]{}")
+            if not w:
+                continue
+            if w in ("per", "each", "every", "a", "an") and unit != "item":
+                if w in ("per", "every", "each") and k + 1 < end_scan:
+                    pw = lemmatize_noun(tokens[k + 1])
+                    if pw == "morning":
+                        pw = "day"
+                    if pw and pw not in NON_UNIT_WORDS:
+                        per_unit = pw
+                        break
+                if w == "each":
+                    nxt_after_each = tokens[k + 1].lower().strip(".,?!") if k + 1 < len(tokens) else ""
+                    if nxt_after_each and (nxt_after_each in VERB_LEMMA or nxt_after_each in ("have", "has", "had", "get", "got", "need", "needs", "hold", "holds", "cost", "costs", "weigh", "weighs")):
+                        break
+                    per_unit = per_unit or "group"
+                    break
+                if w in ("a", "an") and k + 1 < end_scan:
+                    prev_prep = tokens[k - 1].lower().strip(".,?!") if k > 0 else ""
+                    pw = lemmatize_noun(tokens[k + 1])
+                    if prev_prep not in BOUNDARY_PREPOSITIONS and pw in TIME_UNITS:
+                        per_unit = "day" if pw == "morning" else pw
+                        break
+                continue
+            # 前置詞境界にぶつかったら単位名詞探索は終了！
+            if w in BOUNDARY_PREPOSITIONS:
+                break
+            if w in NON_UNIT_WORDS:
+                continue
+            if w in ADJECTIVE_MODIFIERS:
+                attrs.append(w)
+                continue
+            lem = lemmatize_noun(w)
+            if lem and lem not in NON_UNIT_WORDS:
+                if unit == "dollar" and lem not in ("dollar", "cent", "bill"):
+                    if lem not in ("selling", "buying", "paying", "making", "discount"):
+                        attrs.append(lem)
+                elif unit == "item":
+                    unit = lem
+                break
+
+        if direct_obj_before_to and unit in ("friend", "item"):
+            unit = direct_obj_before_to
+
+        local_after_tokens = [tokens[k].lower().strip(".,?!") for k in range(pos + 1, end_scan)]
+        window_after = " ".join(local_after_tokens)
+        if per_unit is None:
+            m_pe = re.search(r"\b(?:per|every|each)\s+(?:fresh\s+|new\s+|[a-z]+\s+)?([a-z]+)\b", window_after)
+            if m_pe:
+                cp = lemmatize_noun(m_pe.group(1))
+                if cp == "morning":
+                    cp = "day"
+                if cp and cp != unit and cp not in NON_UNIT_WORDS:
+                    per_unit = cp
+            elif re.search(r"(?<!\bon\s)(?<!\bin\s)(?<!\bfor\s)(?<!\bat\s)\b(?:an|a)\s+(hour|minute|second|day|week|month|year|morning)\b", window_after):
+                m_tm = re.search(r"\b(?:an|a)\s+(hour|minute|second|day|week|month|year|morning)\b", window_after)
+                if m_tm:
+                    cp = lemmatize_noun(m_tm.group(1))
+                    per_unit = "day" if cp == "morning" else cp
+            elif re.search(r"\b(?:each\s*$|apiece\b)", window_after):
+                found_prev_u = ""
+                for back_k in range(pos - 1, -1, -1):
+                    bw_raw = tokens[back_k].lower().strip(".,?!")
+                    if bw_raw in ("and", "but", "then", ";"):
+                        break
+                    if re.fullmatch(r"\$?\d+(?:\.\d+)?%?|number\d+", bw_raw):
+                        if back_k + 1 < pos:
+                            cand_u = lemmatize_noun(tokens[back_k + 1])
+                            if cand_u and cand_u not in NON_UNIT_WORDS:
+                                found_prev_u = cand_u
+                                break
+                per_unit = found_prev_u or "group"
+
+        if per_unit is None and pos > 0:
+            before_str = " ".join(t.lower().strip(".,?!") for t in tokens[:pos])
+            m_subj_each = re.search(r"\b\d+(?:\.\d+)?\s+([a-z]+)\s+each\b", before_str)
+            if m_subj_each:
+                cand_s = lemmatize_noun(m_subj_each.group(1))
+                if cand_s and cand_s != unit and cand_s not in NON_UNIT_WORDS:
+                    per_unit = cand_s
+
+        if per_unit is None:
+            m_each_any = re.search(r"\b(?:each|every)\s+([a-z]+)\b", clause_low)
+            if m_each_any:
+                raw_after_e = m_each_any.group(1)
+                if raw_after_e not in VERB_LEMMA and raw_after_e not in ("have", "has", "had", "get", "got", "need", "hold", "cost", "other", "time"):
+                    cand_p = lemmatize_noun(raw_after_e)
+                    if cand_p == "morning":
+                        cand_p = "day"
+                    if cand_p and cand_p != unit and cand_p not in NON_UNIT_WORDS:
+                        per_unit = cand_p
+
+        m_build_for = re.search(r"\b(?:to\s+build|for)\s+(?:a|an|the)\s+([a-z]+)\b", window_after)
+        if m_build_for:
+            bf = lemmatize_noun(m_build_for.group(1))
+            if bf and bf not in NON_UNIT_WORDS and bf not in TIME_UNITS and bf not in attrs:
+                attrs.append(bf)
+
+        m_time_attr = re.search(
+            r"\b(?:in|on|during)\s+(?:the\s+)?(morning|afternoon|evening|lunch|dinner|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b",
+            window_after if window_after else clause_low,
+        )
+        if m_time_attr and m_time_attr.group(1) not in attrs:
+            attrs.append(m_time_attr.group(1))
+        else:
+            m_day_adv = re.search(r"\b(yesterday|today|tomorrow)\b", clause_low)
+            if m_day_adv and m_day_adv.group(1) not in attrs:
+                attrs.append(m_day_adv.group(1))
+
+        if pos + 3 < n and tokens[pos + 2].lower().strip(".,?!") == "of":
+            item_of = lemmatize_noun(tokens[pos + 3])
+            if item_of and item_of not in NON_UNIT_WORDS and item_of not in attrs:
+                attrs.append(item_of)
+
+        return unit, per_unit, "_".join(attrs[:2])
+
+    @classmethod
+    def _parse_numeric_token(cls, tok: str, placeholder_map: Optional[Dict[str, float]]) -> Optional[Tuple[float, str]]:
+        clean = tok.strip(".,?!:;\"'()[]{}")
+        if not clean:
+            return None
+        low = clean.lower()
+        if low.startswith("number") and low[6:].isdigit():
+            idx = int(low[6:])
+            if placeholder_map and low in placeholder_map:
+                return float(placeholder_map[low]), "NUM"
+            return float(17 + idx * 5), "NUM"
+        if clean.startswith("$") and len(clean) > 1:
+            inner = clean[1:].replace(",", "")
+            if inner.lower().startswith("number") and inner[6:].isdigit():
+                idx = int(inner[6:])
+                return float(placeholder_map.get(inner.lower(), 17 + idx * 5)) if placeholder_map else float(17 + idx * 5), "DOLLAR"
+            if re.fullmatch(r"\d+(?:\.\d+)?", inner):
+                return float(inner), "DOLLAR"
+        if clean.endswith("%") and len(clean) > 1:
+            inner = clean[:-1].replace(",", "")
+            if re.fullmatch(r"\d+(?:\.\d+)?", inner):
+                return float(inner), "PCT"
+        if "/" in clean:
+            parts = clean.split("/")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit() and int(parts[1]) != 0:
+                return float(int(parts[0])) / float(int(parts[1])), "FRAC"
+        plain = clean.replace(",", "")
+        if re.fullmatch(r"\d+(?:\.\d+)?", plain):
+            return float(plain), "NUM"
+        return None
+
+    @classmethod
+    def _parse_body_clause(
+        cls,
+        c_idx: int,
+        c_raw: str,
+        c_conv: str,
+        entity_stack: List[Tuple[str, str]],
+        known_entities: Set[str],
+        next_reg_id: int,
+        placeholder_map: Optional[Dict[str, float]],
+    ) -> Tuple[ClauseInfo, List[QuantReg], int]:
+        raw_tokens = c_conv.split()
+        low_tokens = [t.lower().strip(".,?!:;\"'()[]{}") for t in raw_tokens if t.strip(".,?!:;\"'()[]{}")]
+        low_text = " ".join(low_tokens)
+
+        prev_stack_snapshot = list(entity_stack)
+        subj, mentioned = cls._detect_entities_in_tokens(raw_tokens, known_entities, entity_stack)
+        verb_lemma, stage_hint, transfer_to, transfer_from = cls._classify_clause_verb_and_transfer(
+            low_text, low_tokens, subj, mentioned, known_entities
+        )
+        if transfer_to in ("her", "him"):
+            transfer_to = cls._resolve_pronoun_entity(transfer_to, prev_stack_snapshot)
+
+        has_rem = bool(re.search(r"\b(?:remaining|remainder|the\s+rest|left\s+over|what\s+was\s+left)\b", low_text))
+        has_some = bool(re.search(r"\b(?:some\s+(?:more|new|of|left)|(?:added|cut|gave|sold|ate|took|lost)\s+some)\b", low_text))
+        cues = {w for w in low_tokens if MATH_OPERATION_CUES.fullmatch(w)}
+        clause_content_words = tuple(
+            lemmatize_noun(w) for w in low_tokens if w not in CONTENT_STOPWORDS and not re.fullmatch(r"\$?\d+.*", w)
+        )
+
+        c_info = ClauseInfo(
+            idx=c_idx, raw_text=c_raw, norm_text=c_conv, tokens=low_tokens,
+            owner=subj, verb_lemma=verb_lemma, stage_hint=stage_hint,
+            transfer_to=transfer_to, transfer_from=transfer_from,
+            has_remaining_cue=has_rem, has_unknown_some=has_some, cue_tokens=cues,
+        )
+
+        comp_ref = ""
+        comp_mode = ""
+        m_comp = re.search(
+            r"\b(more|fewer|less|lesser|older|younger|taller|shorter|heavier|lighter|longer|farther|faster|higher|lower)\b.*?\bthan\s+(?:on\s+|in\s+)?([a-z]+)\b",
+            low_text,
+        )
+        if m_comp:
+            cw, ref_w = m_comp.group(1), m_comp.group(2)
+            if ref_w in known_entities or ref_w in ROLE_OWNERS or ref_w in ADJECTIVE_MODIFIERS:
+                comp_ref = ref_w
+                comp_mode = "COMP_MORE" if cw in ("more", "older", "taller", "heavier", "longer", "farther", "faster", "higher") else "COMP_LESS"
+
+        post_mult_offsets: Dict[float, str] = {}
+        for m_pm in re.finditer(
+            r"\b(\d+(?:\.\d+)?)\s+(more|less|fewer|older|younger|taller|shorter|longer)\s+than\s+(?:twice|thrice|double|triple|half|\d+(?:\.\d+)?\s+times|\d+/\d+|0\.\d+)",
+            low_text,
+        ):
+            pm_val = float(m_pm.group(1))
+            pm_dir = "POST_MULT_MORE" if m_pm.group(2) in ("more", "older", "taller", "longer") else "POST_MULT_LESS"
+            post_mult_offsets[pm_val] = pm_dir
+
+        # GSM8K 頻出の暗黙倍率・半減表現を網羅 ("half the ...", "in half", "half are ...", "twice Mary's ...")
+        mult_anaphors: List[Tuple[float, str, Optional[str]]] = []
+        used_token_positions: Set[int] = set()
+
+        m_twice_rate = re.search(r"\btwice\s+a\s+(week|day|month|year|hour)\b", low_text)
+        if m_twice_rate:
+            p_u = lemmatize_noun(m_twice_rate.group(1))
+            mult_anaphors.append((2.0, "", p_u))
+        elif re.search(r"\b(?:twice|double|doubled|doubles)\b", low_text):
+            m_as = re.search(
+                r"\b(?:twice|double)\s+(?:as\s+(?:many|much|long|far|fast|old)(?:\s+[a-z]+)?\s+as\s+(?:on\s+|in\s+|her\s+|his\s+)?|the\s+(?:number|amount|age|size|cost|price)\s+of\s+)?([a-z]+)(?:'s)?\b",
+                low_text,
+            )
+            ref_t = ""
+            if m_as:
+                cand_r = m_as.group(1)
+                if cand_r in known_entities or cand_r in ROLE_OWNERS or cand_r in ADJECTIVE_MODIFIERS:
+                    ref_t = cand_r
+            mult_anaphors.append((2.0, ref_t, None))
+
+        if re.search(r"\b(?:thrice|triple|tripled|triples)\b", low_text):
+            mult_anaphors.append((3.0, "", None))
+
+        # "half" 全般 ("half as many", "half of ...", "half the ...", "in half", "half are/were", "halved")
+        if re.search(r"\b(?:half|halved)\b", low_text):
+            mult_anaphors.append((0.5, "", None))
+
+        m_times_as = re.search(
+            r"\b(\d+(?:\.\d+)?)\s+times\s+(?:as\s+(?:many|much|long|far|old)|more|the\b)\b(?:\s+.*?\bas\s+(?:on\s+|in\s+)?([a-z]+)\b)?",
+            low_text,
+        )
+        if m_times_as:
+            t_val = float(m_times_as.group(1))
+            t_ref = m_times_as.group(2) or ""
+            if t_ref not in known_entities and t_ref not in ROLE_OWNERS and t_ref not in ADJECTIVE_MODIFIERS:
+                t_ref = ""
+            mult_anaphors.append((t_val, t_ref, None))
+            for ti, tok in enumerate(low_tokens):
+                if tok == m_times_as.group(1) and ti + 1 < len(low_tokens) and low_tokens[ti + 1] == "times":
+                    used_token_positions.add(ti)
+                    break
+
+        regs: List[QuantReg] = []
+        local_owner = subj
+
+        for pos, tok in enumerate(raw_tokens):
+            clean = tok.strip(".,?!:;\"'()[]{}")
+            if clean.endswith("'s"):
+                cand_o = clean[:-2].lower()
+                if pos + 1 < len(raw_tokens) and raw_tokens[pos + 1].lower().strip(".,?!") in ("mother", "father", "mom", "dad", "brother", "sister", "friend"):
+                    local_owner = f"{cand_o}_{raw_tokens[pos + 1].lower().strip('.,?!')}"
+                elif cand_o in known_entities or cand_o in ROLE_OWNERS:
+                    local_owner = cand_o
+            elif clean.lower() in known_entities:
+                prev_w = raw_tokens[pos - 1].lower().strip(".,?!") if pos > 0 else ""
+                if prev_w not in ("than", "to", "from", "with", "for", "as"):
+                    local_owner = clean.lower()
+
+            if pos in used_token_positions:
                 continue
 
-            # 1. 7クラス1手読み評価器 (step_clf) は MAWPS と GSM8K の全問題からステップを学習 (メモリ消費極小)
-            for s_feat, s_lbl in extract_unified_step_samples(question, eq, values):
-                step_X_dicts.append(s_feat)
-                step_y_labels.append(s_lbl)
+            parsed_num = cls._parse_numeric_token(tok, placeholder_map)
+            if parsed_num is None:
+                continue
+            val, num_kind = parsed_num
 
-            base_time_tokens, var_tb = tokenize_by_time(question)
-            raw_X_dicts.append(time_tokens_to_feature_dict(base_time_tokens))
-            raw_y_labels.append((eq, source_tag))
+            prev_w = raw_tokens[pos - 1].lower().strip(".,?!") if pos > 0 else ""
+            if prev_w in ("in", "since", "year", "during", "from") and 1700 <= val <= 2035 and abs(val - round(val)) < 1e-9:
+                continue
 
-            # 変数の入れ替え水増し (3! = 6倍) は MAWPS/ASDiv に対してのみ実行し、GSM8K長文でのクラス爆発を防ぐ
-            if source_tag == "MAWPS":
-                if len(values) == 2 and max_variable_index(eq) == 2:
-                    sw_map = {"var1": "var2", "var2": "var1"}
-                    sw_tokens, sw_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, sw_map)
-                    raw_X_dicts.append(time_tokens_to_feature_dict(sw_tokens))
-                    raw_y_labels.append((sw_eq, source_tag))
+            unit, per_unit, attr = cls._extract_unit_and_rate_around(raw_tokens, pos, clean, low_text)
 
-                    sw_q, sw_eq2, sw_vals = permute_question_vars(question, eq, values, sw_map)
-                    for s_feat, s_lbl in extract_unified_step_samples(sw_q, sw_eq2, sw_vals):
-                        step_X_dicts.append(s_feat)
-                        step_y_labels.append(s_lbl)
+            if pos + 1 < len(raw_tokens):
+                nxt_num = cls._parse_numeric_token(raw_tokens[pos + 1], placeholder_map)
+                if nxt_num is not None and nxt_num[1] == "DOLLAR":
+                    unit = "bill"
+            if prev_w and cls._parse_numeric_token(raw_tokens[pos - 1], placeholder_map) is not None and num_kind == "DOLLAR":
+                per_unit = "bill"
 
-                    for mapping in (
-                        {"var1": "var1", "var2": "var3"},
-                        {"var1": "var2", "var2": "var3"},
-                        {"var1": "var3", "var2": "var1"},
-                        {"var1": "var3", "var2": "var2"},
-                    ):
-                        sh_tokens, sh_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, mapping)
-                        raw_X_dicts.append(time_tokens_to_feature_dict(sh_tokens))
-                        raw_y_labels.append((sh_eq, source_tag))
+            left_w = tuple(
+                lemmatize_verb(raw_tokens[k])
+                for k in range(max(0, pos - 4), pos)
+                if raw_tokens[k].lower().strip(".,?!") not in ("the", "a", "an")
+            )
+            right_w = tuple(
+                lemmatize_noun(raw_tokens[k])
+                for k in range(pos + 1, min(len(raw_tokens), pos + 5))
+                if raw_tokens[k].lower().strip(".,?!") not in ("the", "a", "an")
+            )
 
-                elif len(values) == 3 and max_variable_index(eq) == 3:
-                    vars_3 = ("var1", "var2", "var3")
-                    for p in permutations(vars_3):
-                        if p == vars_3:
-                            continue
-                        p_map = dict(zip(vars_3, p))
-                        perm_tokens, perm_eq = permute_time_tokens_and_eq(base_time_tokens, var_tb, eq, p_map)
-                        raw_X_dicts.append(time_tokens_to_feature_dict(perm_tokens))
-                        raw_y_labels.append((perm_eq, source_tag))
+            reg_stage = stage_hint
+            ref_ent = ""
+            is_rem_frac = False
 
-                        p_q, p_eq2, p_vals = permute_question_vars(question, eq, values, p_map)
-                        for s_feat, s_lbl in extract_unified_step_samples(p_q, p_eq2, p_vals):
-                            step_X_dicts.append(s_feat)
-                            step_y_labels.append(s_lbl)
+            loc_win = " ".join(t.lower().strip(".,?!") for t in raw_tokens[max(0, pos - 3) : min(len(raw_tokens), pos + 5)])
 
-        # ---------------------------------------------------------
-        # 省メモリフィルタリング:
-        # 大局NNUEテンプレート分類器 (clf) のクラス数 F <= MAX_GLOBAL_FORMULAS (280)、
-        # 語彙数 W <= MAX_GLOBAL_WORDS (10000) に絞り、L-BFGS-B の12GBメモリ確保エラーを完全に防止する
-        # （※ 希少な多段式はすべて 7クラスの step_clf + beam_stack_search 側が探索・構築する）
-        # ---------------------------------------------------------
-        eq_counts = Counter()
-        mawps_eq_counts = Counter()
-        for eq_str, src_t in raw_y_labels:
-            eq_counts[eq_str] += 1
-            if src_t == "MAWPS":
-                mawps_eq_counts[eq_str] += 1
+            if val in post_mult_offsets and any(w in ("more", "less", "fewer", "older", "younger", "taller", "shorter", "longer") for w in right_w):
+                reg_stage = post_mult_offsets[val]
+            elif unit in TIME_UNITS and per_unit is None and re.search(r"\bfor\s+(?:a\s+)?\d+", loc_win):
+                reg_stage = "TIME_PARAM"
+            elif stage_hint == "PAID_BILL":
+                reg_stage = "PAID_BILL"
+            elif num_kind == "PCT":
+                if re.search(r"\b(?:off|discount|less|decrease|decreased|reduced|reduction|sale)\b", low_text):
+                    reg_stage = "PCT_LESS"
+                elif re.search(r"\b(?:tip|tax|more|increase|increased|increases|extra|interest|markup|bonus)\b", low_text):
+                    reg_stage = "PCT_MORE"
+                else:
+                    reg_stage = "PCT_OF"
+            elif num_kind == "FRAC" or (val in (0.2, 0.25, 0.4, 0.5, 0.6, 0.75, 0.8) and pos + 1 < len(raw_tokens) and raw_tokens[pos + 1].lower().strip(".,?!") == "of"):
+                reg_stage = "FRAC_LOSE" if stage_hint == "LOSE" else "FRAC"
+                if has_rem or "remaining" in loc_win or "rest" in loc_win:
+                    is_rem_frac = True
+            elif comp_mode and comp_ref:
+                if any(w in ("less", "lesser", "fewer", "shorter", "smaller", "younger") for w in right_w):
+                    reg_stage = "COMP_LESS"
+                elif any(w in ("more", "farther", "longer", "older", "taller", "bigger") for w in right_w):
+                    reg_stage = "COMP_MORE"
+                else:
+                    reg_stage = comp_mode
+                ref_ent = comp_ref
+            elif transfer_to and local_owner == subj:
+                reg_stage = "TRANSFER_OUT"
+                ref_ent = transfer_to
+            elif transfer_from and local_owner == subj:
+                reg_stage = "TRANSFER_IN"
+                ref_ent = transfer_from
+            elif re.search(r"\bdiscount\b", loc_win):
+                reg_stage = "LOSE"
+            elif per_unit is not None and stage_hint != "LOSE":
+                if unit == "dollar" and verb_lemma in ("buy", "spend", "pay"):
+                    reg_stage = "COST_RATE"
+                else:
+                    reg_stage = "RATE"
+            elif unit == "dollar" and verb_lemma in ("buy", "spend", "pay"):
+                reg_stage = "COST_OUT"
+            elif unit == "dollar" and verb_lemma == "sell":
+                reg_stage = "GAIN"
 
-        # MAWPSの頻出テンプレートと、全体で5回以上出現する汎用テンプレートを優先採用 (最大 MAX_GLOBAL_FORMULAS 個)
-        candidate_eqs = sorted(
-            eq_counts.keys(),
-            key=lambda e: (1 if mawps_eq_counts[e] >= 2 or eq_counts[e] >= 5 else 0, eq_counts[e]),
-            reverse=True,
-        )
-        allowed_eqs = set(candidate_eqs[:MAX_GLOBAL_FORMULAS])
+            if unit == "dollar" and re.search(r"\b(?:rent|cost|fee|expense|tuition|repair|repairs|puts\s+in)\b", low_text) and reg_stage in ("INIT", "LOSE"):
+                reg_stage = "COST_OUT"
 
-        filtered_X_dicts = []
-        y_labels = []
-        word_df = Counter()
-        for f_dict, (eq_str, _src_t) in zip(raw_X_dicts, raw_y_labels):
-            if eq_str in allowed_eqs:
-                filtered_X_dicts.append(f_dict)
-                y_labels.append(eq_str)
-                for w_key in f_dict.keys():
-                    word_df[w_key] += 1
+            reg = QuantReg(
+                reg_id=next_reg_id, value=val, owner=local_owner, unit=unit, per_unit=per_unit,
+                attr=attr, stage=reg_stage, action=verb_lemma, clause_idx=c_idx,
+                ref_owner=ref_ent, is_implicit=False, is_remaining_frac=is_rem_frac,
+                depth=0, origin_mask=(1 << min(next_reg_id, 28)),
+                left_win=left_w, right_win=right_w, clause_words=clause_content_words,
+            )
+            regs.append(reg)
+            next_reg_id += 1
 
-        del raw_X_dicts, raw_y_labels
-
-        valid_words_sorted = [
-            w for w, cnt in word_df.most_common()
-            if cnt >= MIN_WORD_DF
-        ][:MAX_GLOBAL_WORDS]
-        allowed_words = set(valid_words_sorted)
-
-        X_dicts = [
-            {k: v for k, v in fd.items() if k in allowed_words}
-            for fd in filtered_X_dicts
-        ]
-        del filtered_X_dicts, word_df, allowed_words
-        gc.collect()
-
-        vectorizer = DictVectorizer(sparse=True)
-        X_csr = vectorizer.fit_transform(X_dicts).astype(np.float32)
-        del X_dicts
-        gc.collect()
-
-        clf = LogisticRegression(C=0.5, max_iter=400)
-        clf.fit(X_csr, y_labels)
-
-        self.words = [str(w) for w in vectorizer.get_feature_names_out()]
-        self.word_to_id = {w: i for i, w in enumerate(self.words)}
-        self.num_words = len(self.words)
-
-        self.equations = [str(eq) for eq in clf.classes_]
-        self.eq_to_id = {eq: i for i, eq in enumerate(self.equations)}
-        self.num_formulas = len(self.equations)
-
-        F, W, H1, H2 = self.num_formulas, self.num_words, self.h1, self.h2
-        N = X_csr.shape[0]
-
-        if F == 2 and clf.coef_.shape[0] == 1:
-            coef_mat = np.vstack([-clf.coef_[0], clf.coef_[0]]).astype(np.float32)
-            intercept_vec = np.array([-clf.intercept_[0], clf.intercept_[0]], dtype=np.float32)
-        else:
-            coef_mat = clf.coef_.astype(np.float32)
-            intercept_vec = clf.intercept_.astype(np.float32)
-
-        del clf
-        gc.collect()
-
-        word_scales = np.array(
-            [1.0 if w.startswith("all::") else TIME_FEATURE_SCALE for w in self.words],
-            dtype=np.float32,
-        )
-        scaled_coef = coef_mat * word_scales[None, :]
-
-        self.base_w = scaled_coef.reshape(F * W).copy()
-        self.base_b = intercept_vec.copy()
-
-        K = min(TOP_K_CANDIDATES, F)
-        y_ids = np.array([self.eq_to_id[y] for y in y_labels], dtype=np.int32)
-
-        base_logits = (X_csr @ coef_mat.T) + intercept_vec[None, :]
-        cands = np.zeros((N, K), dtype=np.int32)
-        cands[:, 0] = y_ids
-        if K > 1:
-            base_logits_copy = base_logits.copy()
-            base_logits_copy[np.arange(N), y_ids] = -1e9
-            top_neg = np.argpartition(-base_logits_copy, kth=K - 1, axis=1)[:, : K - 1]
-            cands[:, 1:] = top_neg
-            del base_logits_copy
-
-        base_cand_scores = base_logits[np.arange(N)[:, None], cands]
-        del base_logits, coef_mat
-        gc.collect()
-
-        X_bin = X_csr.copy()
-        X_bin.data = np.ones_like(X_bin.data)
-        row_lengths = np.diff(X_bin.indptr)
-        cand_row_lengths = np.repeat(row_lengths, K)
-        M_indptr = np.zeros(N * K + 1, dtype=np.int32)
-        np.cumsum(cand_row_lengths, out=M_indptr[1:])
-
-        total_nnz = int(M_indptr[-1])
-        base_cols = X_bin.indices.astype(np.int32)
-        rep_word_ids = np.concatenate([
-            np.tile(base_cols[X_bin.indptr[i] : X_bin.indptr[i + 1]], K)
-            for i in range(N)
-        ])
-        rep_f_ids = np.repeat(cands.reshape(-1), cand_row_lengths)
-        pair_indices = rep_f_ids * W + rep_word_ids
-
-        active_pids, compact_col_indices = np.unique(pair_indices, return_inverse=True)
-        del rep_word_ids, rep_f_ids, pair_indices, X_bin, X_csr
-        gc.collect()
-
-        A = len(active_pids)
-        M_active_csr = sparse.csr_matrix(
-            (np.ones(total_nnz, dtype=np.float32), compact_col_indices.astype(np.int32), M_indptr),
-            shape=(N * K, A),
-            dtype=np.float32,
-        )
-
-        n_comp = min(H1, F - 1, W - 1)
-        svd = TruncatedSVD(n_components=n_comp, random_state=42)
-        U_f = svd.fit_transform(scaled_coef).astype(np.float32)
-        V_w = svd.components_.astype(np.float32)
-        del scaled_coef
-        gc.collect()
-
-        rng = np.random.default_rng(42)
-        act_f = active_pids // W
-        act_w = active_pids % W
-        w1_active = rng.normal(0.0, 0.01, size=(A, H1)).astype(np.float32)
-        for h in range(n_comp):
-            u_norm = U_f[:, h] / (np.linalg.norm(U_f[:, h]) + 1e-6)
-            w1_active[:, h] += 0.15 * (u_norm[act_f] * V_w[h, act_w]) + 0.05 * V_w[h, act_w]
-
-        self.b1 = np.full((F, H1), 0.25, dtype=np.float32)
-        self.W2 = (
-            np.eye(H1, H2, dtype=np.float32) * 0.5
-            + rng.normal(0.0, 0.05, size=(H1, H2)).astype(np.float32)
-        )
-        self.b2 = np.full((H2,), 0.15, dtype=np.float32)
-        self.W3 = rng.normal(0.0, 0.15, size=(H2,)).astype(np.float32)
-
-        params = [w1_active, self.b1, self.W2, self.b2, self.W3]
-        m_adam = [np.zeros_like(p) for p in params]
-        v_adam = [np.zeros_like(p) for p in params]
-        beta1, beta2, eps = 0.9, 0.999, 1e-8
-
-        for epoch in range(1, NNUE_EPOCHS + 1):
-            z1 = (M_active_csr @ w1_active).reshape(N, K, H1) + self.b1[cands]
-            a1 = np.clip(z1, 0.0, 1.0)
-            z2 = a1 @ self.W2 + self.b2
-            a2 = np.clip(z2, 0.0, 1.0)
-            nnue_scores = a2 @ self.W3
-
-            total_scores = base_cand_scores + nnue_scores
-            s_shift = total_scores - total_scores.max(axis=1, keepdims=True)
-            exp_s = np.exp(s_shift)
-            probs = exp_s / exp_s.sum(axis=1, keepdims=True)
-
-            dscores = probs
-            dscores[:, 0] -= 1.0
-            dscores /= N
-
-            dW3 = np.einsum("nk,nkh->h", dscores, a2) + NNUE_L2_DECAY * self.W3
-            da2 = dscores[:, :, None] * self.W3[None, None, :]
-            dz2 = da2 * ((z2 > 0.0) & (z2 < 1.0))
-
-            dW2 = np.einsum("nki,nkj->ij", a1, dz2) + NNUE_L2_DECAY * self.W2
-            db2 = dz2.sum(axis=(0, 1))
-
-            da1 = dz2 @ self.W2.T
-            dz1 = da1 * ((z1 > 0.0) & (z1 < 1.0))
-
-            d_w1 = (M_active_csr.T @ dz1.reshape(N * K, H1)) + NNUE_L2_DECAY * w1_active
-            db1 = np.zeros_like(self.b1)
-            np.add.at(db1, cands, dz1)
-
-            grads = [d_w1, db1, dW2, db2, dW3]
-            lr_t = NNUE_LR * (0.92 ** (epoch - 1))
-            for idx_p, (p, g) in enumerate(zip(params, grads)):
-                m_adam[idx_p] = beta1 * m_adam[idx_p] + (1.0 - beta1) * g
-                v_adam[idx_p] = beta2 * v_adam[idx_p] + (1.0 - beta2) * (g * g)
-                m_hat = m_adam[idx_p] / (1.0 - beta1 ** epoch)
-                v_hat = v_adam[idx_p] / (1.0 - beta2 ** epoch)
-                p -= lr_t * m_hat / (np.sqrt(v_hat) + eps)
-
-        del M_active_csr, m_adam, v_adam, base_cand_scores, cands
-        gc.collect()
-
-        self.weight1 = np.zeros((F * W, H1), dtype=np.float32)
-        self.weight1[active_pids] = w1_active
-
-        # ---------------------------------------------------------
-        # 2. ビームサーチ用 7クラス1手読み評価器 (step_clf) の学習
-        # ---------------------------------------------------------
-        A_step = len(self.step_actions)
-        if step_X_dicts:
-            step_vec = DictVectorizer(sparse=True)
-            X_step_csr = step_vec.fit_transform(step_X_dicts).astype(np.float32)
-            self.step_words = [str(w) for w in step_vec.get_feature_names_out()]
-            self.step_word_to_id = {w: i for i, w in enumerate(self.step_words)}
-            W_step = len(self.step_words)
-
-            step_clf = LogisticRegression(C=0.6, max_iter=500)
-            step_clf.fit(X_step_csr, step_y_labels)
-
-            self.step_w = np.zeros((A_step, W_step), dtype=np.float32)
-            self.step_b = np.full(A_step, -2.0, dtype=np.float32)
-
-            if len(step_clf.classes_) == 2 and step_clf.coef_.shape[0] == 1:
-                c0, c1 = str(step_clf.classes_[0]), str(step_clf.classes_[1])
-                id0, id1 = self.step_act_to_id[c0], self.step_act_to_id[c1]
-                self.step_w[id0] = -step_clf.coef_[0].astype(np.float32)
-                self.step_w[id1] = step_clf.coef_[0].astype(np.float32)
-                self.step_b[id0] = float(-step_clf.intercept_[0])
-                self.step_b[id1] = float(step_clf.intercept_[0])
+        for m_val, m_ref, m_per_u in mult_anaphors:
+            _, _, m_attr = cls._extract_unit_and_rate_around(raw_tokens, 0, "", low_text)
+            if m_per_u is not None:
+                reg = QuantReg(
+                    reg_id=next_reg_id, value=m_val, owner=subj, unit="time", per_unit=m_per_u,
+                    attr=m_attr, stage="RATE", action=verb_lemma, clause_idx=c_idx,
+                    is_implicit=True, depth=0, origin_mask=(1 << min(next_reg_id, 28)),
+                    clause_words=clause_content_words,
+                )
             else:
-                for idx_c, cls_name in enumerate(step_clf.classes_):
-                    act_id = self.step_act_to_id[str(cls_name)]
-                    self.step_w[act_id] = step_clf.coef_[idx_c].astype(np.float32)
-                    self.step_b[act_id] = float(step_clf.intercept_[idx_c])
-            del X_step_csr, step_X_dicts, step_y_labels, step_clf
-            gc.collect()
+                is_verb_scale = bool(
+                    re.search(r"\b(?:to\s+(?:double|triple|halve)|(?:weight|size|amount|money|value|height|speed|population)\s+(?:doubled|tripled|halved)|(?:double|triple|halve)\s+the\s+[a-z]+)", low_text)
+                    and "as many" not in low_text
+                    and "as much" not in low_text
+                )
+                anaphor_st = "FRAC_LOSE" if (stage_hint == "LOSE" and "as many" not in low_text and "as much" not in low_text and not has_rem) else "MULT_ANAPHOR"
+                eff_o = prev_stack_snapshot[-1][0] if (subj == "GROUP" and prev_stack_snapshot) else subj
+                eff_attr = "inplace_scale" if is_verb_scale else m_attr
+                reg = QuantReg(
+                    reg_id=next_reg_id, value=m_val, owner=eff_o, unit="scalar", per_unit="ratio",
+                    attr=eff_attr, stage=anaphor_st, action=verb_lemma, clause_idx=c_idx,
+                    ref_owner=m_ref, is_implicit=True, is_remaining_frac=has_rem,
+                    depth=0, origin_mask=(1 << min(next_reg_id, 28)),
+                    clause_words=clause_content_words,
+                )
+            regs.append(reg)
+            next_reg_id += 1
+
+        return c_info, regs, next_reg_id
+
+    @classmethod
+    def _parse_question_clause(
+        cls,
+        q_clause_idx: int,
+        question_raw: str,
+        entity_stack: List[Tuple[str, str]],
+        known_entities: Set[str],
+        body_regs: List[QuantReg],
+        clauses_info: List[ClauseInfo],
+        next_reg_id: int,
+        placeholder_map: Optional[Dict[str, float]],
+    ) -> Tuple[GoalSpec, List[QuantReg], int]:
+        q_clean = cls._LABEL_NOISE_RE.sub(" ", question_raw)
+        q_conv = TextNormalizer.convert_word_numbers_in_clause(q_clean)
+        raw_tokens = q_conv.split()
+        low_tokens = [t.lower().strip(".,?!:;\"'()[]{}") for t in raw_tokens if t.strip(".,?!:;\"'()[]{}")]
+        low_q = " ".join(low_tokens)
+
+        mentioned_q: List[str] = []
+        for tok in raw_tokens:
+            cl = tok.strip(".,?!:;\"'()[]{}")
+            if cl.endswith("'s"):
+                cl = cl[:-2]
+            lw = cl.lower()
+            if lw in known_entities or lw in ROLE_OWNERS:
+                if lw not in mentioned_q:
+                    mentioned_q.append(lw)
+
+        action_lemma = "have"
+        for tok in low_tokens:
+            if tok in ("do", "does", "did", "is", "are", "was", "were", "will", "would", "can", "could", "have", "to"):
+                continue
+            lem = lemmatize_verb(tok)
+            if lem in {
+                "buy", "sell", "give", "get", "eat", "drink", "spend", "pay", "cost",
+                "earn", "make", "bake", "cook", "pick", "find", "lose", "break", "use",
+                "take", "bring", "catch", "collect", "plant", "read", "write", "walk",
+                "run", "drive", "save", "pack", "produce", "print", "cut", "throw",
+                "add", "remove", "leave", "play", "jump", "serve", "lay",
+            }:
+                action_lemma = lem
+                break
+
+        query_type = "COUNT"
+        if re.search(r"\b(?:each|apiece|per\s+[a-z]+|average|on\s+average|cost\s+of\s+(?:one|1|a)\b|how\s+big\s+is\s+each)\b", low_q) and not re.search(r"\b(?:every|each)\s+(?:day|week|month|year|morning)\b", low_q):
+            query_type = "RATE_EACH"
+        elif re.search(r"\b(?:at\s+first|start\s+with|started\s+with|begin\s+with|began\s+with|originally|initially|before\s+(?:giving|eating|losing|spending|selling|buying|adding))\b", low_q):
+            query_type = "INITIAL"
+        elif re.search(r"\bchange\b.*?\b(?:get|got|receive|received|back|from|his|her)\b|\bwhat\s+is\s+(?:his|her|the)\s+change\b", low_q):
+            query_type = "CHANGE"
+        elif re.search(r"\bprofit\b", low_q):
+            query_type = "PROFIT"
+        elif re.search(r"\b(?:how\s+many\s+(?:more|fewer|less)|how\s+much\s+(?:more|less|longer|faster|heavier|older|taller|farther)|difference\s+between|need\s+to\s+(?:buy|save|earn|get|make)|more\s+.*?\s+than|fewer\s+.*?\s+than|less\s+.*?\s+than|are\s+needed)\b", low_q):
+            query_type = "DIFF"
+        elif re.search(r"\b(?:how\s+many\s+times|what\s+fraction|what\s+percent|what\s+percentage|what\s+ratio)\b", low_q):
+            query_type = "RATIO"
+        elif re.search(r"\b(?:have\s+left|has\s+left|are\s+left|were\s+left|remain|remaining|still\s+have|still\s+has|empty\s+[a-z]+)\b", low_q):
+            query_type = "REMAIN"
+        elif re.search(r"\b(?:altogether|in\s+all|in\s+total|total|combined|together|sum)\b", low_q):
+            query_type = "TOTAL"
+
+        unknown_some_stage = ""
+        unknown_some_clause = -1
+        for ci in clauses_info:
+            if ci.has_unknown_some:
+                if ci.verb_lemma == action_lemma or (action_lemma in ("cut", "add", "get") and ci.stage_hint == "GAIN") or (action_lemma in ("leave", "give", "lose", "take", "sell", "eat") and ci.stage_hint == "LOSE"):
+                    unknown_some_stage = ci.stage_hint
+                    unknown_some_clause = ci.idx
+                    query_type = "SOLVE_SOME"
+                    break
+
+        target_owner = "global"
+        second_owner = ""
+
+        if any(w in low_tokens for w in ("they", "them", "their", "both")):
+            target_owner = "GROUP"
+        elif len(mentioned_q) >= 2 and "and" in low_tokens and "than" not in low_tokens:
+            target_owner = "GROUP"
+        elif len(mentioned_q) >= 2 and "than" in low_tokens:
+            target_owner = mentioned_q[0]
+            second_owner = mentioned_q[1]
+        elif len(mentioned_q) == 1:
+            target_owner = mentioned_q[0]
         else:
-            self.step_words = []
-            self.step_word_to_id = {}
-            self.step_w = np.zeros((A_step, 0), dtype=np.float32)
-            self.step_b = np.zeros(A_step, dtype=np.float32)
+            if any(w in low_tokens for w in ("she", "her")):
+                target_owner = cls._resolve_pronoun_entity("she", entity_stack) or "global"
+            elif any(w in low_tokens for w in ("he", "him", "his")):
+                target_owner = cls._resolve_pronoun_entity("he", entity_stack) or "global"
+            elif query_type == "TOTAL" and len({r.owner for r in body_regs if r.owner not in ("global", "one_individual")}) >= 2:
+                target_owner = "GROUP"
+            elif entity_stack and len({e for e, _ in entity_stack}) == 1:
+                target_owner = entity_stack[-1][0]
 
-        sparse_weight1 = {}
-        keep_mask = np.max(np.abs(w1_active), axis=1) > 2e-3
-        for idx_a in np.where(keep_mask)[0]:
-            pid = int(active_pids[idx_a])
-            sparse_weight1[str(pid)] = [round(float(x), 5) for x in w1_active[idx_a]]
+        target_unit = "item"
+        second_unit = ""
+        target_attr = ""
+        second_attr = ""
+        per_unit: Optional[str] = None
 
-        sparse_base_w = {
-            str(int(pid)): round(float(self.base_w[pid]), 5)
-            for pid in np.where(np.abs(self.base_w) > 1e-4)[0]
-        }
+        if re.search(r"\b(?:how\s+much\s+(?:money|more\s+money|did|does|do|will|would|is|was)|cost|price|pay|paid|earn|earned|spend|spent|profit|change|bill|salary|wage|save|saved|make\s+every\s+day)\b", low_q):
+            target_unit = "dollar"
+        if re.search(r"\bcents\b", low_q):
+            target_unit = "cent"
+        m_in_unit = re.search(r",\s*in\s+([a-z]+)\s*\??$", low_q)
+        if m_in_unit:
+            target_unit = lemmatize_noun(m_in_unit.group(1))
 
-        flat_step_w = self.step_w.reshape(-1)
-        sparse_step_w = {
-            str(int(pid)): round(float(flat_step_w[pid]), 5)
-            for pid in np.where(np.abs(flat_step_w) > 1e-4)[0]
-        }
+        m_cost_item = re.search(r"\bhow\s+much\s+(?:did|do|does)\s+the\s+([a-z]+)\s+cost\b", low_q)
+        if m_cost_item:
+            c_it = lemmatize_noun(m_cost_item.group(1))
+            if c_it and c_it not in NON_UNIT_WORDS:
+                target_attr = c_it
 
-        save_data = {
-            "format_version": "beam_stack_nnue_v8",
-            "h1": self.h1,
-            "h2": self.h2,
-            "beam_width": self.beam_width,
-            "equations": self.equations,
-            "words": self.words,
-            "b1": [[round(float(x), 5) for x in row] for row in self.b1],
-            "W2": [[round(float(x), 5) for x in row] for row in self.W2],
-            "b2": [round(float(x), 5) for x in self.b2],
-            "W3": [round(float(x), 5) for x in self.W3],
-            "base_b": [round(float(x), 5) for x in self.base_b],
-            "base_w": sparse_base_w,
-            "weight1": sparse_weight1,
-            "step_actions": self.step_actions,
-            "step_words": self.step_words,
-            "step_b": [round(float(x), 5) for x in self.step_b],
-            "step_w": sparse_step_w,
-        }
+        m_hm = re.search(r"\bhow\s+many\s+(?:more\s+|fewer\s+|less\s+|empty\s+)?([a-z]+(?:\s+[a-z]+){0,2})", low_q)
+        if m_hm:
+            phrase_words = m_hm.group(1).split()
+            if len(phrase_words) >= 2 and lemmatize_noun(phrase_words[0]) == "dozen" and phrase_words[1] == "of":
+                target_unit = "dozen"
+            else:
+                for pw in phrase_words:
+                    if pw in ("do", "does", "did", "are", "is", "were", "was", "will", "would", "can", "could", "should", "have", "has", "had", "in", "on", "at", "than", "of", "left", "were", "came"):
+                        break
+                    if pw in ADJECTIVE_MODIFIERS and pw != "empty":
+                        if not target_attr:
+                            target_attr = pw
+                        continue
+                    lem = lemmatize_noun(pw)
+                    if lem and lem not in NON_UNIT_WORDS:
+                        target_unit = lem
+                        break
 
-        with open(weights_path, "w", encoding="utf-8") as f:
-            json.dump(save_data, f, ensure_ascii=False)
+        if query_type == "DIFF" and "than" in low_tokens:
+            than_pos = low_tokens.index("than")
+            for pw in low_tokens[than_pos + 1 : than_pos + 7]:
+                if pw in ADJECTIVE_MODIFIERS:
+                    second_attr = pw
+                    break
+                lem = lemmatize_noun(pw)
+                if lem and lem not in CONTENT_STOPWORDS and lem not in ("build", "make", "do", "did") and lem not in known_entities:
+                    if lem != target_unit and not second_unit:
+                        second_unit = lem
+                    break
+            m_obj_comp = re.search(r"\b(?:build|make|for|in|on)\s+(?:a|an|the)\s+([a-z]+)\s+than\b.*?\b(?:build|make|for|in|on)\s+(?:a|an|the)\s+([a-z]+)\b", low_q)
+            if m_obj_comp:
+                target_attr = lemmatize_noun(m_obj_comp.group(1))
+                second_attr = lemmatize_noun(m_obj_comp.group(2))
 
-        self.is_loaded = True
-        print(
-            f"ビームサーチ+NNUE重みファイルを保存しました: {weights_path} "
-            f"(大局数式数: {F}, 大局語彙数: {W}, ステップ特徴数: {len(self.step_words)})"
+        if query_type == "RATE_EACH":
+            m_each = re.search(r"\b(?:each|per|every|one)\s+([a-z]+)\b", low_q)
+            if m_each:
+                cand_p = lemmatize_noun(m_each.group(1))
+                if cand_p and cand_p != target_unit and cand_p not in NON_UNIT_WORDS:
+                    per_unit = cand_p
+            if per_unit is None:
+                per_unit = "group"
+        else:
+            # "How much does she make every day?" のように日次レート自体を尋ねている場合 per_unit="day" も整合許容できるよう記録
+            m_q_rate = re.search(r"\b(?:every|each|per|a|an)\s+(day|week|month|year|hour)\b", low_q)
+            if m_q_rate and any(r.per_unit == m_q_rate.group(1) for r in body_regs):
+                per_unit = m_q_rate.group(1)
+
+        if action_lemma == "give" and len(mentioned_q) >= 2 and "to" in low_tokens:
+            target_owner = mentioned_q[0]
+
+        q_focus_mods: Set[str] = set()
+        for w in low_tokens:
+            if w in {"morning", "afternoon", "evening", "lunch", "dinner", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}:
+                q_focus_mods.add(w)
+
+        q_regs: List[QuantReg] = []
+        for pos, tok in enumerate(raw_tokens):
+            parsed = cls._parse_numeric_token(tok, placeholder_map)
+            if parsed is None:
+                continue
+            val, num_kind = parsed
+            if val == 1.0 and query_type == "RATE_EACH":
+                continue
+            u, pu, at = cls._extract_unit_and_rate_around(raw_tokens, pos, tok.strip(".,?!"), low_q)
+            if any(abs(r.value - val) < 1e-9 and r.unit == u and r.stage not in ("LOSE", "GAIN", "COST_OUT") for r in body_regs):
+                continue
+            st = "PAID_BILL" if (query_type == "CHANGE" and u == "dollar") else "Q_PARAM"
+            q_regs.append(
+                QuantReg(
+                    reg_id=next_reg_id, value=val, owner=target_owner, unit=u, per_unit=pu,
+                    attr=at, stage=st, action=action_lemma, clause_idx=q_clause_idx,
+                    is_implicit=False, depth=0, origin_mask=(1 << min(next_reg_id, 28)),
+                )
+            )
+            next_reg_id += 1
+
+        has_rest_q = bool(re.search(r"\b(?:the\s+rest|remaining|remainder|other|not\b|don't|didn't|empty)\b", low_q)) or any(ci.has_remaining_cue for ci in clauses_info)
+        if target_unit == "item" and body_regs:
+            unit_counts: Dict[str, int] = {}
+            for r in body_regs:
+                if r.unit not in ("item", "scalar", "percent") and r.unit != per_unit:
+                    unit_counts[r.unit] = unit_counts.get(r.unit, 0) + 1
+            if unit_counts:
+                target_unit = max(unit_counts.items(), key=lambda kv: kv[1])[0]
+
+        q_bigrams = {f"{low_tokens[i]}_{low_tokens[i+1]}" for i in range(len(low_tokens) - 1)}
+
+        goal = GoalSpec(
+            target_owner=target_owner, second_owner=second_owner,
+            target_unit=target_unit, second_unit=second_unit,
+            per_unit=per_unit, target_attr=target_attr, second_attr=second_attr,
+            query_type=query_type, action_lemma=action_lemma,
+            question_tokens=set(low_tokens), question_bigrams=q_bigrams,
+            q_focus_modifiers=q_focus_mods, known_entities=set(known_entities),
+            has_the_rest_cue=has_rest_q,
+            unknown_some_stage=unknown_some_stage, unknown_some_clause=unknown_some_clause,
         )
+        return goal, q_regs, next_reg_id
 
-    def load(self, weights_path=WEIGHTS_FILE):
-        if not os.path.exists(weights_path):
+    @classmethod
+    def _inject_implicit_domain_constants(
+        cls, regs: List[QuantReg], norm_full: str, goal: GoalSpec, next_reg_id: int
+    ) -> List[QuantReg]:
+        out = list(regs)
+        low = norm_full.lower()
+        existing_units = {r.unit for r in out} | {r.per_unit for r in out if r.per_unit}
+
+        def _add_const(val: float, unit: str, per_u: Optional[str]) -> None:
+            nonlocal next_reg_id
+            if any(abs(r.value - val) < 1e-9 and r.unit == unit and r.per_unit == per_u for r in out):
+                return
+            out.append(
+                QuantReg(
+                    reg_id=next_reg_id, value=val, owner="global", unit=unit, per_unit=per_u,
+                    stage="Q_PARAM", clause_idx=99, is_implicit=True, depth=0,
+                    origin_mask=(1 << min(next_reg_id, 28)),
+                )
+            )
+            next_reg_id += 1
+
+        has_explicit_week_qty = any(r.unit == "week" for r in out)
+        has_explicit_hour_qty = any(r.unit == "hour" for r in out)
+        has_explicit_year_qty = any(r.unit == "year" for r in out)
+        has_explicit_day_qty = any(r.unit == "day" for r in out)
+
+        if "day" in existing_units and not has_explicit_week_qty and re.search(r"\b(?:a|one|per|every|each)\s+week\b|\bin\s+a\s+week\b", low):
+            if goal.per_unit != "week":
+                _add_const(7.0, "day", None)
+        if "day" in existing_units and re.search(r"\bweekdays\b", low):
+            _add_const(5.0, "day", None)
+        if "day" in existing_units and re.search(r"\bweekend\b", low):
+            _add_const(2.0, "day", None)
+        if "hour" in existing_units and not has_explicit_day_qty and re.search(r"\bin\s+(?:a|one|1)\s+day\b", low) and goal.per_unit != "day":
+            _add_const(24.0, "hour", None)
+        if "minute" in existing_units and not has_explicit_hour_qty and re.search(r"\b(?:an|one|per|every|each)\s+hour\b", low) and not any(r.per_unit == "hour" for r in out):
+            _add_const(60.0, "minute", None)
+        if "month" in existing_units and not has_explicit_year_qty and re.search(r"\b(?:a|one|per|every|each)\s+year\b", low):
+            _add_const(12.0, "month", None)
+        if "week" in existing_units and not has_explicit_year_qty and re.search(r"\b(?:a|one|per|every|each)\s+year\b", low):
+            _add_const(52.0, "week", None)
+
+        if goal.target_unit == "dollar":
+            for r_idx, r in enumerate(out):
+                if r.unit in ("quarter", "dime", "nickel", "cent"):
+                    scale = UNIT_CONVERSIONS[(r.unit, "dollar")]
+                    out[r_idx] = QuantReg(**{**r.__dict__, "value": r.value * scale, "unit": "dollar"})
+
+        return out
+
+    @classmethod
+    def _propagate_missing_units(
+        cls, regs: List[QuantReg], clauses: Sequence[ClauseInfo], goal: GoalSpec
+    ) -> List[QuantReg]:
+        """省略された単位 ("eats 3 for breakfast", "6 during dinner") に先行する具体単位と必要に応じた per_unit を継承"""
+        out: List[QuantReg] = []
+        last_concrete_unit = goal.target_unit if goal.target_unit not in ("item", "scalar", "dozen") else "item"
+        last_per_unit: Optional[str] = None
+        for r in regs:
+            if r.unit in ("color", "type", "kind", "flavor", "category", "variety") and goal.target_unit not in ("item", r.unit):
+                out.append(r)
+                continue
+            if r.unit not in ("item", "scalar", "percent"):
+                last_concrete_unit = r.unit
+                if r.unit != "dollar":
+                    last_per_unit = r.per_unit
+                out.append(r)
+            elif r.unit == "item" and r.stage not in ("FRAC", "FRAC_LOSE", "PCT_OF", "PCT_MORE", "PCT_LESS", "MULT_ANAPHOR"):
+                # "16 eggs per day. She eats 3 for breakfast" -> 3 も同スケールの egg (/day) を引き継ぐ！
+                inh_per = r.per_unit if r.per_unit is not None else last_per_unit
+                out.append(QuantReg(**{**r.__dict__, "unit": last_concrete_unit, "per_unit": inh_per}))
+            else:
+                out.append(r)
+        return out
+
+
+# ==============================================================================
+# 3. 高到達率 Soft-Typed 遷移生成・役割抽象化 SCReLU NNUE・Beam Stack Search
+# ==============================================================================
+
+STEP_COST: float = 4.25
+
+
+@dataclass(frozen=True)
+class TransitionMove:
+    op: str
+    idx_a: int
+    idx_b: int
+    new_reg: QuantReg
+    prior_score: float
+    rule_tag: str = "GENERIC"
+    keep_a_active: bool = False
+
+
+@dataclass
+class SearchNode:
+    regs: Tuple[QuantReg, ...]
+    consumed_mask: int
+    cum_score: float
+    depth: int
+    history: Tuple[Tuple[str, float, float, float], ...] = ()
+    step_feats: Tuple[Tuple[np.ndarray, np.ndarray, float], ...] = ()
+
+
+def _fnv_hash(key: str, mod: int) -> int:
+    h = 2166136261
+    for ch in key:
+        h ^= ord(ch)
+        h = (h * 16777619) & 0xFFFFFFFF
+    return 1 + (h % (mod - 1))
+
+
+class LegalMoveGenerator:
+    """
+    ハードな `return None` 壁を取り除いた Soft-Typed 合法手生成器。
+    異単位減算 (`200 seats - 145 people`)、同単位包含除 (`24 cups / 3 cups`)、
+    非コンテナ乗除算 (`6 chairs * 4 legs`) もソフトな事前スコア付きで生成し、
+    Oracle 到達率を最大化しつつ NNUE が文脈特徴から最適手を選べるようにする。
+    """
+
+    @classmethod
+    def generate(
+        cls,
+        regs: Sequence[QuantReg],
+        consumed_mask: int,
+        clauses: Sequence[ClauseInfo],
+        goal: GoalSpec,
+        next_reg_id: int,
+        current_depth: int,
+    ) -> List[TransitionMove]:
+        moves: List[TransitionMove] = []
+        active_indices = [i for i in range(len(regs)) if not ((consumed_mask >> i) & 1)]
+        if len(active_indices) < 2:
+            return moves
+
+        any_clause_needs_rem = goal.has_the_rest_cue or goal.query_type == "REMAIN" or any(c.has_remaining_cue for c in clauses)
+
+        for pos_i, i in enumerate(active_indices):
+            ra = regs[i]
+            if ra.owner == "one_individual":
+                continue
+            for pos_j, j in enumerate(active_indices):
+                if i == j:
+                    continue
+                rb = regs[j]
+                if rb.owner == "one_individual":
+                    continue
+
+                if rb.stage in ("PCT_LESS", "PCT_MORE", "PCT_OF") and ra.stage not in ("PCT_LESS", "PCT_MORE", "PCT_OF", "FRAC", "FRAC_LOSE", "MULT_ANAPHOR"):
+                    if ra.clause_idx <= rb.clause_idx:
+                        moves.extend(cls._make_pct_moves(i, j, ra, rb, any_clause_needs_rem, next_reg_id, current_depth))
+                    continue
+                if ra.stage in ("PCT_LESS", "PCT_MORE", "PCT_OF"):
+                    continue
+
+                if rb.stage == "MULT_ANAPHOR" and ra.stage not in ("MULT_ANAPHOR", "FRAC", "FRAC_LOSE", "POST_MULT_MORE", "POST_MULT_LESS"):
+                    if ra.clause_idx <= rb.clause_idx:
+                        moves.extend(cls._make_mult_anaphor_moves(i, j, ra, rb, regs, active_indices, goal, next_reg_id, current_depth))
+                    continue
+                if ra.stage == "MULT_ANAPHOR":
+                    continue
+
+                if rb.stage in ("FRAC", "FRAC_LOSE") and ra.stage not in ("FRAC", "FRAC_LOSE", "MULT_ANAPHOR"):
+                    moves.extend(cls._make_frac_moves(i, j, ra, rb, any_clause_needs_rem, next_reg_id, current_depth))
+                    continue
+                if ra.stage in ("FRAC", "FRAC_LOSE"):
+                    continue
+
+                disjoint_origins = (ra.origin_mask & rb.origin_mask) == 0
+                if i < j:
+                    m_add = cls._try_add(i, j, ra, rb, goal, next_reg_id, current_depth)
+                    if m_add is not None:
+                        moves.extend(m_add)
+                    if disjoint_origins:
+                        m_mul = cls._try_mul(i, j, ra, rb, goal, next_reg_id, current_depth)
+                        if m_mul is not None:
+                            moves.extend(m_mul)
+
+                m_sub = cls._try_sub(i, j, ra, rb, regs, active_indices, any_clause_needs_rem, goal, next_reg_id, current_depth)
+                if m_sub is not None:
+                    moves.extend(m_sub)
+
+                if disjoint_origins:
+                    m_div = cls._try_div(i, j, ra, rb, goal, next_reg_id, current_depth)
+                    if m_div is not None:
+                        moves.append(m_div)
+
+        moves.sort(key=lambda mv: mv.prior_score, reverse=True)
+        return moves[:44]
+
+    @classmethod
+    def _units_compatible_add(
+        cls, ra: QuantReg, rb: QuantReg, goal: GoalSpec, is_sub: bool = False
+    ) -> Tuple[bool, float, Optional[QuantReg], Optional[QuantReg]]:
+        # 片方だけ per_unit がある場合でも同単位なら省略表現 ("16 eggs/day ... eats 3") として整合許容！
+        eff_per = ra.per_unit if ra.per_unit == rb.per_unit else (ra.per_unit or rb.per_unit if ra.unit == rb.unit else None)
+        if ra.per_unit != rb.per_unit and ra.unit != rb.unit:
+            return False, 0.0, None, None
+
+        if ra.unit == rb.unit:
+            b_factor = 1.0 if ra.per_unit == rb.per_unit else 0.90
+            return True, b_factor, QuantReg(**{**ra.__dict__, "per_unit": eff_per}), QuantReg(**{**rb.__dict__, "per_unit": eff_per})
+
+        if goal.query_type == "DIFF" and goal.second_unit and {ra.unit, rb.unit} == {goal.target_unit, goal.second_unit}:
+            return True, 1.0, QuantReg(**{**ra.__dict__, "unit": goal.target_unit}), QuantReg(**{**rb.__dict__, "unit": goal.target_unit})
+
+        ha = UNIT_HYPERNYM.get(ra.unit, "")
+        hb = UNIT_HYPERNYM.get(rb.unit, "")
+        hg = UNIT_HYPERNYM.get(goal.target_unit, goal.target_unit)
+        if ha and ha == hb and goal.target_unit in CATEGORY_TARGET_UNITS and hg == ha:
+            return True, 0.95, QuantReg(**{**ra.__dict__, "unit": goal.target_unit}), QuantReg(**{**rb.__dict__, "unit": goal.target_unit})
+
+        if (rb.unit, ra.unit) in UNIT_CONVERSIONS:
+            scale = UNIT_CONVERSIONS[(rb.unit, ra.unit)]
+            rb_conv = QuantReg(**{**rb.__dict__, "value": rb.value * scale, "unit": ra.unit})
+            return True, 0.85, ra, rb_conv
+
+        if ra.unit == "item" or rb.unit == "item":
+            u = ra.unit if ra.unit != "item" else rb.unit
+            return True, 0.60, QuantReg(**{**ra.__dict__, "unit": u}), QuantReg(**{**rb.__dict__, "unit": u})
+
+        # 減算時の1対1対応差 ("200 seats - 145 people = 55 empty seats", "15 children - 12 cookies") はソフト許容！
+        if is_sub and "dollar" not in (ra.unit, rb.unit) and (ra.unit in TIME_UNITS) == (rb.unit in TIME_UNITS):
+            u_res = ra.unit if ra.unit == goal.target_unit else (rb.unit if rb.unit == goal.target_unit else ra.unit)
+            return True, 0.55, QuantReg(**{**ra.__dict__, "unit": u_res}), QuantReg(**{**rb.__dict__, "unit": u_res})
+
+        return False, 0.0, None, None
+
+    @classmethod
+    def _make_pct_moves(
+        cls, i: int, j: int, ra: QuantReg, rb: QuantReg, needs_rem: bool, next_id: int, depth: int
+    ) -> List[TransitionMove]:
+        out: List[TransitionMove] = []
+        locality = 1.2 if abs(rb.clause_idx - ra.clause_idx) <= 1 else 0.2
+        mask = ra.origin_mask | rb.origin_mask
+        if rb.stage == "PCT_LESS":
+            val = ra.value * (1.0 - rb.value / 100.0)
+            nr = QuantReg(
+                reg_id=next_id, value=val, owner=ra.owner, unit=ra.unit, per_unit=ra.per_unit,
+                attr=ra.attr, stage="GAIN", action=ra.action, clause_idx=rb.clause_idx,
+                depth=depth + 1, origin_mask=mask,
+            )
+            out.append(TransitionMove("PCT_SUB", i, j, nr, 6.4 + locality, "PCT_DISCOUNT"))
+        elif rb.stage == "PCT_MORE":
+            val = ra.value * (1.0 + rb.value / 100.0)
+            is_distinct_subset = bool(rb.attr and rb.attr != ra.attr and "tax" not in rb.clause_words and "tip" not in rb.clause_words)
+            nr = QuantReg(
+                reg_id=next_id, value=val, owner=ra.owner, unit=ra.unit, per_unit=ra.per_unit,
+                attr=rb.attr or ra.attr, stage="GAIN", action="sell" if ra.stage == "COST_OUT" else ra.action, clause_idx=rb.clause_idx,
+                depth=depth + 1, origin_mask=mask,
+            )
+            if is_distinct_subset:
+                out.append(TransitionMove("PCT_ADD", i, j, nr, 6.6 + locality, "PCT_MARKUP_KEEP", keep_a_active=True))
+            out.append(TransitionMove("PCT_ADD", i, j, nr, 6.4 + locality, "PCT_MARKUP", keep_a_active=False))
+            if ra.stage == "COST_OUT":
+                out.append(TransitionMove("PCT_ADD", i, j, nr, 6.5 + locality, "PCT_MARKUP_KEEP_COST", keep_a_active=True))
+        else:
+            val = ra.value * (rb.value / 100.0)
+            is_comp_pct = "as" in rb.left_win or "as" in rb.right_win
+            st_p = "GAIN" if is_comp_pct else "PART"
+            nr = QuantReg(
+                reg_id=next_id, value=val, owner=rb.owner if rb.owner not in ("global", "GROUP") else ra.owner,
+                unit=ra.unit, per_unit=ra.per_unit, attr=rb.attr or ra.attr,
+                stage=st_p, action=rb.action, clause_idx=rb.clause_idx,
+                depth=depth + 1, origin_mask=mask,
+            )
+            if is_comp_pct:
+                out.append(TransitionMove("PCT_OF", i, j, nr, 6.6 + locality, "PCT_COMP_KEEP", keep_a_active=True))
+            out.append(TransitionMove("PCT_OF", i, j, nr, 6.2 + locality, "PCT_DIRECT", keep_a_active=False))
+            if needs_rem:
+                out.append(TransitionMove("PCT_OF", i, j, nr, 6.1 + locality, "PCT_PART", keep_a_active=True))
+        return out
+
+    @classmethod
+    def _make_mult_anaphor_moves(
+        cls,
+        i: int,
+        j: int,
+        ra: QuantReg,
+        rb: QuantReg,
+        regs: Sequence[QuantReg],
+        active_indices: Sequence[int],
+        goal: GoalSpec,
+        next_id: int,
+        depth: int,
+    ) -> List[TransitionMove]:
+        if rb.ref_owner and rb.ref_owner not in (ra.owner, ra.attr):
+            return []
+        dist = rb.clause_idx - ra.clause_idx
+        if dist < 0:
+            return []
+
+        if rb.is_remaining_frac:
+            if ra.stage == "REMAIN_POOL":
+                val = ra.value * rb.value
+                nr = QuantReg(
+                    reg_id=next_id, value=val, owner=rb.owner if rb.owner not in ("global", "GROUP") else ra.owner,
+                    unit=ra.unit, per_unit=ra.per_unit, stage="FINAL", action=rb.action,
+                    clause_idx=rb.clause_idx, depth=depth + 1, origin_mask=ra.origin_mask | rb.origin_mask,
+                )
+                return [
+                    TransitionMove("MUL", i, j, nr, 7.8, "REM_ANAPHOR_DIRECT", keep_a_active=False),
+                    TransitionMove("MUL", i, j, nr, 7.2, "REM_ANAPHOR_KEEP", keep_a_active=True),
+                ]
+            return []
+
+        if not rb.ref_owner and ra.stage not in ("TARGET_GOAL", "RATE"):
+            has_more_recent_same = any(
+                k not in (i, j)
+                and regs[k].unit == ra.unit
+                and regs[k].owner == ra.owner
+                and ra.clause_idx < regs[k].clause_idx <= rb.clause_idx
+                and regs[k].reg_id < rb.reg_id
+                and regs[k].stage in ("INIT", "GAIN")
+                for k in active_indices
+            )
+            if has_more_recent_same:
+                return []
+
+        needs_rem_q = goal.has_the_rest_cue or goal.query_type == "REMAIN"
+        unit_named_in_rb = ra.unit != "item" and ra.unit in rb.clause_words
+        if dist == 0 and rb.value < 1.0 and not unit_named_in_rb:
+            if any(regs[k].clause_idx < rb.clause_idx and regs[k].unit in rb.clause_words for k in active_indices if k not in (i, j)):
+                return []
+
+        if rb.attr == "inplace_scale":
+            # 累積重量等を倍増する場合は先行する同単位レジスタが合算済みであることを要求 ("2 + 6 = 8 -> double -> 16")
+            if any(k not in (i, j) and regs[k].unit == ra.unit and regs[k].clause_idx < rb.clause_idx for k in active_indices):
+                return []
+            val = ra.value * rb.value
+            nr = QuantReg(
+                reg_id=next_id, value=val, owner=ra.owner, unit=ra.unit, per_unit=ra.per_unit,
+                attr="", stage="GAIN", action=ra.action, clause_idx=rb.clause_idx,
+                depth=depth + 1, origin_mask=ra.origin_mask | rb.origin_mask,
+            )
+            return [TransitionMove("MUL", i, j, nr, 7.4, "ANAPHOR_INPLACE_ONLY", keep_a_active=False)]
+
+        is_in_place_mutation = (
+            rb.ref_owner == ""
+            and rb.action in ("have", "add")
+            and ra.owner == rb.owner
+            and ra.stage != "TARGET_GOAL"
+            and goal.query_type != "TOTAL"
+            and "altogether" not in goal.question_tokens
+            and not (rb.value < 1.0 and needs_rem_q)
+            and not any(regs[k].stage in ("POST_MULT_MORE", "POST_MULT_LESS") and regs[k].clause_idx == rb.clause_idx for k in active_indices)
+        )
+        score = 6.7 if dist == 1 else (6.1 if dist == 0 else max(4.5, 5.8 - 0.5 * dist))
+        if unit_named_in_rb:
+            score += 0.8
+        if rb.ref_owner and rb.ref_owner in (ra.owner, ra.attr):
+            score += 1.4
+        val = ra.value * rb.value
+
+        if ra.stage == "TARGET_GOAL":
+            out_stage = "INIT"
+        elif ra.stage == "TRANSFER_OUT" and ra.ref_owner:
+            out_stage = "TRANSFER_OUT"
+        elif ra.stage == "RATE":
+            out_stage = "RATE"
+        elif rb.value < 1.0 and needs_rem_q:
+            out_stage = "PART"
+        else:
+            out_stage = "GAIN"
+
+        out_owner = rb.owner if rb.owner not in ("global", "GROUP") else ra.owner
+        nr = QuantReg(
+            reg_id=next_id, value=val, owner=out_owner, unit=ra.unit, per_unit=ra.per_unit,
+            attr=rb.attr or f"{ra.attr}_scaled", stage=out_stage,
+            action=rb.action if rb.action != "have" else ra.action,
+            clause_idx=rb.clause_idx,
+            ref_owner=ra.ref_owner if ra.stage == "TRANSFER_OUT" else "",
+            depth=depth + 1, origin_mask=ra.origin_mask | rb.origin_mask,
+        )
+        if ra.stage == "TARGET_GOAL":
+            return [TransitionMove("MUL", i, j, nr, score + 0.8, "ANAPHOR_FROM_TARGET", keep_a_active=True)]
+        if is_in_place_mutation:
+            return [
+                TransitionMove("MUL", i, j, nr, score + 0.6, "ANAPHOR_SCALE_REPLACE", keep_a_active=False),
+                TransitionMove("MUL", i, j, nr, score - 0.3, "ANAPHOR_SCALE_KEEP", keep_a_active=True),
+            ]
+        return [
+            TransitionMove("MUL", i, j, nr, score, "ANAPHOR_SCALE_KEEP", keep_a_active=True),
+            TransitionMove("MUL", i, j, nr, score - 0.1, "ANAPHOR_SCALE_REPLACE", keep_a_active=False),
+        ]
+
+    @classmethod
+    def _make_frac_moves(
+        cls, i: int, j: int, ra: QuantReg, rb: QuantReg, needs_rem: bool, next_id: int, depth: int
+    ) -> List[TransitionMove]:
+        if rb.clause_idx < ra.clause_idx:
+            return []
+        if rb.is_remaining_frac and ra.stage != "REMAIN_POOL" and depth == 0:
+            score = 3.0
+        elif rb.is_remaining_frac and ra.stage == "REMAIN_POOL":
+            score = 7.3
+        else:
+            dist = abs(rb.clause_idx - ra.clause_idx)
+            score = 6.4 if dist <= 1 else 4.6
+        val = ra.value * rb.value
+        st_out = "LOSE" if rb.stage == "FRAC_LOSE" else "PART"
+        nr = QuantReg(
+            reg_id=next_id, value=val, owner=rb.owner if rb.owner not in ("global", "GROUP") else ra.owner,
+            unit=ra.unit, per_unit=ra.per_unit, attr=rb.attr, stage=st_out,
+            action=rb.action, clause_idx=rb.clause_idx, depth=depth + 1,
+            origin_mask=ra.origin_mask | rb.origin_mask,
+        )
+        if st_out == "LOSE":
+            return [TransitionMove("MUL", i, j, nr, score + 0.4, "FRAC_LOSE_APPLY", keep_a_active=True)]
+        moves = [TransitionMove("MUL", i, j, nr, score - 0.1, "FRAC_DIRECT", keep_a_active=False)]
+        if needs_rem:
+            moves.insert(0, TransitionMove("MUL", i, j, nr, score + 0.2, "FRAC_APPLY", keep_a_active=True))
+        return moves
+
+    @classmethod
+    def _try_add(
+        cls, i: int, j: int, ra: QuantReg, rb: QuantReg, goal: GoalSpec, next_id: int, depth: int
+    ) -> Optional[List[TransitionMove]]:
+        ok, u_bonus, ca, cb = cls._units_compatible_add(ra, rb, goal, is_sub=False)
+        if not ok or ca is None or cb is None:
+            return None
+        if any(st in ("PAID_BILL", "TARGET_GOAL", "TIME_PARAM", "DIFF_SOLVED", "POST_MULT_LESS") for st in (ca.stage, cb.stage)):
+            return None
+        if "POST_MULT_MORE" in (ca.stage, cb.stage):
+            base_r, off_r = (ca, cb) if cb.stage == "POST_MULT_MORE" else (cb, ca)
+            if base_r.depth >= 1 and base_r.clause_idx == off_r.clause_idx:
+                nr = QuantReg(
+                    reg_id=next_id, value=ca.value + cb.value, owner=base_r.owner, unit=base_r.unit,
+                    per_unit=base_r.per_unit, attr=base_r.attr, stage="GAIN", action=base_r.action,
+                    clause_idx=base_r.clause_idx, depth=depth + 1, origin_mask=ca.origin_mask | cb.origin_mask,
+                )
+                return [TransitionMove("ADD", i, j, nr, 8.2, "POST_MULT_ADD")]
+            return None
+
+        val = ca.value + cb.value
+        same_owner = ca.owner == cb.owner
+        new_owner = ca.owner if same_owner else ("GROUP" if "global" not in (ca.owner, cb.owner) else (ca.owner if ca.owner != "global" else cb.owner))
+        new_attr = ca.attr if ca.attr == cb.attr else "GROUP"
+        mask = ca.origin_mask | cb.origin_mask
+
+        if cb.stage == "COMP_MORE" and cb.ref_owner in (ca.owner, ca.attr) and ra.unit == rb.unit:
+            nr = QuantReg(reg_id=next_id, value=val, owner=cb.owner, unit=ca.unit, per_unit=ca.per_unit, attr=cb.attr, stage="INIT", action=cb.action, clause_idx=cb.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [
+                TransitionMove("ADD", i, j, nr, 7.6, "COMP_MORE_FWD", keep_a_active=False),
+                TransitionMove("ADD", i, j, nr, 7.4, "COMP_MORE_FWD_KEEP", keep_a_active=True),
+            ]
+        if ca.stage == "COMP_MORE" and ca.ref_owner in (cb.owner, cb.attr) and ra.unit == rb.unit:
+            nr = QuantReg(reg_id=next_id, value=val, owner=ca.owner, unit=cb.unit, per_unit=cb.per_unit, attr=ca.attr, stage="INIT", action=ca.action, clause_idx=ca.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 7.6, "COMP_MORE_FWD", keep_a_active=False)]
+
+        if cb.stage == "COMP_LESS" and cb.owner == ca.owner and cb.ref_owner and cb.ref_owner != ca.owner and ra.unit == rb.unit:
+            nr = QuantReg(reg_id=next_id, value=val, owner=cb.ref_owner, unit=ca.unit, per_unit=ca.per_unit, attr="", stage="INIT", action="have", clause_idx=cb.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [
+                TransitionMove("ADD", i, j, nr, 7.8, "COMP_LESS_INV", keep_a_active=False),
+                TransitionMove("ADD", i, j, nr, 7.5, "COMP_LESS_INV_KEEP", keep_a_active=True),
+            ]
+        if ca.stage == "COMP_LESS" and ca.owner == cb.owner and ca.ref_owner and ca.ref_owner != cb.owner and ra.unit == rb.unit:
+            nr = QuantReg(reg_id=next_id, value=val, owner=ca.ref_owner, unit=cb.unit, per_unit=cb.per_unit, attr="", stage="INIT", action="have", clause_idx=ca.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 7.8, "COMP_LESS_INV", keep_a_active=False)]
+
+        if "POST_MULT_MORE" in (ca.stage, cb.stage) or ca.stage == "POST_MULT_LESS":
+            return None
+        if cb.stage == "POST_MULT_LESS":
+            if ca.depth >= 1 and ca.clause_idx == cb.clause_idx:
+                nr = QuantReg(
+                    reg_id=next_id, value=val, owner=ca.owner, unit=ca.unit, per_unit=ca.per_unit,
+                    attr=ca.attr, stage="GAIN", action=ca.action, clause_idx=ca.clause_idx,
+                    depth=depth + 1, origin_mask=mask,
+                )
+                return [TransitionMove("SUB", i, j, nr, 8.2, "POST_MULT_SUB")]
+            return None
+        if any(st in ("COMP_MORE", "COMP_LESS", "DIFF_SOLVED") for st in (ca.stage, cb.stage)):
+            return None
+
+        if cb.stage == "TRANSFER_OUT" and cb.ref_owner == ca.owner and ca.stage != "COST_OUT":
+            nr = QuantReg(reg_id=next_id, value=val, owner=ca.owner, unit=ca.unit, per_unit=ca.per_unit, attr=ca.attr, stage="GAIN", action="have", clause_idx=cb.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 7.4, "TRANSFER_RECV")]
+        if ca.stage == "TRANSFER_OUT" and ca.ref_owner == cb.owner and cb.stage != "COST_OUT":
+            nr = QuantReg(reg_id=next_id, value=val, owner=cb.owner, unit=cb.unit, per_unit=cb.per_unit, attr=cb.attr, stage="GAIN", action="have", clause_idx=ca.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 7.4, "TRANSFER_RECV")]
+        if ca.stage == "TRANSFER_OUT" and cb.stage == "TRANSFER_OUT" and ca.ref_owner and ca.ref_owner == cb.ref_owner:
+            nr = QuantReg(reg_id=next_id, value=val, owner=ca.ref_owner, unit=ca.unit, per_unit=ca.per_unit, stage="GAIN", action="have", clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 7.4, "TRANSFER_RECV_SUM")]
+
+        if goal.query_type in ("INITIAL", "SOLVE_SOME") and (same_owner or "global" in (ca.owner, cb.owner) or "vase" in (ca.owner, cb.owner)):
+            if {ca.stage, cb.stage} in ({"LOSE", "FINAL"}, {"TRANSFER_OUT", "FINAL"}, {"COST_OUT", "FINAL"}):
+                eff_o = goal.target_owner if goal.target_owner != "global" else (ca.owner if ca.owner != "global" else cb.owner)
+                st_tag = "INITIAL_SOLVED" if goal.query_type == "INITIAL" else "FINAL_PLUS_LOSE"
+                nr = QuantReg(reg_id=next_id, value=val, owner=eff_o, unit=ca.unit, per_unit=ca.per_unit, attr=ca.attr, stage=st_tag, action="have", clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+                return [TransitionMove("ADD", i, j, nr, 7.9, "CONSERVATION_INIT")]
+
+        if goal.query_type == "DIFF":
+            if goal.second_unit and {ra.unit, rb.unit} == {goal.target_unit, goal.second_unit}:
+                return None
+            if goal.target_attr and goal.second_attr and {ca.attr, cb.attr} == {goal.target_attr, goal.second_attr}:
+                return None
+
+        if goal.target_attr and ca.attr and cb.attr and ca.attr != cb.attr and goal.query_type == "COUNT":
+            return None
+        if ca.attr != cb.attr and (not ca.attr or not cb.attr):
+            new_attr = ca.attr or cb.attr
+
+        q_mod_penalty = 0.0
+        if goal.q_focus_modifiers:
+            for r_chk in (ca, cb):
+                if r_chk.attr and r_chk.attr not in goal.q_focus_modifiers and r_chk.attr != "GROUP":
+                    q_mod_penalty -= 3.5
+
+        both_match_q_action = (
+            goal.action_lemma not in ("have", "leave", "cost")
+            and ca.action == goal.action_lemma
+            and cb.action == goal.action_lemma
+        )
+        if both_match_q_action and (same_owner or goal.target_owner in ("GROUP", "global")):
+            nr = QuantReg(reg_id=next_id, value=val, owner=new_owner, unit=ca.unit, per_unit=ca.per_unit, attr=new_attr, stage="GAIN", action=goal.action_lemma, clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 6.6 * u_bonus + q_mod_penalty, "ACTION_ACCUM")]
+
+        if ca.stage in ("LOSE", "COST_OUT") and cb.stage in ("LOSE", "COST_OUT"):
+            st_comb = "COST_OUT" if "COST_OUT" in (ca.stage, cb.stage) else "LOSE"
+            nr = QuantReg(reg_id=next_id, value=val, owner=new_owner, unit=ca.unit, per_unit=ca.per_unit, attr=new_attr, stage=st_comb, action=ca.action, clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 6.4 * u_bonus + q_mod_penalty, "COST_SUM")]
+
+        if goal.query_type == "DIFF" and "FINAL" in (ca.stage, cb.stage):
+            return None
+        if (ca.origin_mask & cb.origin_mask) != 0 and ("PART" in (ca.stage, cb.stage) or "COST_OUT" in (ca.stage, cb.stage)):
+            return None
+        if any(r.stage in ("LOSE", "TRANSFER_OUT", "COST_OUT") or (r.stage == "FINAL" and r.depth == 0) for r in (ca, cb)):
+            if goal.action_lemma in ("cost", "spend", "pay") and ("COST_OUT" in (ca.stage, cb.stage)):
+                return None
+            nr = QuantReg(reg_id=next_id, value=val, owner=new_owner, unit=ca.unit, per_unit=ca.per_unit, attr=new_attr, stage="DERIVED", action="have", clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 2.2 * u_bonus + q_mod_penalty, "LOW_ADD")]
+
+        if ca.per_unit is not None and ca.per_unit == cb.per_unit and same_owner:
+            nr = QuantReg(reg_id=next_id, value=val, owner=ca.owner, unit=ca.unit, per_unit=ca.per_unit, attr="GROUP", stage="RATE", action=ca.action, clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("ADD", i, j, nr, 6.9 * u_bonus + q_mod_penalty, "RATE_SUM")]
+
+        score = 3.0 * u_bonus + q_mod_penalty
+        if same_owner or "global" in (ca.owner, cb.owner):
+            eff_o = ca.owner if ca.owner != "global" else cb.owner
+            new_owner = eff_o
+            if goal.target_owner not in ("global", "GROUP") and eff_o not in ("global", goal.target_owner, goal.second_owner):
+                # 質問と無関係な別人物の加算は STEP_COST 未満に抑えつつ参照連鎖用には残す
+                score += 1.0
+            else:
+                score += 3.2
+        else:
+            if goal.target_owner in ("GROUP", "global") or goal.query_type == "TOTAL":
+                score += 3.0
+            else:
+                score -= 1.8
+
+        nr = QuantReg(
+            reg_id=next_id, value=val, owner=new_owner, unit=ca.unit, per_unit=ca.per_unit,
+            attr=new_attr, stage="GAIN", action=ca.action if ca.action == cb.action else "have",
+            clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask,
+        )
+        return [TransitionMove("ADD", i, j, nr, score, "STD_ADD")]
+
+    @classmethod
+    def _try_sub(
+        cls,
+        i: int,
+        j: int,
+        ra: QuantReg,
+        rb: QuantReg,
+        regs: Sequence[QuantReg],
+        active_indices: Sequence[int],
+        needs_rem: bool,
+        goal: GoalSpec,
+        next_id: int,
+        depth: int,
+    ) -> Optional[List[TransitionMove]]:
+        ok, u_bonus, ca, cb = cls._units_compatible_add(ra, rb, goal, is_sub=True)
+        if not ok or ca is None or cb is None:
+            return None
+        val = ca.value - cb.value
+        if val < -1e-9:
+            return None
+
+        same_owner = ca.owner == cb.owner
+        eff_owner = ca.owner if ca.owner != "global" else cb.owner
+        mask = ca.origin_mask | cb.origin_mask
+
+        if cb.stage == "COMP_LESS" and cb.ref_owner in (ca.owner, ca.attr) and ra.unit == rb.unit:
+            nr = QuantReg(reg_id=next_id, value=val, owner=cb.owner, unit=ca.unit, per_unit=ca.per_unit, attr=cb.attr, stage="INIT", action=cb.action, clause_idx=cb.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [
+                TransitionMove("SUB", i, j, nr, 7.6, "COMP_LESS_FWD", keep_a_active=False),
+                TransitionMove("SUB", i, j, nr, 7.4, "COMP_LESS_FWD_KEEP", keep_a_active=True),
+            ]
+        if cb.stage == "COMP_MORE" and cb.owner == ca.owner and cb.ref_owner and cb.ref_owner != ca.owner and ra.unit == rb.unit:
+            nr = QuantReg(reg_id=next_id, value=val, owner=cb.ref_owner, unit=ca.unit, per_unit=ca.per_unit, attr="", stage="INIT", action="have", clause_idx=cb.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [
+                TransitionMove("SUB", i, j, nr, 7.8, "COMP_MORE_INV", keep_a_active=False),
+                TransitionMove("SUB", i, j, nr, 7.5, "COMP_MORE_INV_KEEP", keep_a_active=True),
+            ]
+        if any(st in ("COMP_MORE", "COMP_LESS", "DIFF_SOLVED") for st in (ca.stage, cb.stage)):
+            return None
+
+        if ca.stage == "PAID_BILL" and cb.stage != "PAID_BILL":
+            nr = QuantReg(reg_id=next_id, value=val, owner=goal.target_owner, unit=ca.unit, stage="FINAL", action="get", clause_idx=ca.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("SUB", i, j, nr, 7.7 if goal.query_type == "CHANGE" else 5.2, "BILL_CHANGE")]
+
+        if ca.stage == "TARGET_GOAL" and cb.stage != "TARGET_GOAL":
+            for k in active_indices:
+                if k in (i, j):
+                    continue
+                rk = regs[k]
+                if rk.unit == ca.unit and (rk.owner == cb.owner or rk.ref_owner == cb.owner or rk.stage == "MULT_ANAPHOR"):
+                    return None
+            nr = QuantReg(reg_id=next_id, value=val, owner=cb.owner, unit=ca.unit, stage="FINAL", action="need", clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("SUB", i, j, nr, 7.8 if goal.query_type == "DIFF" else 5.8, "GOAL_SHORTFALL")]
+
+        if ca.stage == "FINAL_PLUS_LOSE" and cb.stage == "INIT":
+            nr = QuantReg(reg_id=next_id, value=val, owner=goal.target_owner if goal.target_owner != "global" else eff_owner, unit=ca.unit, stage="SOME_SOLVED", action=goal.action_lemma, clause_idx=ca.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("SUB", i, j, nr, 8.2, "SOLVE_SOME_GAIN")]
+
+        if goal.query_type == "DIFF":
+            is_fewer_q = bool(goal.question_tokens & {"fewer", "less", "lesser", "shorter", "smaller"})
+            owner_pair_ok = bool(goal.second_owner and ((ca.owner == goal.second_owner and cb.owner == goal.target_owner) if is_fewer_q else (ca.owner == goal.target_owner and cb.owner == goal.second_owner)))
+            attr_pair_ok = bool(goal.target_attr and goal.second_attr and ((ca.attr == goal.second_attr and cb.attr == goal.target_attr) if is_fewer_q else (ca.attr == goal.target_attr and cb.attr == goal.second_attr)))
+            unit_pair_ok = bool(goal.second_unit and ((ra.unit == goal.second_unit and rb.unit == goal.target_unit) if is_fewer_q else (ra.unit == goal.target_unit and rb.unit == goal.second_unit)))
+            premature = any(
+                k not in (i, j) and regs[k].unit == ra.unit and regs[k].owner == ra.owner and regs[k].stage == "GAIN"
+                for k in active_indices
+            )
+            if not premature and (owner_pair_ok or attr_pair_ok or unit_pair_ok) and (goal.target_owner == "global" or ca.owner in (goal.target_owner, "global")):
+                nr = QuantReg(reg_id=next_id, value=val, owner=goal.target_owner, unit=goal.target_unit, attr=goal.target_attr, stage="DIFF_SOLVED", action=goal.action_lemma, clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+                return [TransitionMove("SUB", i, j, nr, 8.4, "GOAL_DIFF_PAIR")]
+
+        has_later_rem_anaphor = any(
+            k not in (i, j) and regs[k].is_remaining_frac and regs[k].clause_idx >= cb.clause_idx
+            for k in active_indices
+        )
+        if needs_rem and (
+            cb.stage == "PART"
+            or (ca.stage == "REMAIN_POOL" and goal.has_the_rest_cue and cb.stage == "INIT")
+            or (has_later_rem_anaphor and ca.depth == 0 and ca.clause_idx == 0 and cb.clause_idx > 0 and ca.unit == cb.unit)
+        ) and ca.stage in ("INIT", "GAIN", "REMAIN_POOL", "DERIVED") and (ca.stage == "REMAIN_POOL" or ca.clause_idx <= cb.clause_idx):
+            out_u = goal.target_unit if (ca.stage == "REMAIN_POOL" and goal.has_the_rest_cue and goal.target_unit != "item") else ca.unit
+            nr = QuantReg(reg_id=next_id, value=val, owner=eff_owner, unit=out_u, per_unit=ca.per_unit, attr="remaining", stage="REMAIN_POOL", action="have", clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("SUB", i, j, nr, 7.1, "REMAIN_AFTER_PART")]
+
+        if (same_owner or "global" in (ca.owner, cb.owner)) and cb.stage in ("LOSE", "TRANSFER_OUT", "COST_OUT") and ca.stage not in ("LOSE", "TRANSFER_OUT", "COST_OUT", "PAID_BILL", "TARGET_GOAL"):
+            # 先行する割合減少 ("sold 1/4 of them ... and 15 shirts") が未適用のうちは元在庫から固定数を先に引かない
+            has_earlier_frac_lose = ca.depth == 0 and any(
+                k not in (i, j)
+                and regs[k].stage in ("FRAC_LOSE", "PCT_LESS")
+                and not regs[k].is_remaining_frac
+                and ca.clause_idx <= regs[k].clause_idx <= cb.clause_idx
+                and regs[k].reg_id < cb.reg_id
+                for k in active_indices
+            )
+            if has_earlier_frac_lose:
+                return None
+            if not (cb.stage == "COST_OUT" and goal.action_lemma in ("spend", "pay", "cost") and goal.query_type not in ("REMAIN", "CHANGE", "PROFIT")):
+                gross_act_focus = (
+                    goal.query_type in ("COUNT", "TOTAL")
+                    and goal.action_lemma in GROSS_EVENT_VERBS
+                    and not goal.has_the_rest_cue
+                    and not (goal.question_tokens & {"left", "remain", "remaining", "now", "still"})
+                    and ca.unit == goal.target_unit
+                    and any(r.depth == 0 and r.action == goal.action_lemma for r in regs)
+                )
+                if goal.query_type not in ("INITIAL", "SOLVE_SOME") and not (goal.action_lemma == cb.action and goal.action_lemma not in ("have", "leave", "earn", "pay", "buy", "make")):
+                    st_res = "RATE" if ca.per_unit is not None else "GAIN"
+                    dec_prior = 3.2 * u_bonus if gross_act_focus else 6.9 * u_bonus
+                    nr = QuantReg(reg_id=next_id, value=val, owner=eff_owner, unit=ca.unit, per_unit=ca.per_unit, attr=ca.attr, stage=st_res, action="have", clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+                    return [TransitionMove("SUB", i, j, nr, dec_prior, "STATE_DECREASE")]
+
+        if goal.query_type == "INITIAL" and (same_owner or "global" in (ca.owner, cb.owner)) and ca.stage == "FINAL" and ca.depth == 0 and cb.stage in ("GAIN", "TRANSFER_IN"):
+            nr = QuantReg(reg_id=next_id, value=val, owner=eff_owner, unit=ca.unit, stage="INITIAL_SOLVED", action="have", clause_idx=ca.clause_idx, depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("SUB", i, j, nr, 7.7, "CONSERVATION_INIT_SUB")]
+
+        if cb.depth == 0 and cb.stage == "FINAL" and ca.stage in ("INIT", "GAIN") and ca.clause_idx <= cb.clause_idx and goal.query_type not in ("INITIAL", "REMAIN"):
+            if not (goal.query_type == "SOLVE_SOME" and goal.unknown_some_stage == "GAIN"):
+                st_out = "SOME_SOLVED" if goal.query_type == "SOLVE_SOME" else "FINAL"
+                nr = QuantReg(reg_id=next_id, value=val, owner=eff_owner, unit=ca.unit, stage=st_out, action=goal.action_lemma, clause_idx=cb.clause_idx, depth=depth + 1, origin_mask=mask)
+                return [TransitionMove("SUB", i, j, nr, 7.4 * u_bonus, "DELTA_FROM_TOTAL_REMAIN")]
+
+        if goal.query_type == "PROFIT" and ca.unit == "dollar" and cb.stage in ("LOSE", "COST_OUT"):
+            nr = QuantReg(reg_id=next_id, value=val, owner=eff_owner, unit="dollar", stage="FINAL", action="make", clause_idx=max(ca.clause_idx, cb.clause_idx), depth=depth + 1, origin_mask=mask)
+            return [TransitionMove("SUB", i, j, nr, 7.3, "PROFIT_SUB")]
+
+        # 1対1不足・空席問題 ("200 seats - 145 people = 55 empty seats")
+        fb_score = 4.2 * u_bonus if goal.query_type in ("DIFF", "REMAIN") else 3.0 * u_bonus
+        if ra.unit != rb.unit and goal.has_the_rest_cue:
+            fb_score = 5.8
+        has_explicit_q_act = any(r.depth == 0 and r.action == goal.action_lemma for r in regs)
+        if not has_explicit_q_act and ca.depth == 0 and cb.depth == 0 and ca.clause_idx < cb.clause_idx and goal.action_lemma in ("give", "sell", "eat", "lose", "spend", "take", "leave") and goal.query_type != "REMAIN":
+            fb_score = 6.2 * u_bonus
+        if not same_owner and "global" not in (ca.owner, cb.owner) and ra.unit == rb.unit:
+            fb_score -= 2.5
+        nr = QuantReg(
+            reg_id=next_id, value=val, owner=eff_owner, unit=ca.unit, per_unit=ca.per_unit,
+            stage="DERIVED", action=goal.action_lemma, clause_idx=max(ca.clause_idx, cb.clause_idx),
+            depth=depth + 1, origin_mask=mask,
+        )
+        return [TransitionMove("SUB", i, j, nr, fb_score, "GENERIC_SUB")]
+
+    @classmethod
+    def _try_mul(
+        cls, i: int, j: int, ra: QuantReg, rb: QuantReg, goal: GoalSpec, next_id: int, depth: int
+    ) -> List[TransitionMove]:
+        if any(st in ("COMP_MORE", "COMP_LESS", "DIFF_SOLVED") for st in (ra.stage, rb.stage)):
+            return []
+        if ra.unit == "dollar" and rb.unit == "dollar":
+            return []
+
+        mask = ra.origin_mask | rb.origin_mask
+
+        for rate_r, qty_r in ((ra, rb), (rb, ra)):
+            if rate_r.per_unit is not None:
+                # "$2 per egg * 9 eggs/day -> $18/day" のように qty_r 自体が per_unit="day" を持っていても rate_r.per_unit == qty_r.unit なら単価キャンセル成立！
+                if rate_r.per_unit == qty_r.unit or rate_r.per_unit == "group":
+                    if goal.query_type == "RATE_EACH" and qty_r.unit == goal.per_unit:
+                        return []
+                    if rate_r.per_unit == "group" and rate_r.clause_idx != qty_r.clause_idx and qty_r.stage not in ("Q_PARAM", "TIME_PARAM"):
+                        continue
+                    val = rate_r.value * qty_r.value
+                    exact_cancel = rate_r.per_unit == qty_r.unit
+                    owner_out = rate_r.owner if rate_r.owner != "global" else qty_r.owner
+                    if "PAID_BILL" in (rate_r.stage, qty_r.stage) or (rate_r.per_unit == "bill" and goal.query_type == "CHANGE"):
+                        st_out = "PAID_BILL"
+                    elif "COST_RATE" in (rate_r.stage, qty_r.stage) or "COST_OUT" in (rate_r.stage, qty_r.stage):
+                        st_out = "COST_OUT"
+                    elif "LOSE" in (rate_r.stage, qty_r.stage):
+                        st_out = "LOSE"
+                    else:
+                        st_out = "GAIN"
+                    act_out = "spend" if st_out == "COST_OUT" else rate_r.action
+                    attr_out = rate_r.attr or qty_r.attr
+                    # 合成された PARTITIVE_RATE_DIV 由来のレートは単価キャンセルボーナスを控えめにして偽レート発明ループを防止
+                    if rate_r.depth > 0 and rate_r.per_unit not in TIME_UNITS and rate_r.per_unit not in MULTIPLIER_CONTAINER_UNITS:
+                        continue
+                    if rate_r.attr in ADJECTIVE_MODIFIERS and qty_r.attr in ADJECTIVE_MODIFIERS and rate_r.attr != qty_r.attr:
+                        continue
+                    bonus = (5.4 if rate_r.depth > 0 else 7.2) if exact_cancel else 6.2
+                    if rate_r.attr and rate_r.attr == qty_r.attr:
+                        bonus += 0.8
+                    if rate_r.clause_idx == qty_r.clause_idx and rate_r.depth == 0:
+                        bonus += 0.5
+                    nr = QuantReg(
+                        reg_id=next_id, value=val, owner=owner_out, unit=rate_r.unit,
+                        per_unit=qty_r.per_unit, attr=attr_out, stage=st_out,
+                        action=act_out, clause_idx=max(rate_r.clause_idx, qty_r.clause_idx),
+                        depth=depth + 1, origin_mask=mask,
+                    )
+                    return [TransitionMove("MUL", i, j, nr, bonus, "RATE_CANCEL")]
+
+                if (qty_r.unit, rate_r.per_unit) in UNIT_CONVERSIONS:
+                    scale = UNIT_CONVERSIONS[(qty_r.unit, rate_r.per_unit)]
+                    val = rate_r.value * (qty_r.value * scale)
+                    nr = QuantReg(
+                        reg_id=next_id, value=val, owner=rate_r.owner if rate_r.owner != "global" else qty_r.owner,
+                        unit=rate_r.unit, per_unit=qty_r.per_unit, attr=rate_r.attr or qty_r.attr, stage="GAIN",
+                        action=rate_r.action, clause_idx=max(rate_r.clause_idx, qty_r.clause_idx),
+                        depth=depth + 1, origin_mask=mask,
+                    )
+                    return [TransitionMove("MUL", i, j, nr, 6.8, "RATE_CONV_CANCEL")]
+
+        if "PAID_BILL" in (ra.stage, rb.stage) and "bill" not in (ra.unit, rb.unit):
+            return []
+        if "COST_OUT" in (ra.stage, rb.stage) and "TIME_PARAM" not in (ra.stage, rb.stage):
+            return []
+        if (ra.unit in TIME_UNITS or rb.unit in TIME_UNITS) and ra.per_unit is None and rb.per_unit is None:
+            t_r = ra if ra.unit in TIME_UNITS else rb
+            if t_r.stage == "LOSE" and t_r.action == "spend":
+                return []
+
+        a_is_mult = ra.unit in MULTIPLIER_CONTAINER_UNITS
+        b_is_mult = rb.unit in MULTIPLIER_CONTAINER_UNITS
+
+        if b_is_mult and not a_is_mult:
+            content_r, mult_r = ra, rb
+        elif a_is_mult and not b_is_mult:
+            content_r, mult_r = rb, ra
+        else:
+            content_r, mult_r = (ra, rb) if ra.unit == goal.target_unit else (rb, ra)
+
+        if goal.query_type == "RATE_EACH" and mult_r.unit == goal.per_unit:
+            return []
+
+        val = content_r.value * mult_r.value
+        dist = abs(ra.clause_idx - rb.clause_idx)
+        st_out = "COST_OUT" if "COST_OUT" in (ra.stage, rb.stage) else "GAIN"
+
+        # 別人物の独立所持品同士 ("Allan 5 balloons * Jake 4 balloons") の直接乗算を防止
+        if ra.owner not in ("global", "GROUP") and rb.owner not in ("global", "GROUP") and ra.owner != rb.owner:
+            if not (a_is_mult or b_is_mult):
+                return []
+
+        if (a_is_mult or b_is_mult) and ra.unit != rb.unit:
+            score = 5.6 if dist == 0 else (4.9 if dist == 1 else 3.2)
+            tag = "CONTAINER_TIME_MUL"
+        elif ra.unit != rb.unit:
+            # 非登録コンテナ ("6 monsters with 3 eyes") でもソフト許容し NNUE の語彙特徴で判断可能にする（未学習時は STEP_COST 未満で安全）
+            score = 2.8 if dist <= 1 else 2.0
+            tag = "SOFT_CROSS_MUL"
+        else:
+            if not (goal.question_tokens & {"area", "square"}) and ra.unit not in ("foot", "meter", "inch", "yard", "mile", "centimeter", "kilometer", "item"):
+                return []
+            score = 5.2 if (goal.question_tokens & {"area", "square"}) else 2.0
+            tag = "AREA_OR_SAME_MUL"
+
+        if goal.query_type == "RATE_EACH":
+            score -= 2.5
+
+        nr = QuantReg(
+            reg_id=next_id, value=val,
+            owner=content_r.owner if content_r.owner != "global" else mult_r.owner,
+            unit=content_r.unit, per_unit=mult_r.per_unit, attr=content_r.attr,
+            stage=st_out, action=content_r.action,
+            clause_idx=max(ra.clause_idx, rb.clause_idx), depth=depth + 1, origin_mask=mask,
+        )
+        return [TransitionMove("MUL", i, j, nr, score, tag)]
+
+    @classmethod
+    def _try_div(
+        cls, i: int, j: int, ra: QuantReg, rb: QuantReg, goal: GoalSpec, next_id: int, depth: int
+    ) -> Optional[TransitionMove]:
+        if abs(rb.value) < 1e-9 or rb.value == 1.0:
+            return None
+        if any(s in ("PAID_BILL", "COMP_MORE", "COMP_LESS", "DIFF_SOLVED", "COST_RATE", "TARGET_GOAL") for s in (ra.stage, rb.stage)):
+            if not (ra.unit == rb.unit and rb.per_unit is not None):
+                return None
+
+        val = ra.value / rb.value
+        is_int = abs(val - round(val)) < 1e-6
+        clean_q = is_int or abs(val * 4 - round(val * 4)) < 1e-6 or abs(val * 8 - round(val * 8)) < 1e-6 or abs(val * 10 - round(val * 10)) < 1e-6
+        if not clean_q and goal.query_type != "RATIO":
+            return None
+
+        mask = ra.origin_mask | rb.origin_mask
+
+        # 1) 明示的包含除: 48 crayons / (6 crayons/box) -> 8 boxes
+        if ra.unit == rb.unit and rb.per_unit is not None:
+            out_u = rb.per_unit if rb.per_unit != "group" else goal.target_unit
+            if rb.stage == "COST_RATE" and goal.target_unit == "dollar":
+                return None
+            if out_u != goal.target_unit and goal.target_unit != "item":
+                return None
+            score = 7.0 + (0.4 if is_int else 0.0)
+            nr = QuantReg(
+                reg_id=next_id, value=val, owner=ra.owner, unit=out_u, per_unit=None,
+                stage="FINAL", action=ra.action, clause_idx=max(ra.clause_idx, rb.clause_idx),
+                depth=depth + 1, origin_mask=mask,
+            )
+            return TransitionMove("DIV", i, j, nr, score, "QUOTITIVE_DIV")
+
+        # 2) 暗黙包含除 ("24 cups of flour ... requires 3 cups -> how many cakes?"): ra.unit == rb.unit だが target_unit が別名詞！
+        if ra.unit == rb.unit and rb.per_unit is None and ra.value >= rb.value:
+            if goal.query_type == "RATIO":
+                nr = QuantReg(reg_id=next_id, value=val, owner=ra.owner, unit="scalar", stage="FINAL", clause_idx=max(ra.clause_idx, rb.clause_idx), depth=depth + 1, origin_mask=mask)
+                return TransitionMove("DIV", i, j, nr, 6.8, "RATIO_DIV")
+            ra_hyp = UNIT_HYPERNYM.get(ra.unit, ra.unit)
+            g_hyp = UNIT_HYPERNYM.get(goal.target_unit, goal.target_unit)
+            if goal.target_unit not in (ra.unit, "item") and g_hyp != ra_hyp and is_int:
+                nr = QuantReg(reg_id=next_id, value=val, owner=ra.owner, unit=goal.target_unit, stage="FINAL", clause_idx=max(ra.clause_idx, rb.clause_idx), depth=depth + 1, origin_mask=mask)
+                return TransitionMove("DIV", i, j, nr, 6.3, "IMPLICIT_QUOTITIVE_DIV")
+            if is_int:
+                nr = QuantReg(reg_id=next_id, value=val, owner=ra.owner, unit="scalar", stage="DERIVED", clause_idx=max(ra.clause_idx, rb.clause_idx), depth=depth + 1, origin_mask=mask)
+                return TransitionMove("DIV", i, j, nr, 2.2, "SOFT_SAME_DIV")
+            return None
+
+        # 3) 等分除: 異単位間の割り算（MULTIPLIER_CONTAINER_UNITS 外の未知名詞でもソフト許容！）
+        if ra.unit != rb.unit and ra.per_unit is None:
+            if "COST_OUT" in (ra.stage, rb.stage) and goal.query_type != "RATE_EACH":
+                return None
+            in_mult = rb.unit in MULTIPLIER_CONTAINER_UNITS or rb.unit in TIME_UNITS
+            if goal.query_type == "RATE_EACH":
+                score = (7.4 if in_mult else 6.4) + (0.4 if is_int else 0.0)
+            elif in_mult and abs(ra.clause_idx - rb.clause_idx) <= 1:
+                score = 5.4 + (0.3 if is_int else 0.0)
+            else:
+                score = 2.4 if is_int else 1.6
+            nr = QuantReg(
+                reg_id=next_id, value=val, owner=ra.owner if ra.owner != "global" else rb.owner,
+                unit=ra.unit, per_unit=rb.unit, stage="RATE", action=ra.action,
+                clause_idx=max(ra.clause_idx, rb.clause_idx), depth=depth + 1, origin_mask=mask,
+            )
+            return TransitionMove("DIV", i, j, nr, score, "PARTITIVE_RATE_DIV")
+
+        return None
+
+
+class FactoredNNUE:
+    """
+    固有名詞・個別品目名を役割トークン (<UNIT_Q>, <UNIT_OTHER>, <PERSON_Q>) へ抽象化 (Delexicalize) して
+    語彙丸暗記を防ぎ、文構造パターンを汎化学習する 2ヘッド SCReLU NNUE。
+    """
+
+    TRANS_BUCKETS = 32768
+    TRANS_K = 48
+    TRANS_DENSE = 20
+    TRANS_H1 = 64
+    TRANS_H2 = 16
+
+    TERM_BUCKETS = 32768
+    TERM_K = 40
+    TERM_DENSE = 12
+    TERM_H1 = 48
+    TERM_H2 = 16
+
+    def __init__(self, seed: int = 42) -> None:
+        rng = np.random.default_rng(seed)
+        self.W1_ts = (rng.normal(0.0, 0.04, (self.TRANS_BUCKETS, self.TRANS_H1))).astype(np.float32)
+        self.W1_ts[0] = 0.0
+        self.W1_td = (rng.normal(0.0, 0.06, (self.TRANS_DENSE, self.TRANS_H1))).astype(np.float32)
+        self.b1_t = np.full(self.TRANS_H1, 0.25, dtype=np.float32)
+        self.W2_t = (rng.normal(0.0, 0.08, (self.TRANS_H1, self.TRANS_H2))).astype(np.float32)
+        self.b2_t = np.full(self.TRANS_H2, 0.20, dtype=np.float32)
+        self.W3_t = np.zeros((self.TRANS_H2, 1), dtype=np.float32)
+        self.b3_t = np.zeros(1, dtype=np.float32)
+        # 線形スキップ結合: 明快な語彙・構文手がかりを高速凸学習しつつ SCReLU 層が高次相互作用を担うハイブリッド構造
+        self.W_skip_ts = np.zeros(self.TRANS_BUCKETS, dtype=np.float32)
+
+        self.W1_gs = (rng.normal(0.0, 0.04, (self.TERM_BUCKETS, self.TERM_H1))).astype(np.float32)
+        self.W1_gs[0] = 0.0
+        self.W1_gd = (rng.normal(0.0, 0.06, (self.TERM_DENSE, self.TERM_H1))).astype(np.float32)
+        self.b1_g = np.full(self.TERM_H1, 0.25, dtype=np.float32)
+        self.W2_g = (rng.normal(0.0, 0.08, (self.TERM_H1, self.TERM_H2))).astype(np.float32)
+        self.b2_g = np.full(self.TERM_H2, 0.20, dtype=np.float32)
+        self.W3_g = np.zeros((self.TERM_H2, 1), dtype=np.float32)
+        self.b3_g = np.zeros(1, dtype=np.float32)
+        self.W_skip_gs = np.zeros(self.TERM_BUCKETS, dtype=np.float32)
+
+        self.is_trained: bool = False
+
+    def save(self, path: str = MODEL_WEIGHTS_FILE) -> None:
+        np.savez_compressed(
+            path,
+            W1_ts=self.W1_ts, W1_td=self.W1_td, b1_t=self.b1_t,
+            W2_t=self.W2_t, b2_t=self.b2_t, W3_t=self.W3_t, b3_t=self.b3_t, W_skip_ts=self.W_skip_ts,
+            W1_gs=self.W1_gs, W1_gd=self.W1_gd, b1_g=self.b1_g,
+            W2_g=self.W2_g, b2_g=self.b2_g, W3_g=self.W3_g, b3_g=self.b3_g, W_skip_gs=self.W_skip_gs,
+        )
+        self.is_trained = True
+
+    def load(self, path: str = MODEL_WEIGHTS_FILE) -> bool:
+        if not os.path.exists(path):
             return False
         try:
-            with open(weights_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if data.get("format_version") != "beam_stack_nnue_v8":
+            data = np.load(path)
+            if data["W1_ts"].shape != self.W1_ts.shape or data["W1_gs"].shape != self.W1_gs.shape or "W_skip_ts" not in data:
                 return False
-
-            self.h1 = int(data["h1"])
-            self.h2 = int(data["h2"])
-            self.beam_width = int(data.get("beam_width", BEAM_WIDTH))
-            self.equations = data["equations"]
-            self.eq_to_id = {eq: i for i, eq in enumerate(self.equations)}
-            self.num_formulas = len(self.equations)
-
-            self.words = data["words"]
-            self.word_to_id = {w: i for i, w in enumerate(self.words)}
-            self.num_words = len(self.words)
-
-            F, W = self.num_formulas, self.num_words
-            self.b1 = np.array(data["b1"], dtype=np.float32)
-            self.W2 = np.array(data["W2"], dtype=np.float32)
-            self.b2 = np.array(data["b2"], dtype=np.float32)
-            self.W3 = np.array(data["W3"], dtype=np.float32)
-            self.base_b = np.array(data["base_b"], dtype=np.float32)
-
-            self.base_w = np.zeros(F * W, dtype=np.float32)
-            for pid_str, val in data["base_w"].items():
-                self.base_w[int(pid_str)] = float(val)
-
-            self.weight1 = np.zeros((F * W, self.h1), dtype=np.float32)
-            for pid_str, vec in data["weight1"].items():
-                self.weight1[int(pid_str)] = vec
-
-            self.step_actions = data["step_actions"]
-            self.step_act_to_id = {a: i for i, a in enumerate(self.step_actions)}
-            self.step_words = data["step_words"]
-            self.step_word_to_id = {w: i for i, w in enumerate(self.step_words)}
-            A_step, W_step = len(self.step_actions), len(self.step_words)
-
-            self.step_b = np.array(data["step_b"], dtype=np.float32)
-            flat_step_w = np.zeros(A_step * W_step, dtype=np.float32)
-            for pid_str, val in data["step_w"].items():
-                flat_step_w[int(pid_str)] = float(val)
-            self.step_w = flat_step_w.reshape(A_step, W_step)
-
-            self.is_loaded = True
+            for k in (
+                "W1_ts", "W1_td", "b1_t", "W2_t", "b2_t", "W3_t", "b3_t", "W_skip_ts",
+                "W1_gs", "W1_gd", "b1_g", "W2_g", "b2_g", "W3_g", "b3_g", "W_skip_gs",
+            ):
+                setattr(self, k, data[k].astype(np.float32))
+            self.W1_ts[0] = 0.0
+            self.W1_gs[0] = 0.0
+            self.W_skip_ts[0] = 0.0
+            self.W_skip_gs[0] = 0.0
+            self.is_trained = True
             return True
         except Exception:
             return False
 
-    def score_step_pair(self, nodeL, nodeR, q_ctx, step_num=1):
-        if self.step_w is None or self.step_w.shape[1] == 0:
-            return {act: 0.0 for act in ACTIVE_ACTIONS}
+    @staticmethod
+    def _delex_token(w: str, ra: QuantReg, rb: QuantReg, goal: GoalSpec) -> str:
+        """個別問題固有の名詞・人名を役割プレースホルダへ置換し、初見語彙に対する汎化性を高める"""
+        if w == goal.target_unit:
+            return "<UQ>"
+        if goal.second_unit and w == goal.second_unit:
+            return "<UQ2>"
+        if w == ra.unit:
+            return "<UA>"
+        if w == rb.unit:
+            return "<UB>"
+        if w in goal.known_entities:
+            return "<PQ>" if w == goal.target_owner else "<PO>"
+        return w
 
-        f_dict = extract_step_pair_features(nodeL, nodeR, q_ctx, step_num=step_num)
-        w_ids = []
-        w_vals = []
-        for k, v in f_dict.items():
-            if k in self.step_word_to_id:
-                w_ids.append(self.step_word_to_id[k])
-                w_vals.append(v)
+    @classmethod
+    def extract_transition_features(
+        cls,
+        regs: Sequence[QuantReg],
+        move: TransitionMove,
+        clauses: Sequence[ClauseInfo],
+        goal: GoalSpec,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        ra = regs[move.idx_a]
+        rb = regs[move.idx_b]
+        rn = move.new_reg
+        op = move.op
+        B = cls.TRANS_BUCKETS
 
-        if w_ids:
-            w_arr = np.array(w_ids, dtype=np.int32)
-            v_arr = np.array(w_vals, dtype=np.float32)
-            logits = self.step_b + (self.step_w[:, w_arr] @ v_arr)
+        owner_rel = (
+            "SAME_GOAL" if (ra.owner == rb.owner == goal.target_owner)
+            else "SAME_OTHER" if (ra.owner == rb.owner)
+            else "DIFF_HAS_GOAL" if (goal.target_owner in (ra.owner, rb.owner))
+            else "DIFF_OTHER"
+        )
+        unit_rel = (
+            "RATE_CANCEL" if move.rule_tag in ("RATE_CANCEL", "RATE_CONV_CANCEL")
+            else "SAME_GOAL_U" if (ra.unit == rb.unit == goal.target_unit)
+            else "COMP_PAIR_U" if (goal.second_unit and {ra.unit, rb.unit} == {goal.target_unit, goal.second_unit})
+            else "SAME_U" if (ra.unit == rb.unit)
+            else "DIFF_U"
+        )
+        dist = rb.clause_idx - ra.clause_idx
+        dist_b = "0" if dist == 0 else ("1" if dist == 1 else ("2+" if dist > 1 else "REV"))
+
+        feats: List[int] = [
+            _fnv_hash(f"T1|{op}|{move.rule_tag}|{goal.query_type}", B),
+            _fnv_hash(f"T2|{op}|{ra.stage}|{rb.stage}", B),
+            _fnv_hash(f"T3|{op}|{ra.stage}|{rb.stage}|{goal.query_type}", B),
+            _fnv_hash(f"T4|{op}|{owner_rel}|{goal.query_type}", B),
+            _fnv_hash(f"T5|{op}|{unit_rel}|{goal.query_type}", B),
+            _fnv_hash(f"T6|{op}|{dist_b}|keep={move.keep_a_active}", B),
+            _fnv_hash(f"T7|{op}|actMatchA={ra.action == goal.action_lemma}|actMatchB={rb.action == goal.action_lemma}", B),
+        ]
+
+        # 役割抽象化 (Delexicalized) 語彙窓特徴: "seashell" や "Joan" を覚えるのではなく "<UQ>", "<PQ>" の文法役割を学習！
+        for w in ra.left_win[:3]:
+            dw = cls._delex_token(w, ra, rb, goal)
+            feats.append(_fnv_hash(f"AL|{op}|{dw}", B))
+        for w in ra.right_win[:3]:
+            dw = cls._delex_token(w, ra, rb, goal)
+            feats.append(_fnv_hash(f"AR|{op}|{dw}", B))
+        for w in rb.left_win[:3]:
+            dw = cls._delex_token(w, ra, rb, goal)
+            feats.append(_fnv_hash(f"BL|{op}|{dw}", B))
+        for w in rb.right_win[:3]:
+            dw = cls._delex_token(w, ra, rb, goal)
+            feats.append(_fnv_hash(f"BR|{op}|{dw}", B))
+
+        b_cues = list(clauses[rb.clause_idx].cue_tokens)[:4] if 0 <= rb.clause_idx < len(clauses) else []
+        q_cues = [
+            qw for qw in goal.question_tokens
+            if qw in {"more", "less", "fewer", "left", "each", "every", "per", "total", "altogether", "first", "start", "profit", "change", "average", "rest", "remaining", "taken", "cut", "add", "pay", "buy", "sell", "big", "empty", "needed"}
+        ][:4]
+        feats.append(_fnv_hash(f"VA|{op}|{ra.action}|{rb.action}|{goal.action_lemma}", B))
+        if len(rb.left_win) >= 2:
+            d0 = cls._delex_token(rb.left_win[-2], ra, rb, goal)
+            d1 = cls._delex_token(rb.left_win[-1], ra, rb, goal)
+            feats.append(_fnv_hash(f"BL2|{op}|{d0}_{d1}", B))
+        if len(rb.right_win) >= 2:
+            d0 = cls._delex_token(rb.right_win[0], ra, rb, goal)
+            d1 = cls._delex_token(rb.right_win[1], ra, rb, goal)
+            feats.append(_fnv_hash(f"BR2|{op}|{d0}_{d1}", B))
+        for qb in list(goal.question_bigrams)[:4]:
+            feats.append(_fnv_hash(f"QB|{op}|{qb}", B))
+
+        for bc in b_cues:
+            feats.append(_fnv_hash(f"BC|{op}|{bc}", B))
+            for qc in q_cues[:2]:
+                feats.append(_fnv_hash(f"X|{op}|{bc}|{qc}", B))
+        for qc in q_cues:
+            feats.append(_fnv_hash(f"QC|{op}|{qc}", B))
+
+        sp = np.zeros(cls.TRANS_K, dtype=np.int32)
+        L = min(len(feats), cls.TRANS_K)
+        sp[:L] = feats[:L]
+
+        q_overlap_a = len(set(ra.clause_words) & goal.question_tokens) / max(1.0, float(len(ra.clause_words)))
+        q_overlap_b = len(set(rb.clause_words) & goal.question_tokens) / max(1.0, float(len(rb.clause_words) or 1))
+
+        is_int = 1.0 if abs(rn.value - round(rn.value)) < 1e-6 else 0.0
+        clean_div = 1.0 if (op == "DIV" and is_int > 0.5) else 0.0
+        dense = np.array(
+            [
+                (move.prior_score - STEP_COST) / 4.0,
+                1.0 if rn.unit == goal.target_unit else 0.0,
+                1.0 if (rn.owner == goal.target_owner or goal.target_owner == "global") else 0.0,
+                1.0 if move.rule_tag in ("RATE_CANCEL", "RATE_CONV_CANCEL", "QUOTITIVE_DIV", "IMPLICIT_QUOTITIVE_DIV", "PARTITIVE_RATE_DIV") else 0.0,
+                q_overlap_a,
+                q_overlap_b,
+                is_int,
+                clean_div,
+                1.0 / (1.0 + abs(dist)),
+                1.0 if dist >= 0 else 0.0,
+                1.0 if ("CONSERVATION" in move.rule_tag or "SOLVE_SOME" in move.rule_tag) else 0.0,
+                1.0 if "COMP_" in move.rule_tag else 0.0,
+                1.0 if "TRANSFER" in move.rule_tag else 0.0,
+                min(1.5, math.log1p(abs(rn.value)) / 10.0),
+                rn.depth / 6.0,
+                1.0 if op == "ADD" else 0.0,
+                1.0 if op == "SUB" else 0.0,
+                1.0 if op == "MUL" else 0.0,
+                1.0 if op == "DIV" else 0.0,
+                1.0,
+            ],
+            dtype=np.float32,
+        )
+        return sp, dense
+
+    @classmethod
+    def compute_terminal_prior_and_features(
+        cls,
+        cand_idx: int,
+        regs: Sequence[QuantReg],
+        consumed_mask: int,
+        goal: GoalSpec,
+        clauses: Sequence[ClauseInfo] = (),
+        history_ops: Tuple[str, ...] = (),
+    ) -> Tuple[float, np.ndarray, np.ndarray]:
+        rc = regs[cand_idx]
+        prior = 0.0
+
+        if rc.owner == "one_individual":
+            return -25.0, np.zeros(cls.TERM_K, dtype=np.int32), np.zeros(cls.TERM_DENSE, dtype=np.float32)
+        if rc.stage in ("MULT_ANAPHOR", "FRAC", "FRAC_LOSE", "PCT_LESS", "PCT_MORE", "PCT_OF", "PAID_BILL", "TARGET_GOAL", "COMP_MORE", "COMP_LESS", "POST_MULT_MORE", "POST_MULT_LESS", "COST_RATE", "TIME_PARAM", "FINAL_PLUS_LOSE"):
+            return -25.0, np.zeros(cls.TERM_K, dtype=np.int32), np.zeros(cls.TERM_DENSE, dtype=np.float32)
+        if rc.stage == "COST_OUT" and goal.action_lemma not in ("spend", "pay", "cost"):
+            return -25.0, np.zeros(cls.TERM_K, dtype=np.int32), np.zeros(cls.TERM_DENSE, dtype=np.float32)
+
+        unit_ok = 0.0
+        rc_hyp = UNIT_HYPERNYM.get(rc.unit, rc.unit)
+        g_hyp = UNIT_HYPERNYM.get(goal.target_unit, goal.target_unit)
+        if rc.unit == goal.target_unit or goal.target_unit == "item":
+            prior += 3.6
+            unit_ok = 1.0
+        elif goal.target_unit in CATEGORY_TARGET_UNITS and rc_hyp == g_hyp:
+            prior += 3.5
+            unit_ok = 1.0
+        elif goal.target_unit == "dozen" and rc.per_unit is None:
+            prior += 3.0
+            unit_ok = 1.0
+        elif (rc.unit, goal.target_unit) in UNIT_CONVERSIONS:
+            prior += 2.2
+            unit_ok = 1.0
+        elif goal.query_type == "RATIO" and rc.unit == "scalar":
+            prior += 3.2
+            unit_ok = 1.0
         else:
-            logits = self.step_b.copy()
+            prior -= 4.5
 
-        none_id = self.step_act_to_id.get("NONE", -1)
-        none_logit = float(logits[none_id]) * 0.25 if none_id >= 0 else 0.0
+        if goal.query_type == "RATE_EACH":
+            if rc.per_unit is not None:
+                prior += 3.6
+            else:
+                prior -= 2.5
+        elif goal.per_unit is not None and rc.per_unit == goal.per_unit:
+            # "How much does she make every day?" -> $18/day がそのまま一致！
+            prior += 3.2
+        else:
+            if rc.per_unit is not None:
+                prior -= 4.5
 
-        scores = {}
-        for act in ACTIVE_ACTIONS:
-            act_id = self.step_act_to_id[act]
-            scores[act] = float(logits[act_id]) - none_logit
-        return scores
+        owner_ok = 0.0
+        if goal.target_owner == "global":
+            owner_ok = 1.0
+            prior += 1.2
+        elif rc.owner == goal.target_owner:
+            owner_ok = 1.0
+            prior += 3.8
+        elif goal.target_owner == "GROUP" and rc.owner == "GROUP":
+            owner_ok = 1.0
+            prior += 4.0
+        elif rc.owner in ("global", "vase", "basket", "barn", "restaurant", "theater", "school"):
+            prior += 1.2
+        else:
+            prior -= 5.0
 
-    def beam_stack_search(self, masked_question, values):
-        var_nodes, q_ctx = extract_rich_question_info(masked_question, values)
-        sorted_vars = sorted(var_nodes.keys(), key=lambda v: var_nodes[v]["var_order"])
-        initial_board = [var_nodes[v] for v in sorted_vars]
+        if goal.target_attr and goal.query_type != "DIFF":
+            if goal.target_attr in rc.attr:
+                prior += 3.0
+            elif rc.attr == "GROUP":
+                prior -= 2.5
+            elif rc.attr:
+                prior -= 3.0
 
-        if len(initial_board) < 2:
-            return {}, var_nodes
+        if goal.query_type == "INITIAL":
+            prior += 4.2 if rc.stage == "INITIAL_SOLVED" else -3.8
+        elif goal.query_type == "SOLVE_SOME":
+            prior += 4.5 if rc.stage == "SOME_SOLVED" else -4.0
+        elif goal.query_type == "DIFF":
+            if rc.stage == "DIFF_SOLVED":
+                prior += 3.5
+            elif rc.depth == 0:
+                prior -= 3.5
+        elif goal.query_type in ("REMAIN", "CHANGE") and (rc.stage in ("FINAL", "REMAIN_POOL") or rc.depth > 0):
+            prior += 1.8
+        if goal.has_the_rest_cue and rc.stage == "REMAIN_POOL":
+            prior += 2.4
 
-        beam = [(0.0, initial_board, False)]
-        discovered_formulas = {}
+        gross_event_mode = (
+            goal.query_type in ("COUNT", "TOTAL")
+            and goal.action_lemma in GROSS_EVENT_VERBS
+            and not goal.has_the_rest_cue
+            and not (goal.question_tokens & {"left", "remain", "remaining", "now", "still"})
+            and any(
+                r.depth == 0
+                and r.action == goal.action_lemma
+                and (r.unit == goal.target_unit or goal.target_unit == "item" or UNIT_HYPERNYM.get(r.unit, r.unit) == g_hyp)
+                for r in regs
+            )
+        )
+        if gross_event_mode:
+            if rc.action == goal.action_lemma:
+                prior += 3.0
+            elif rc.per_unit is None and rc.stage != "FINAL":
+                prior -= 2.2
 
-        max_steps = len(initial_board)
-        for step_idx in range(1, max_steps + 1):
-            next_candidates = []
-            seen_states = set()
+        direct_target_units = {
+            r.unit for r in regs
+            if r.depth == 0 and r.owner == goal.target_owner and r.stage not in ("COMP_MORE", "COMP_LESS")
+        }
 
-            for cum_score, board, used_keep_base in beam:
-                m = len(board)
-                if m < 2:
+        unconsumed_relevant = 0
+        for idx, r in enumerate(regs):
+            if idx == cand_idx or ((consumed_mask >> idx) & 1):
+                continue
+            if r.owner == "one_individual":
+                continue
+            if r.unit in ("color", "type", "kind", "flavor", "category", "variety") and goal.target_unit != r.unit:
+                continue
+            if r.depth == 0 and (rc.origin_mask & r.origin_mask):
+                continue
+            if goal.action_lemma == "cost" and r.stage == "TRANSFER_OUT":
+                continue
+            if gross_event_mode and r.depth == 0 and r.per_unit is None and r.stage in ("INIT", "GAIN", "LOSE", "TRANSFER_OUT", "TRANSFER_IN") and r.action != goal.action_lemma:
+                continue
+            if goal.query_type == "SOLVE_SOME" and goal.unknown_some_clause >= 0 and r.clause_idx > goal.unknown_some_clause + 1:
+                continue
+            if goal.q_focus_modifiers and r.attr and r.attr not in goal.q_focus_modifiers:
+                continue
+            if goal.query_type == "DIFF" and goal.target_attr and goal.second_attr and r.attr not in (goal.target_attr, goal.second_attr):
+                continue
+            if r.stage in ("COMP_MORE", "COMP_LESS") and r.owner != goal.target_owner and r.unit in direct_target_units:
+                continue
+
+            if r.stage in ("MULT_ANAPHOR", "FRAC", "FRAC_LOSE", "PCT_LESS", "PCT_MORE", "PCT_OF", "PAID_BILL", "TARGET_GOAL", "TIME_PARAM", "POST_MULT_MORE", "POST_MULT_LESS"):
+                unconsumed_relevant += 1
+                continue
+            if r.stage == "Q_PARAM" and (r.unit in (goal.target_unit, goal.per_unit) or r.is_implicit):
+                unconsumed_relevant += 1
+                continue
+
+            r_hyp = UNIT_HYPERNYM.get(r.unit, r.unit)
+            owner_rel_match = (
+                goal.target_owner in ("global", "GROUP")
+                or r.owner in (goal.target_owner, "global", "vase", "basket", "barn", "restaurant", "theater", "school")
+                or (r.stage == "TRANSFER_OUT" and r.ref_owner == goal.target_owner)
+                or (r.stage in ("COMP_MORE", "COMP_LESS") and goal.target_owner in (r.owner, r.ref_owner))
+            )
+            unit_rel_match = (
+                r.unit in (goal.target_unit, goal.second_unit, rc.unit)
+                or (goal.target_unit in CATEGORY_TARGET_UNITS and r_hyp == g_hyp)
+                or (r.per_unit is not None and (r.unit == goal.target_unit or r.per_unit in {x.unit for x in regs}))
+            )
+            if owner_rel_match and unit_rel_match:
+                if goal.target_attr and goal.query_type == "COUNT" and r.attr and goal.target_attr not in r.attr:
                     continue
+                if goal.query_type == "RATE_EACH" and goal.question_tokens & {"first", "initially"} and r.stage == "LOSE":
+                    continue
+                unconsumed_relevant += 1
 
-                for i in range(m):
-                    for j in range(i + 1, m):
-                        n1, n2 = board[i], board[j]
-                        if step_idx >= 2 and n2["depth"] > n1["depth"]:
-                            nodeL, nodeR = n2, n1
-                        elif step_idx >= 2 and n1["depth"] > n2["depth"]:
-                            nodeL, nodeR = n1, n2
-                        elif n1["var_order"] <= n2["var_order"]:
-                            nodeL, nodeR = n1, n2
-                        else:
-                            nodeL, nodeR = n2, n1
+        prior -= 2.6 * unconsumed_relevant
 
-                        op_scores = self.score_step_pair(nodeL, nodeR, q_ctx, step_num=step_idx)
-                        rem_nodes = [board[k] for k in range(m) if k != i and k != j]
+        B = cls.TERM_BUCKETS
+        op_seq = ">".join(history_ops[-3:]) if history_ops else "NONE"
+        last_op = history_ops[-1] if history_ops else "NONE"
+        init_reg_cnt = sum(1 for r in regs if r.depth == 0 and not r.is_implicit)
 
-                        for act in ACTIVE_ACTIONS:
-                            res_out = apply_step_operation(nodeL, nodeR, act, board, q_ctx)
-                            if res_out is None:
-                                continue
-                            new_node, dim_bonus = res_out
-                            step_score = cum_score + op_scores[act] + dim_bonus
+        sp_list = [
+            _fnv_hash(f"G1|{goal.query_type}|{rc.stage}|u={int(unit_ok)}|o={int(owner_ok)}", B),
+            _fnv_hash(f"G2|{goal.query_type}|unc={min(unconsumed_relevant, 4)}", B),
+            _fnv_hash(f"G3|d={min(rc.depth, 6)}|n={min(init_reg_cnt, 6)}|{goal.query_type}", B),
+            _fnv_hash(f"G4|per={rc.per_unit == goal.per_unit}|{goal.query_type}", B),
+            _fnv_hash(f"G5|actMatch={rc.action == goal.action_lemma}|gross={gross_event_mode}", B),
+            _fnv_hash(f"G6|seq={op_seq}|{goal.query_type}", B),
+            _fnv_hash(f"G7|last={last_op}|unc={min(unconsumed_relevant, 3)}|{goal.query_type}", B),
+        ]
+        for qb in list(goal.question_bigrams)[:6]:
+            q_delex = qb.replace(goal.target_unit, "<UQ>").replace(goal.target_owner, "<PQ>")
+            sp_list.append(_fnv_hash(f"GQ|{op_seq}|{q_delex}", B))
+            sp_list.append(_fnv_hash(f"GL|{last_op}|{q_delex}", B))
 
-                            goal_bonus = 0.0
-                            if new_node["q_match"]:
-                                goal_bonus += 1.2
-                            if not new_node["rate_units"] and not q_ctx["q_asks_rate"]:
-                                goal_bonus += 0.8
-                            elif new_node["rate_units"] and not q_ctx["q_asks_rate"]:
-                                goal_bonus -= 1.8
+        body_cues_all: List[str] = []
+        for ci in clauses:
+            for ct in ci.cue_tokens:
+                if ct not in body_cues_all:
+                    body_cues_all.append(ct)
+        for bc in body_cues_all[:6]:
+            sp_list.append(_fnv_hash(f"GB|{op_seq}|{bc}|{goal.query_type}", B))
+            sp_list.append(_fnv_hash(f"GBL|{last_op}|{bc}", B))
 
-                            unused_penalty = 0.0
-                            for rn in rem_nodes:
-                                if rn["q_match"]:
-                                    unused_penalty += 1.5
-                                if (rn["units"] & new_node["units"]) and (
-                                    rn["rate_units"] or rn["cues_sub"] or rn["cues_add"]
-                                ):
-                                    unused_penalty += 3.8
-                                elif rn["cues_sub"] or rn["cues_add"]:
-                                    unused_penalty += 2.2
+        sp = np.zeros(cls.TERM_K, dtype=np.int32)
+        L = min(len(sp_list), cls.TERM_K)
+        sp[:L] = sp_list[:L]
 
-                            norm_div = 1.0 + 0.30 * (step_idx - 1)
-                            final_expr_score = (step_score / norm_div) + goal_bonus - unused_penalty
+        is_int = 1.0 if abs(rc.value - round(rc.value)) < 1e-6 else 0.0
+        dense = np.array(
+            [
+                prior / 8.0,
+                unit_ok,
+                owner_ok,
+                1.0 if rc.per_unit == goal.per_unit else 0.0,
+                float(min(unconsumed_relevant, 5)) / 5.0,
+                rc.depth / 6.0,
+                float(min(init_reg_cnt, 6)) / 6.0,
+                1.0 if gross_event_mode and rc.action == goal.action_lemma else 0.0,
+                is_int,
+                1.0 if rc.value >= 0.0 else -1.0,
+                min(1.5, math.log1p(abs(rc.value)) / 10.0),
+                1.0,
+            ],
+            dtype=np.float32,
+        )
+        return prior, sp, dense
 
-                            expr_str = new_node["expr"]
-                            if (
-                                expr_str not in discovered_formulas
-                                or final_expr_score > discovered_formulas[expr_str][0]
-                            ):
-                                discovered_formulas[expr_str] = (final_expr_score, new_node["val"])
+    def forward_transitions_batch(
+        self, sp_batch: np.ndarray, dense_batch: np.ndarray, priors: np.ndarray
+    ) -> np.ndarray:
+        z1 = self.W1_ts[sp_batch].sum(axis=1) + dense_batch @ self.W1_td + self.b1_t
+        h1 = np.square(np.clip(z1, 0.0, 1.0))
+        z2 = h1 @ self.W2_t + self.b2_t
+        h2 = np.square(np.clip(z2, 0.0, 1.0))
+        skip = self.W_skip_ts[sp_batch].sum(axis=1)
+        res = skip + (h2 @ self.W3_t + self.b3_t).ravel()
+        return (priors - STEP_COST) + res
 
-                            if rem_nodes:
-                                new_board = [new_node] + rem_nodes
-                                state_sig = tuple(sorted(n["expr"] for n in new_board))
-                                if state_sig not in seen_states:
-                                    seen_states.add(state_sig)
-                                    next_candidates.append((step_score, new_board, used_keep_base))
+    def forward_terminals_batch(
+        self, sp_batch: np.ndarray, dense_batch: np.ndarray, priors: np.ndarray
+    ) -> np.ndarray:
+        z1 = self.W1_gs[sp_batch].sum(axis=1) + dense_batch @ self.W1_gd + self.b1_g
+        h1 = np.square(np.clip(z1, 0.0, 1.0))
+        z2 = h1 @ self.W2_g + self.b2_g
+        h2 = np.square(np.clip(z2, 0.0, 1.0))
+        skip = self.W_skip_gs[sp_batch].sum(axis=1)
+        res = skip + (h2 @ self.W3_g + self.b3_g).ravel()
+        return priors + res
 
-                            if (
-                                not used_keep_base
-                                and act in ("MUL", "DIV_LR")
-                                and nodeL["depth"] == 0
-                                and (
-                                    nodeR.get("is_frac_div")
-                                    or nodeR.get("is_mult_scale")
-                                    or q_ctx.get("wants_combine_all")
-                                )
-                            ):
-                                keep_board = [nodeL, new_node] + rem_nodes
-                                keep_sig = tuple(sorted(n["expr"] for n in keep_board))
-                                if keep_sig not in seen_states:
-                                    seen_states.add(keep_sig)
-                                    next_candidates.append((step_score - 0.2, keep_board, True))
+
+class BeamStackSolver:
+    def __init__(self, nnue: FactoredNNUE, beam_width: int = 26, max_depth: int = 6) -> None:
+        self.nnue = nnue
+        self.beam_width = beam_width
+        self.max_depth = max_depth
+
+    @staticmethod
+    def _state_signature(regs: Sequence[QuantReg], consumed_mask: int) -> Tuple[Tuple[float, str, str, str, str], ...]:
+        active = [
+            (round(regs[i].value, 4), regs[i].owner, regs[i].unit, regs[i].per_unit or "", regs[i].stage)
+            for i in range(len(regs))
+            if not ((consumed_mask >> i) & 1)
+        ]
+        active.sort()
+        return tuple(active)
+
+    def search_candidates(
+        self,
+        regs: List[QuantReg],
+        clauses: List[ClauseInfo],
+        goal: GoalSpec,
+        record_feats: bool = False,
+        oracle_milestones: Optional[Sequence[float]] = None,
+        oracle_gold: Optional[float] = None,
+    ) -> List[Tuple[float, float, SearchNode, int, np.ndarray, np.ndarray, float]]:
+        root = SearchNode(regs=tuple(regs), consumed_mask=0, cum_score=0.0, depth=0)
+        layers: List[List[SearchNode]] = [[root]]
+        transposition_table: Dict[Tuple[Tuple[float, str, str, str, str], ...], float] = {
+            self._state_signature(root.regs, 0): 0.0
+        }
+        all_explored_nodes: List[SearchNode] = [root]
+
+        eff_max_depth = max(self.max_depth, min(8, len(regs))) if len(regs) >= 6 else self.max_depth
+        for depth in range(eff_max_depth):
+            current_beam = layers[-1]
+            if not current_beam:
+                break
+
+            cand_entries: List[Tuple[SearchNode, TransitionMove]] = []
+            for node in current_beam:
+                next_id = len(node.regs)
+                moves = LegalMoveGenerator.generate(
+                    node.regs, node.consumed_mask, clauses, goal, next_id, depth
+                )
+                for mv in moves:
+                    cand_entries.append((node, mv))
+
+            if not cand_entries:
+                break
+
+            n_cands = len(cand_entries)
+            sp_arr = np.zeros((n_cands, FactoredNNUE.TRANS_K), dtype=np.int32)
+            dn_arr = np.zeros((n_cands, FactoredNNUE.TRANS_DENSE), dtype=np.float32)
+            pr_arr = np.zeros(n_cands, dtype=np.float32)
+
+            for idx, (node, mv) in enumerate(cand_entries):
+                sp, dn = FactoredNNUE.extract_transition_features(node.regs, mv, clauses, goal)
+                sp_arr[idx] = sp
+                dn_arr[idx] = dn
+                pr_arr[idx] = mv.prior_score
+
+            step_scores = self.nnue.forward_transitions_batch(sp_arr, dn_arr, pr_arr)
+
+            next_candidates: List[Tuple[float, SearchNode]] = []
+            for idx, (node, mv) in enumerate(cand_entries):
+                new_regs = node.regs + (mv.new_reg,)
+                full_mask = node.consumed_mask | (1 << mv.idx_b)
+                if not mv.keep_a_active:
+                    full_mask |= (1 << mv.idx_a)
+
+                new_cum = node.cum_score + float(step_scores[idx])
+                sig = self._state_signature(new_regs, full_mask)
+                if sig in transposition_table and transposition_table[sig] >= new_cum - 1e-5:
+                    continue
+                transposition_table[sig] = new_cum
+                ra_v = node.regs[mv.idx_a].value
+                rb_v = node.regs[mv.idx_b].value
+
+                s_feats = node.step_feats + ((sp_arr[idx], dn_arr[idx], float(pr_arr[idx])),) if record_feats else ()
+                child = SearchNode(
+                    regs=new_regs,
+                    consumed_mask=full_mask,
+                    cum_score=new_cum,
+                    depth=depth + 1,
+                    history=node.history + ((mv.op, ra_v, rb_v, mv.new_reg.value),),
+                    step_feats=s_feats,
+                )
+                sort_key = new_cum
+                if oracle_milestones is not None and any(abs(mv.new_reg.value - ms) <= 1e-2 for ms in oracle_milestones):
+                    sort_key += 3.0
+                if oracle_gold is not None and abs(mv.new_reg.value - oracle_gold) <= max(1e-3, 1e-4 * abs(oracle_gold)):
+                    sort_key += 3.0
+                next_candidates.append((sort_key, child))
 
             if not next_candidates:
                 break
-            next_candidates.sort(key=lambda x: x[0], reverse=True)
-            beam = next_candidates[: self.beam_width]
 
-        return discovered_formulas, var_nodes
+            next_candidates.sort(key=lambda item: item[0], reverse=True)
+            pruned_beam = [nd for _, nd in next_candidates[: self.beam_width]]
+            layers.append(pruned_beam)
+            all_explored_nodes.extend(pruned_beam)
 
-    def predict(self, masked_question, values):
-        time_tokens, same_u, diff_u, q_match, _ = analyze_question_structure(masked_question)
-        feat_dict = time_tokens_to_feature_dict(time_tokens)
-        num_vars = len(values)
+        term_meta: List[Tuple[SearchNode, int]] = []
+        term_sp_list: List[np.ndarray] = []
+        term_dn_list: List[np.ndarray] = []
+        term_pr_list: List[float] = []
 
-        active_word_ids = [self.word_to_id[w] for w in feat_dict.keys() if w in self.word_to_id]
-        active_w_arr = np.array(active_word_ids, dtype=np.int32)
+        for node in all_explored_nodes:
+            for r_idx in range(len(node.regs)):
+                if (node.consumed_mask >> r_idx) & 1:
+                    continue
+                if node.depth > 0 and r_idx != len(node.regs) - 1:
+                    continue
+                h_ops = tuple(h[0] for h in node.history)
+                t_prior, t_sp, t_dn = FactoredNNUE.compute_terminal_prior_and_features(
+                    r_idx, node.regs, node.consumed_mask, goal, clauses, h_ops
+                )
+                if t_prior <= -20.0:
+                    continue
+                term_meta.append((node, r_idx))
+                term_sp_list.append(t_sp)
+                term_dn_list.append(t_dn)
+                term_pr_list.append(t_prior)
 
-        beam_results, var_nodes = self.beam_stack_search(masked_question, values)
+        if not term_meta:
+            return []
 
-        best_eq = None
-        best_score = float("-inf")
-        best_ans = None
-        W = self.num_words
+        t_sp_arr = np.stack(term_sp_list, axis=0)
+        t_dn_arr = np.stack(term_dn_list, axis=0)
+        t_pr_arr = np.array(term_pr_list, dtype=np.float32)
+        term_scores = self.nnue.forward_terminals_batch(t_sp_arr, t_dn_arr, t_pr_arr)
 
-        for f_id, eq in enumerate(self.equations):
-            if max_variable_index(eq) > num_vars:
-                continue
+        results: List[Tuple[float, float, SearchNode, int, np.ndarray, np.ndarray, float]] = []
+        for idx, (node, r_idx) in enumerate(term_meta):
+            rc = node.regs[r_idx]
+            val = rc.value
+            if goal.target_unit == "dozen" and rc.unit != "dozen":
+                val = val / 12.0
+            elif rc.unit != goal.target_unit and (rc.unit, goal.target_unit) in UNIT_CONVERSIONS:
+                val = val * UNIT_CONVERSIONS[(rc.unit, goal.target_unit)]
+            tot = node.cum_score + float(term_scores[idx])
+            results.append((val, tot, node, r_idx, t_sp_arr[idx], t_dn_arr[idx], float(t_pr_arr[idx])))
 
-            ok, ast_bonus, final_val = check_ast_and_dimensional_bonus(
-                eq, values, same_u, diff_u, q_match, var_nodes=var_nodes
-            )
-            if not ok:
-                continue
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
 
-            if active_w_arr.size > 0:
-                pair_ids = f_id * W + active_w_arr
-                z1 = self.weight1[pair_ids].sum(axis=0) + self.b1[f_id]
-                base_score = float(self.base_b[f_id] + self.base_w[pair_ids].sum())
+    def solve_problem(
+        self,
+        regs: List[QuantReg],
+        clauses: List[ClauseInfo],
+        goal: GoalSpec,
+    ) -> Optional[Tuple[float, SearchNode, int]]:
+        if not regs:
+            return None
+        if len(regs) == 1:
+            v = regs[0].value
+            if goal.target_unit == "dozen" and regs[0].unit != "dozen":
+                v /= 12.0
+            return v, SearchNode(tuple(regs), 0, 0.0, 0), 0
+
+        cands = self.search_candidates(regs, clauses, goal, record_feats=False)
+        if not cands:
+            return regs[-1].value, SearchNode(tuple(regs), 0, 0.0, 0), len(regs) - 1
+        best_val, _, best_node, best_r_idx, _, _, _ = cands[0]
+        return best_val, best_node, best_r_idx
+
+
+# ==============================================================================
+# 4. データ取得・トレース解析・正則化 (Dropout + WeightDecay + CosineLR) 付き AdamW 学習器
+# ==============================================================================
+
+
+def download_files() -> None:
+    targets = [
+        (TRAIN_FILE, DATASET_URLS["mawps_asdiv.csv"]),
+        (TEST_FILE, DATASET_URLS["SVAMP.json"]),
+        (GSM8K_TRAIN_FILE, DATASET_URLS["gsm8k_train.jsonl"]),
+        (GSM8K_TEST_FILE, DATASET_URLS["gsm8k_test.jsonl"]),
+    ]
+    for local_path, url in targets:
+        if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+            continue
+        os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
+        try:
+            print(f"[download_files] Downloading {os.path.basename(local_path)} ...")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp, open(local_path, "wb") as out_f:
+                out_f.write(resp.read())
+        except Exception as exc:
+            print(f"[download_files] スキップ ({os.path.basename(local_path)}): {exc}")
+
+
+class TraceCompiler:
+    _CALC_TAG_RE = re.compile(r"<<([^=<>]+)=([^<>]+)>>")
+    _FINAL_HASH_RE = re.compile(r"####\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)")
+
+    @classmethod
+    def parse_equation_milestones(cls, eq_str: str, num_list: List[float]) -> Tuple[List[float], Optional[float]]:
+        tokens = eq_str.replace("(", " ( ").replace(")", " ) ").split()
+        if not tokens:
+            return [], None
+
+        def _tok_val(t: str) -> Optional[float]:
+            low = t.lower()
+            if low.startswith("number") and low[6:].isdigit():
+                idx = int(low[6:])
+                return num_list[idx] if idx < len(num_list) else None
+            try:
+                return float(t.replace(",", ""))
+            except ValueError:
+                return None
+
+        milestones: List[float] = []
+
+        if tokens[0] in {"+", "-", "*", "/"} and "(" not in tokens:
+            pos = 0
+
+            def _eval_prefix() -> Optional[float]:
+                nonlocal pos
+                if pos >= len(tokens):
+                    return None
+                tk = tokens[pos]
+                pos += 1
+                if tk in {"+", "-", "*", "/"}:
+                    va = _eval_prefix()
+                    vb = _eval_prefix()
+                    if va is None or vb is None:
+                        return None
+                    if tk == "+":
+                        res = va + vb
+                    elif tk == "-":
+                        res = va - vb
+                    elif tk == "*":
+                        res = va * vb
+                    else:
+                        if abs(vb) < 1e-9:
+                            return None
+                        res = va / vb
+                    milestones.append(res)
+                    return res
+                return _tok_val(tk)
+
+            final_v = _eval_prefix()
+            return milestones, final_v
+
+        expr = eq_str
+        for idx, nv in enumerate(num_list):
+            expr = re.sub(rf"\bnumber{idx}\b", str(nv), expr, flags=re.I)
+        return cls._eval_infix_ast(expr)
+
+    @classmethod
+    def _eval_infix_ast(cls, expr: str) -> Tuple[List[float], Optional[float]]:
+        milestones: List[float] = []
+        try:
+            tree = ast.parse(expr.strip(), mode="eval")
+        except SyntaxError:
+            return [], None
+
+        def _walk(node: ast.AST) -> Optional[float]:
+            if isinstance(node, ast.Expression):
+                return _walk(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+                v = _walk(node.operand)
+                return -v if v is not None else None
+            if isinstance(node, ast.BinOp):
+                va = _walk(node.left)
+                vb = _walk(node.right)
+                if va is None or vb is None:
+                    return None
+                if isinstance(node.op, ast.Add):
+                    r = va + vb
+                elif isinstance(node.op, ast.Sub):
+                    r = va - vb
+                elif isinstance(node.op, ast.Mult):
+                    r = va * vb
+                elif isinstance(node.op, ast.Div):
+                    if abs(vb) < 1e-9:
+                        return None
+                    r = va / vb
+                else:
+                    return None
+                milestones.append(r)
+                return r
+            return None
+
+        fv = _walk(tree)
+        return milestones, fv
+
+    @classmethod
+    def parse_gsm8k_answer(cls, ans_text: str) -> Tuple[List[float], Optional[float]]:
+        milestones: List[float] = []
+        for m in cls._CALC_TAG_RE.finditer(ans_text):
+            sub_ms, _ = cls._eval_infix_ast(m.group(1))
+            if sub_ms:
+                milestones.extend(sub_ms)
             else:
-                z1 = self.b1[f_id]
-                base_score = float(self.base_b[f_id])
+                try:
+                    milestones.append(float(m.group(2).replace(",", "").strip()))
+                except ValueError:
+                    pass
+        m_fin = cls._FINAL_HASH_RE.search(ans_text)
+        if not m_fin:
+            return milestones, (milestones[-1] if milestones else None)
+        final_v = float(m_fin.group(1).replace(",", ""))
+        return milestones, final_v
 
-            a1 = np.clip(z1, 0.0, 1.0)
-            z2 = a1 @ self.W2 + self.b2
-            a2 = np.clip(z2, 0.0, 1.0)
-            nnue_score = float(a2 @ self.W3)
 
-            beam_bonus = 0.0
-            if eq in beam_results:
-                beam_bonus = BEAM_SCORE_WEIGHT * beam_results[eq][0]
+@dataclass
+class PathCandidateRecord:
+    is_gold: bool
+    milestone_hits: int
+    trans_sp: List[np.ndarray]
+    trans_dn: List[np.ndarray]
+    trans_pr: List[float]
+    term_sp: np.ndarray
+    term_dn: np.ndarray
+    term_pr: float
 
-            total_score = base_score + nnue_score + ast_bonus + beam_bonus
 
-            if total_score > best_score:
-                best_score = total_score
-                best_eq = eq
-                best_ans = final_val
+class _AdamState:
+    def __init__(self, params: Dict[str, np.ndarray], lr: float = 2.5e-3, weight_decay: float = 2.0e-3) -> None:
+        self.base_lr = lr
+        self.lr = lr
+        self.wd = weight_decay
+        self.t = 0
+        self.m = {k: np.zeros_like(v) for k, v in params.items()}
+        self.v = {k: np.zeros_like(v) for k, v in params.items()}
 
-        for expr_str, (b_score, _b_val) in beam_results.items():
-            if expr_str in self.eq_to_id:
+    def step(self, params: Dict[str, np.ndarray], grads: Dict[str, np.ndarray], active_sparse: Dict[str, np.ndarray]) -> None:
+        self.t += 1
+        b1, b2, eps = 0.9, 0.999, 1e-8
+        lr_t = self.lr * math.sqrt(1.0 - b2 ** self.t) / (1.0 - b1 ** self.t)
+
+        for k, p in params.items():
+            g = grads[k]
+            if k in active_sparse:
+                idx = active_sparse[k]
+                if len(idx) == 0:
+                    continue
+                # Decoupled AdamW weight decay で疎特徴の過学習を防止
+                p[idx] *= (1.0 - self.lr * self.wd)
+                self.m[k][idx] = b1 * self.m[k][idx] + (1.0 - b1) * g[idx]
+                self.v[k][idx] = b2 * self.v[k][idx] + (1.0 - b2) * (g[idx] * g[idx])
+                p[idx] -= lr_t * self.m[k][idx] / (np.sqrt(self.v[k][idx]) + eps)
+                p[0] = 0.0
+            else:
+                if p.ndim >= 2:
+                    p *= (1.0 - self.lr * self.wd)
+                self.m[k] = b1 * self.m[k] + (1.0 - b1) * g
+                self.v[k] = b2 * self.v[k] + (1.0 - b2) * (g * g)
+                p -= lr_t * self.m[k] / (np.sqrt(self.v[k]) + eps)
+
+
+class NNUETrainer:
+    """
+    Hidden Dropout (0.25) + Label Smoothing (0.05) + Cosine Annealing AdamW により
+    訓練データへの過学習 (Loss -> 0.05) を防ぎ、SVAMP / GSM8K への汎化精度を引き上げる学習器。
+    """
+
+    def __init__(self, nnue: FactoredNNUE, lr: float = 2.2e-3, weight_decay: float = 2.5e-3, dropout: float = 0.25) -> None:
+        self.nnue = nnue
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.dropout = dropout
+
+    @staticmethod
+    def _is_close_ans(pred: float, gold: float) -> bool:
+        return abs(pred - gold) <= max(1e-3, 1e-4 * abs(gold))
+
+    def build_problem_candidate_graphs(
+        self, problems: Sequence[Tuple[str, List[float], float]], max_depth: int = 7
+    ) -> Tuple[List[List[PathCandidateRecord]], int]:
+        graphs: List[List[PathCandidateRecord]] = []
+        solver = BeamStackSolver(self.nnue, beam_width=26, max_depth=max_depth)
+        reachable_count = 0
+
+        for q_text, milestones, gold_ans in problems:
+            regs, clauses, goal = ClauseRoleParser.parse(q_text)
+            if not regs:
                 continue
-            ok, ast_bonus, final_val = check_ast_and_dimensional_bonus(
-                expr_str, values, same_u, diff_u, q_match, var_nodes=var_nodes
+            ms_round = [round(v, 3) for v in milestones]
+            eff_depth = min(max_depth, max(2, len(milestones) + 1)) if milestones else 4
+            solver.max_depth = eff_depth
+            cands = solver.search_candidates(
+                regs,
+                clauses,
+                goal,
+                record_feats=True,
+                oracle_milestones=ms_round,
+                oracle_gold=gold_ans,
             )
-            if not ok:
+            if not cands:
                 continue
-            novel_total = (1.15 * b_score) + ast_bonus
-            if novel_total > best_score:
-                best_score = novel_total
-                best_eq = expr_str
-                best_ans = final_val
 
-        return best_eq, best_score, best_ans
+            gold_recs: List[PathCandidateRecord] = []
+            neg_recs: List[PathCandidateRecord] = []
+
+            for val, _, node, _, t_sp, t_dn, t_pr in cands:
+                is_g = self._is_close_ans(val, gold_ans)
+                ms_hits = sum(1 for _, _, _, step_v in node.history if any(abs(step_v - ms) <= 1e-2 for ms in ms_round))
+                rec = PathCandidateRecord(
+                    is_gold=is_g,
+                    milestone_hits=ms_hits,
+                    trans_sp=[sf[0] for sf in node.step_feats],
+                    trans_dn=[sf[1] for sf in node.step_feats],
+                    trans_pr=[sf[2] for sf in node.step_feats],
+                    term_sp=t_sp,
+                    term_dn=t_dn,
+                    term_pr=t_pr,
+                )
+                if is_g:
+                    gold_recs.append(rec)
+                else:
+                    neg_recs.append(rec)
+
+            if gold_recs:
+                reachable_count += 1
+                if neg_recs:
+                    gold_recs.sort(key=lambda r: r.milestone_hits, reverse=True)
+                    graphs.append(gold_recs[:4] + neg_recs[:16])
+
+        return graphs, reachable_count
+
+    @staticmethod
+    def _forward_head_train(
+        W1_s: np.ndarray, W1_d: np.ndarray, b1: np.ndarray,
+        W2: np.ndarray, b2: np.ndarray, W3: np.ndarray, b3: np.ndarray, W_skip: np.ndarray,
+        sp: np.ndarray, dn: np.ndarray, pr: np.ndarray, offset: float,
+        drop_rate: float, rng: np.random.Generator,
+    ):
+        z1 = W1_s[sp].sum(axis=1) + dn @ W1_d + b1
+        c1 = np.clip(z1, 0.0, 1.0)
+        h1_raw = c1 * c1
+        if drop_rate > 0.0:
+            mask1 = (rng.random(h1_raw.shape, dtype=np.float32) >= drop_rate).astype(np.float32) / (1.0 - drop_rate)
+            h1 = h1_raw * mask1
+            skip_mask = (rng.random(sp.shape, dtype=np.float32) >= (drop_rate * 0.5)).astype(np.float32) / (1.0 - drop_rate * 0.5)
+        else:
+            mask1 = np.ones_like(h1_raw)
+            h1 = h1_raw
+            skip_mask = np.ones(sp.shape, dtype=np.float32)
+        z2 = h1 @ W2 + b2
+        c2 = np.clip(z2, 0.0, 1.0)
+        h2 = c2 * c2
+        skip_out = (W_skip[sp] * skip_mask).sum(axis=1)
+        out = (pr - offset) + skip_out + (h2 @ W3 + b3).ravel()
+        return z1, c1, mask1, skip_mask, h1, z2, c2, h2, out
+
+    @staticmethod
+    def _backward_head_train(
+        W1_s_shape: Tuple[int, int],
+        W2: np.ndarray, W3: np.ndarray,
+        sp: np.ndarray, dn: np.ndarray,
+        z1: np.ndarray, c1: np.ndarray, mask1: np.ndarray, skip_mask: np.ndarray, h1: np.ndarray,
+        z2: np.ndarray, c2: np.ndarray, h2: np.ndarray,
+        g_out_1d: np.ndarray,
+        prefix: str,
+    ) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
+        g_clipped_1d = np.clip(g_out_1d.astype(np.float32), -1.0, 1.0)
+        g_out = g_clipped_1d[:, None]
+        dW3 = h2.T @ g_out
+        db3 = g_out.sum(axis=0)
+        dh2 = g_out @ W3.T
+        dz2 = dh2 * (2.0 * c2 * ((z2 > 0.0) & (z2 < 1.0)))
+        dW2 = h1.T @ dz2
+        db2 = dz2.sum(axis=0)
+        dh1 = (dz2 @ W2.T) * mask1
+        dz1 = dh1 * (2.0 * c1 * ((z1 > 0.0) & (z1 < 1.0)))
+        dW1_d = dn.T @ dz1
+        db1 = dz1.sum(axis=0)
+
+        dW1_s = np.zeros(W1_s_shape, dtype=np.float32)
+        dW_skip = np.zeros(W1_s_shape[0], dtype=np.float32)
+        flat_idx = sp.ravel()
+        valid = flat_idx > 0
+        active_unique = np.array([], dtype=np.int32)
+        if np.any(valid):
+            v_idx = flat_idx[valid]
+            rep_dz = np.repeat(dz1, sp.shape[1], axis=0)[valid]
+            np.add.at(dW1_s, v_idx, rep_dz)
+            rep_g_skip = (np.repeat(g_clipped_1d[:, None], sp.shape[1], axis=1) * skip_mask).ravel()[valid]
+            np.add.at(dW_skip, v_idx, rep_g_skip)
+            active_unique = np.unique(v_idx)
+
+        grads = {
+            f"W1_{prefix}s": dW1_s,
+            f"W1_{prefix}d": dW1_d,
+            f"b1_{prefix}": db1,
+            f"W2_{prefix}": dW2,
+            f"b2_{prefix}": db2,
+            f"W3_{prefix}": dW3,
+            f"b3_{prefix}": db3,
+            f"W_skip_{prefix}s": dW_skip,
+        }
+        return grads, active_unique
+
+    def _update_minibatch(
+        self, batch_graphs: Sequence[List[PathCandidateRecord]], adam: _AdamState, rng: np.random.Generator
+    ) -> float:
+        if not batch_graphs:
+            return 0.0
+
+        all_t_sp: List[np.ndarray] = []
+        all_t_dn: List[np.ndarray] = []
+        all_t_pr: List[float] = []
+
+        all_g_sp: List[np.ndarray] = []
+        all_g_dn: List[np.ndarray] = []
+        all_g_pr: List[float] = []
+
+        path_trans_slices: List[Tuple[int, int]] = []
+        prob_slices: List[Tuple[int, int]] = []
+        is_gold_flags: List[bool] = []
+        ms_bonuses: List[float] = []
+
+        p_cursor = 0
+        t_cursor = 0
+        for cands in batch_graphs:
+            p_start = p_cursor
+            for rec in cands:
+                t_start = t_cursor
+                n_steps = len(rec.trans_sp)
+                if n_steps > 0:
+                    all_t_sp.extend(rec.trans_sp)
+                    all_t_dn.extend(rec.trans_dn)
+                    all_t_pr.extend(rec.trans_pr)
+                    t_cursor += n_steps
+                path_trans_slices.append((t_start, t_cursor))
+                all_g_sp.append(rec.term_sp)
+                all_g_dn.append(rec.term_dn)
+                all_g_pr.append(rec.term_pr)
+                is_gold_flags.append(rec.is_gold)
+                ms_bonuses.append(0.6 * rec.milestone_hits)
+                p_cursor += 1
+            prob_slices.append((p_start, p_cursor))
+
+        nn = self.nnue
+        has_trans = len(all_t_sp) > 0
+        if has_trans:
+            t_sp_arr = np.stack(all_t_sp, axis=0)
+            t_dn_arr = np.stack(all_t_dn, axis=0)
+            t_pr_arr = np.array(all_t_pr, dtype=np.float32)
+            t_cache = self._forward_head_train(
+                nn.W1_ts, nn.W1_td, nn.b1_t, nn.W2_t, nn.b2_t, nn.W3_t, nn.b3_t, nn.W_skip_ts,
+                t_sp_arr, t_dn_arr, t_pr_arr, STEP_COST, self.dropout, rng,
+            )
+            s_trans = t_cache[-1]
+        else:
+            s_trans = np.zeros(0, dtype=np.float32)
+
+        g_sp_arr = np.stack(all_g_sp, axis=0)
+        g_dn_arr = np.stack(all_g_dn, axis=0)
+        g_pr_arr = np.array(all_g_pr, dtype=np.float32)
+        g_cache = self._forward_head_train(
+            nn.W1_gs, nn.W1_gd, nn.b1_g, nn.W2_g, nn.b2_g, nn.W3_g, nn.b3_g, nn.W_skip_gs,
+            g_sp_arr, g_dn_arr, g_pr_arr, 0.0, self.dropout, rng,
+        )
+        s_term = g_cache[-1]
+
+        path_logits = np.empty(p_cursor, dtype=np.float64)
+        for k in range(p_cursor):
+            ts, te = path_trans_slices[k]
+            step_sum = float(s_trans[ts:te].sum()) if te > ts else 0.0
+            path_logits[k] = step_sum + float(s_term[k])
+
+        d_path = np.zeros(p_cursor, dtype=np.float32)
+        total_loss = 0.0
+        m_probs = float(len(batch_graphs))
+        smooth_eps = 0.04
+
+        for ps, pe in prob_slices:
+            sub_s = path_logits[ps:pe]
+            s_max = np.max(sub_s)
+            exp_all = np.exp(np.clip(sub_s - s_max, -50.0, 50.0))
+            sum_all = np.sum(exp_all)
+            probs_all = exp_all / sum_all
+
+            g_mask = np.array(is_gold_flags[ps:pe], dtype=bool)
+            ms_b = np.array(ms_bonuses[ps:pe], dtype=np.float64)
+            gold_s = sub_s[g_mask]
+            total_loss += -float((np.max(gold_s) + np.log(np.sum(np.exp(gold_s - np.max(gold_s))))) - (s_max + np.log(sum_all)))
+
+            target_q = np.full_like(probs_all, smooth_eps / len(sub_s))
+            gold_weighted = sub_s[g_mask] + ms_b[g_mask]
+            gw_exp = np.exp(np.clip(gold_weighted - np.max(gold_weighted), -50.0, 50.0))
+            target_q[g_mask] += (1.0 - smooth_eps) * (gw_exp / np.sum(gw_exp))
+
+            d_path[ps:pe] = ((probs_all - target_q) / m_probs).astype(np.float32)
+
+        g_grads, g_act = self._backward_head_train(
+            nn.W1_gs.shape, nn.W2_g, nn.W3_g, g_sp_arr, g_dn_arr,
+            g_cache[0], g_cache[1], g_cache[2], g_cache[3], g_cache[4], g_cache[5], g_cache[6], g_cache[7],
+            d_path, "g",
+        )
+
+        params = {
+            "W1_ts": nn.W1_ts, "W1_td": nn.W1_td, "b1_t": nn.b1_t,
+            "W2_t": nn.W2_t, "b2_t": nn.b2_t, "W3_t": nn.W3_t, "b3_t": nn.b3_t, "W_skip_ts": nn.W_skip_ts,
+            "W1_gs": nn.W1_gs, "W1_gd": nn.W1_gd, "b1_g": nn.b1_g,
+            "W2_g": nn.W2_g, "b2_g": nn.b2_g, "W3_g": nn.W3_g, "b3_g": nn.b3_g, "W_skip_gs": nn.W_skip_gs,
+        }
+
+        if has_trans:
+            d_trans = np.zeros(len(s_trans), dtype=np.float32)
+            for k in range(p_cursor):
+                ts, te = path_trans_slices[k]
+                if te > ts:
+                    d_trans[ts:te] += d_path[k]
+            t_grads, t_act = self._backward_head_train(
+                nn.W1_ts.shape, nn.W2_t, nn.W3_t, t_sp_arr, t_dn_arr,
+                t_cache[0], t_cache[1], t_cache[2], t_cache[3], t_cache[4], t_cache[5], t_cache[6], t_cache[7],
+                d_trans, "t",
+            )
+        else:
+            t_grads = {k: np.zeros_like(v) for k, v in params.items() if k.endswith("_t") or "_t" in k or k == "W_skip_ts"}
+            t_act = np.array([], dtype=np.int32)
+
+        all_grads = {**t_grads, **g_grads}
+        adam.step(params, all_grads, {"W1_ts": t_act, "W_skip_ts": t_act, "W1_gs": g_act, "W_skip_gs": g_act})
+        return total_loss / m_probs
+
+    def fit(
+        self,
+        train_problems: Sequence[Tuple[str, List[float], float]],
+        val_problems: Optional[Sequence[Tuple[str, float]]] = None,
+        epochs: int = 8,
+        batch_size: int = 48,
+    ) -> float:
+        rng = np.random.default_rng(123)
+        graphs, reachable = self.build_problem_candidate_graphs(train_problems)
+        if train_problems:
+            print(f"[NNUETrainer] Oracle到達可能問題数: {reachable} / {len(train_problems)} ({reachable / len(train_problems) * 100:.1f}%), 有効学習グラフ数: {len(graphs)}")
+        if not graphs:
+            return 0.0
+
+        solver = BeamStackSolver(self.nnue, beam_width=24, max_depth=6)
+        init_val_acc = self._eval_quick(solver, val_problems) if val_problems else -1.0
+        best_val_acc = init_val_acc
+        best_state = self._snapshot_weights()
+        if not self.nnue.is_trained:
+            self.nnue.W3_t = rng.normal(0.0, 0.025, self.nnue.W3_t.shape).astype(np.float32)
+            self.nnue.W3_g = rng.normal(0.0, 0.025, self.nnue.W3_g.shape).astype(np.float32)
+        if val_problems:
+            print(f"[NNUETrainer] Epoch 0 (Priorのみ初期精度): Val Acc = {init_val_acc * 100:.2f}%")
+
+        params_ref = {
+            "W1_ts": self.nnue.W1_ts, "W1_td": self.nnue.W1_td, "b1_t": self.nnue.b1_t,
+            "W2_t": self.nnue.W2_t, "b2_t": self.nnue.b2_t, "W3_t": self.nnue.W3_t, "b3_t": self.nnue.b3_t, "W_skip_ts": self.nnue.W_skip_ts,
+            "W1_gs": self.nnue.W1_gs, "W1_gd": self.nnue.W1_gd, "b1_g": self.nnue.b1_g,
+            "W2_g": self.nnue.W2_g, "b2_g": self.nnue.b2_g, "W3_g": self.nnue.W3_g, "b3_g": self.nnue.b3_g, "W_skip_gs": self.nnue.W_skip_gs,
+        }
+        adam = _AdamState(params_ref, lr=self.lr, weight_decay=self.weight_decay)
+
+        for ep in range(1, epochs + 1):
+            # Cosine Annealing 学習率スケジュール
+            adam.lr = self.lr * (0.15 + 0.85 * 0.5 * (1.0 + math.cos(math.pi * (ep - 1) / max(1, epochs))))
+            if ep == (epochs // 2) + 1:
+                graphs, _ = self.build_problem_candidate_graphs(train_problems)
+
+            order = rng.permutation(len(graphs))
+            ep_loss = 0.0
+            n_batches = 0
+            for start in range(0, len(graphs), batch_size):
+                batch = [graphs[int(i)] for i in order[start : start + batch_size]]
+                ep_loss += self._update_minibatch(batch, adam, rng)
+                n_batches += 1
+
+            avg_loss = ep_loss / max(1, n_batches)
+            if val_problems:
+                val_acc = self._eval_quick(solver, val_problems)
+                print(f"[NNUETrainer] Epoch {ep}/{epochs} | lr={adam.lr:.5f} | Loss = {avg_loss:.4f} | Val Acc = {val_acc * 100:.2f}%")
+                if val_acc >= best_val_acc:
+                    best_val_acc = val_acc
+                    best_state = self._snapshot_weights()
+
+        self._restore_weights(best_state)
+        self.nnue.is_trained = True
+        return best_val_acc
+
+    def _snapshot_weights(self) -> Dict[str, np.ndarray]:
+        return {
+            k: getattr(self.nnue, k).copy()
+            for k in (
+                "W1_ts", "W1_td", "b1_t", "W2_t", "b2_t", "W3_t", "b3_t", "W_skip_ts",
+                "W1_gs", "W1_gd", "b1_g", "W2_g", "b2_g", "W3_g", "b3_g", "W_skip_gs",
+            )
+        }
+
+    def _restore_weights(self, snap: Dict[str, np.ndarray]) -> None:
+        for k, v in snap.items():
+            setattr(self.nnue, k, v.copy())
+
+    def _eval_quick(self, solver: BeamStackSolver, pairs: Sequence[Tuple[str, float]]) -> float:
+        if not pairs:
+            return 0.0
+        ok = 0
+        for q, gold in pairs:
+            regs, cls_info, goal = ClauseRoleParser.parse(q)
+            res = solver.solve_problem(regs, cls_info, goal)
+            if res is not None and self._is_close_ans(res[0], gold):
+                ok += 1
+        return ok / len(pairs)
 
 
-# ==========================================
-# 8. データ読み込み関数 ＆ GSM8K <<expr=res>> 数式木自動抽出パーサ
-# ==========================================
-def parse_gsm8k_solution_to_equation(masked_q, values, sol_text, true_ans):
+# ==============================================================================
+# 5. シングルトンエンジン管理と公開メイン関数 solve(text, check_is_math=False)
+# ==============================================================================
+
+_GLOBAL_NNUE: Optional[FactoredNNUE] = None
+_GLOBAL_SOLVER: Optional[BeamStackSolver] = None
+
+
+def get_engine() -> BeamStackSolver:
+    global _GLOBAL_NNUE, _GLOBAL_SOLVER
+    if _GLOBAL_SOLVER is None:
+        _GLOBAL_NNUE = FactoredNNUE(seed=42)
+        _GLOBAL_NNUE.load(MODEL_WEIGHTS_FILE)
+        _GLOBAL_SOLVER = BeamStackSolver(_GLOBAL_NNUE, beam_width=26, max_depth=6)
+    return _GLOBAL_SOLVER
+
+
+def _format_answer(val: float) -> int | float:
+    if not math.isfinite(val):
+        return 0
+    if abs(val - round(val)) < 1e-5:
+        return int(round(val))
+    return round(float(val), 4)
+
+
+def solve(text: str, check_is_math: bool = False) -> Optional[int | float]:
     """
-    GSM8Kの解答テキスト内の <<expr=res>> アノテーション列をボトムアップにトレースし、
-    values に対応する var1, var2, ... の正規化数式木を自動復元する。
+    算数文章題の判定および解答を行うメインインターフェース。
+    - check_is_math=True: 算数文章題なら計算結果（非Noneの数値）、一般知識クイズ等なら None を返す。
+    - check_is_math=False: 算数文章題として推論を実行し最終的な数値解答を返す（対象外・数値なしは None）。
     """
-    calcs = re.findall(r"<<([^=<>]+)=([^=<>]+)>>", sol_text)
-    if not calcs or len(values) < 2:
+    if not text or not isinstance(text, str):
         return None
 
-    env = [(v, f"var{i + 1}", frozenset([f"var{i + 1}"])) for i, v in enumerate(values)]
-    num_tok_re = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
+    if check_is_math:
+        if not is_math_word_problem(text):
+            return None
 
-    for expr_raw, res_raw in calcs:
-        expr_clean = expr_raw.strip().replace(",", "")
-        res_clean = res_raw.strip().replace(",", "")
-        try:
-            res_val = float(res_clean)
-        except Exception:
-            continue
+    regs, clauses, goal = ClauseRoleParser.parse(text)
+    if not regs:
+        return 0 if check_is_math else None
 
-        used_in_step = set()
-        step_vars = set()
-        failed = False
+    solver = get_engine()
+    res = solver.solve_problem(regs, clauses, goal)
+    if res is None:
+        return _format_answer(regs[-1].value)
 
-        def repl_num(m):
-            nonlocal failed, step_vars
-            s_num = m.group(0)
-            try:
-                v_num = float(s_num)
-            except Exception:
-                failed = True
-                return s_num
-
-            for idx_e in range(len(env) - 1, len(values) - 1, -1):
-                if idx_e not in used_in_step and math.isclose(env[idx_e][0], v_num, abs_tol=1e-5):
-                    used_in_step.add(idx_e)
-                    step_vars |= env[idx_e][2]
-                    return env[idx_e][1]
-
-            already_used_vars = set()
-            for idx_e in range(len(values), len(env)):
-                already_used_vars |= env[idx_e][2]
-            for idx_e in range(len(values)):
-                v_name = f"var{idx_e + 1}"
-                if (
-                    idx_e not in used_in_step
-                    and v_name not in already_used_vars
-                    and v_name not in step_vars
-                    and math.isclose(env[idx_e][0], v_num, abs_tol=1e-5)
-                ):
-                    used_in_step.add(idx_e)
-                    step_vars.add(v_name)
-                    return env[idx_e][1]
-
-            for idx_e in range(len(values)):
-                if idx_e not in used_in_step and math.isclose(env[idx_e][0], v_num, abs_tol=1e-5):
-                    used_in_step.add(idx_e)
-                    step_vars.add(env[idx_e][1])
-                    return env[idx_e][1]
-
-            failed = True
-            return s_num
-
-        mapped_expr = num_tok_re.sub(repl_num, expr_clean)
-        if failed:
-            continue
-        try:
-            norm_e = normalize_equation(f"({mapped_expr})", prefix=False)
-            eval_v = evaluate_with_eval(norm_e, values)
-            if math.isclose(eval_v, res_val, abs_tol=1e-3):
-                env.append((res_val, norm_e, frozenset(step_vars)))
-        except Exception:
-            continue
-
-    for val, expr_s, used_v in reversed(env[len(values) :]):
-        if math.isclose(val, true_ans, abs_tol=1e-3) and len(used_v) >= 2:
-            if not is_self_canceling_or_invalid_duplicate(expr_s, num_vars_in_question=len(values)):
-                return expr_s
-    return None
+    ans_val, _, _ = res
+    return _format_answer(ans_val)
 
 
-def load_train_data(csv_path, gsm8k_train_path=GSM8K_TRAIN_FILE):
-    dataset = []
-    if os.path.exists(csv_path):
-        with open(csv_path, "r", encoding="utf-8", newline="") as file:
-            for row in csv.DictReader(file):
+# ==============================================================================
+# 6. CLI 学習・ベンチマーク評価ユーティリティ
+# ==============================================================================
+
+
+def load_mawps_dataset(csv_path: str) -> List[Tuple[str, List[float], float]]:
+    if not os.path.exists(csv_path):
+        return []
+    out: List[Tuple[str, List[float], float]] = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            q_raw = row.get("Question", "").strip()
+            if "Body" in row and row["Body"].strip() and not q_raw.startswith(row["Body"].strip()[:10]):
+                q_raw = f"{row['Body'].strip()} {q_raw}".strip()
+            nums_str = row.get("Numbers", "").split()
+            nums = []
+            for ns in nums_str:
                 try:
-                    question = row["Question"].strip()
-                    values = [float(v) for v in row["Numbers"].split()]
-                    answer = float(row["Answer"])
-                    masked_q = number_to_var(question)
-                    eq = normalize_equation(row["Equation"], prefix=True)
-                    if math.isclose(evaluate_with_eval(eq, values), answer, abs_tol=1e-5):
-                        dataset.append((masked_q, eq, values, answer, "MAWPS"))
-                except Exception:
-                    continue
+                    nums.append(float(ns))
+                except ValueError:
+                    pass
 
-    if gsm8k_train_path and os.path.exists(gsm8k_train_path):
-        gsm_added = 0
-        with open(gsm8k_train_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    item = json.loads(line)
-                    q_text = item.get("question", "").strip()
-                    ans_str = item.get("answer", "")
-                    if "####" not in ans_str:
-                        continue
-                    sol_part, num_part = ans_str.split("####", 1)
-                    true_ans = float(num_part.strip().replace(",", ""))
-                    masked_q, values = mask_numbers_in_question(q_text)
-                    if not (2 <= len(values) <= 6):
-                        continue
-                    eq = parse_gsm8k_solution_to_equation(masked_q, values, sol_part, true_ans)
-                    if eq is not None and math.isclose(evaluate_with_eval(eq, values), true_ans, abs_tol=1e-4):
-                        dataset.append((masked_q, eq, values, true_ans, "GSM8K"))
-                        gsm_added += 1
-                except Exception:
-                    continue
-        if gsm_added > 0:
-            print(f"GSM8K学習データから {gsm_added} 問の多段数式木を抽出して統合しました。")
+            def _repl(m: re.Match) -> str:
+                idx = int(m.group(1))
+                if idx < len(nums):
+                    v = nums[idx]
+                    return str(int(v)) if abs(v - round(v)) < 1e-9 else str(v)
+                return m.group(0)
 
-    return dataset
-
-
-def load_test_data(json_path):
-    dataset = []
-    with open(json_path, "r", encoding="utf-8") as file:
-        for item in json.load(file):
+            q_restored = re.sub(r"\bnumber(\d+)\b", _repl, q_raw, flags=re.I)
+            eq_str = row.get("Equation", "").strip()
+            ans_str = row.get("Answer", "").strip()
+            ms, eq_val = TraceCompiler.parse_equation_milestones(eq_str, nums)
             try:
-                full_q = f"{item.get('Body', '').strip()} {item.get('Question', '').strip()}".strip()
-                masked_q, values = mask_numbers_in_question(full_q)
-                eq = normalize_equation(mask_numbers_in_equation(item["Equation"], values), prefix=False)
-                dataset.append((masked_q, eq, values, float(item["Answer"])))
-            except Exception:
+                gold = float(ans_str.replace(",", ""))
+            except ValueError:
+                gold = eq_val if eq_val is not None else 0.0
+            out.append((q_restored, ms, gold))
+    return out
+
+
+def load_svamp_dataset(json_path: str) -> List[Tuple[str, float]]:
+    if not os.path.exists(json_path):
+        return []
+    out: List[Tuple[str, float]] = []
+    with open(json_path, "r", encoding="utf-8") as f:
+        for item in json.load(f):
+            full_q = f"{item.get('Body', '').strip()} {item.get('Question', '').strip()}".strip()
+            gold = float(item["Answer"])
+            out.append((full_q, gold))
+    return out
+
+
+def load_gsm8k_dataset(jsonl_path: str, limit: Optional[int] = None) -> List[Tuple[str, List[float], float]]:
+    if not os.path.exists(jsonl_path):
+        return []
+    out: List[Tuple[str, List[float], float]] = []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
                 continue
-    return dataset
+            obj = json.loads(line)
+            q = obj["question"].strip()
+            ms, gold = TraceCompiler.parse_gsm8k_answer(obj["answer"])
+            if gold is not None:
+                out.append((q, ms, gold))
+            if limit and len(out) >= limit:
+                break
+    return out
 
 
-def download_and_load_extra_problems():
-    """
-    MultiArith と GSM8K の両方の外部問題集をダウンロードして読み込み、
-    データセット名ごとの問題リスト辞書 {dataset_name: [(q_text, true_eq, true_ans, dataset_name), ...]} を返す。
-    """
-    datasets_by_name = {}
-    for filename, url, fmt, ds_name in EXTRA_DATASET_URLS:
-        path = os.path.join(BASE_DIR, filename)
-        try:
-            if not os.path.exists(path) or os.path.getsize(path) < 1_000:
-                print(f"Downloading extra dataset: {filename} ...")
-                urllib.request.urlretrieve(url, path)
-            problems = []
-            if fmt == "multiarith_json":
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                for item in data:
-                    q_text = item.get("sQuestion", "").strip()
-                    ans_list = item.get("lSolutions", [])
-                    eq_list = item.get("lEquations", [])
-                    if q_text and ans_list:
-                        true_ans = float(ans_list[0])
-                        true_eq = str(eq_list[0]) if eq_list else ""
-                        problems.append((q_text, true_eq, true_ans, ds_name))
-            elif fmt == "gsm8k_jsonl":
-                with open(path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if not line.strip():
-                            continue
-                        item = json.loads(line)
-                        q_text = item.get("question", "").strip()
-                        ans_str = item.get("answer", "")
-                        if "####" in ans_str:
-                            sol_part, num_part = ans_str.split("####", 1)
-                            num_clean = num_part.strip().replace(",", "")
-                            true_ans = float(num_clean)
-                            problems.append((q_text, sol_part.strip(), true_ans, ds_name))
-            if problems:
-                datasets_by_name[ds_name] = problems
-        except Exception as e:
-            print(f"Warning: {ds_name} ({filename}) の取得に失敗しました: {e}")
-            continue
-
-    return datasets_by_name
+def evaluate_accuracy(name: str, items: Sequence[Tuple[str, float]]) -> float:
+    if not items:
+        print(f"[{name}] データセットが見つかりません（スキップ）")
+        return 0.0
+    correct = 0
+    for q, gold in items:
+        pred = solve(q, check_is_math=False)
+        if pred is not None and abs(float(pred) - gold) <= max(1e-3, 1e-4 * abs(gold)):
+            correct += 1
+    acc = correct / len(items) * 100.0
+    print(f"[{name}] 正解率: {correct:4d} / {len(items):4d} ({acc:.2f}%)")
+    return acc
 
 
-# ==========================================
-# 9. 外部ファイルから import して使うための公開API
-# ==========================================
-_GLOBAL_MODEL = MathNNUEModel()
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ESR-NNUE v12.4 Math Word Problem Solver & Trainer")
+    parser.add_argument("--train", action="store_true", help="訓練データ (mawps_asdiv + gsm8k_train) のみから NNUE 重みを学習・保存する")
+    parser.add_argument("--epochs", type=int, default=8, help="学習エポック数")
+    parser.add_argument("--gsm8k-limit", type=int, default=7500, help="gsm8k_train.jsonl の最大使用件数 (0でMAWPSのみ学習)")
+    args = parser.parse_args()
 
-
-def ensure_model_loaded():
-    if _GLOBAL_MODEL.is_loaded:
-        return
-    if _GLOBAL_MODEL.load(WEIGHTS_FILE):
-        return
-    print("ビームサーチ+NNUEモデルの重みファイルを初回学習して保存します...")
     download_files()
-    train_data = load_train_data(TRAIN_FILE, GSM8K_TRAIN_FILE)
-    _GLOBAL_MODEL.fit_and_save(train_data, WEIGHTS_FILE)
+    mawps_data = load_mawps_dataset(TRAIN_FILE)
+    svamp_data = load_svamp_dataset(TEST_FILE)
+    gsm8k_train = load_gsm8k_dataset(GSM8K_TRAIN_FILE, limit=args.gsm8k_limit) if args.gsm8k_limit > 0 else []
+    gsm8k_test = load_gsm8k_dataset(GSM8K_TEST_FILE)
 
+    if args.train and (mawps_data or gsm8k_train):
+        print("=== Factored NNUE (v12.4 Formula-Lexical + Indefinite-Rate + Gross-Verb) 学習開始 ===")
+        global _GLOBAL_NNUE, _GLOBAL_SOLVER
+        _GLOBAL_NNUE = FactoredNNUE(seed=42)
+        _GLOBAL_SOLVER = BeamStackSolver(_GLOBAL_NNUE, beam_width=28, max_depth=6)
 
-def solve(question_text, check_is_math=False):
-    if check_is_math and not is_math_word_problem(question_text):
-        return None
+        combined = mawps_data + gsm8k_train
+        rng = np.random.default_rng(42)
+        perm = rng.permutation(len(combined))
+        n_val = max(1, min(400, len(combined) // 10))
+        val_set = [(combined[i][0], combined[i][2]) for i in perm[:n_val]]
+        trn_set = [combined[i] for i in perm[n_val:]]
+        print(
+            f"[Data Split] 訓練元: MAWPS/ASDiv={len(mawps_data)}問 + GSM8K(train)={len(gsm8k_train)}問 "
+            f"-> Train={len(trn_set)}問, Val(開発検証)={len(val_set)}問 "
+            f"(※SVAMP {len(svamp_data)}問・GSM8K(test) {len(gsm8k_test)}問は学習・Valに一切未使用)"
+        )
 
-    ensure_model_loaded()
+        trainer = NNUETrainer(_GLOBAL_NNUE, lr=2.2e-3, weight_decay=2.5e-3, dropout=0.25)
+        val_acc = trainer.fit(trn_set, val_problems=val_set, epochs=args.epochs)
+        _GLOBAL_NNUE.save(MODEL_WEIGHTS_FILE)
+        print(f"=== 学習完了 (Best Val Acc: {val_acc * 100:.2f}%) -> {MODEL_WEIGHTS_FILE} に保存 ===")
 
-    masked_q, values = mask_numbers_in_question(question_text)
-    if not values:
-        return None
-
-    _pred_eq, _score, pred_ans = _GLOBAL_MODEL.predict(masked_q, values)
-    if pred_ans is None:
-        return None
-
-    if math.isclose(pred_ans, round(pred_ans), abs_tol=1e-6):
-        return int(round(pred_ans))
-    return round(pred_ans, 4)
-
-
-# ==========================================
-# 10. 単体実行時の動作確認・精度評価・MultiArith & GSM8K 両対応出力
-# ==========================================
-def evaluate_dataset(model, dataset, title):
-    correct_eq = 0
-    correct_ans = 0
-    for item in dataset:
-        q, true_eq, values, true_ans = item[:4]
-        pred_eq, _, pred_ans = model.predict(q, values)
-        if pred_eq is None:
-            continue
-        if pred_eq == true_eq:
-            correct_eq += 1
-        if pred_ans is not None and math.isclose(pred_ans, true_ans, abs_tol=1e-4):
-            correct_ans += 1
-    total = len(dataset)
-    print(f"[{title}]")
-    print(f"  数式完全一致 : {correct_eq:4d} / {total} ({correct_eq / total * 100:.2f}%)")
-    print(f"  数値ans正解率: {correct_ans:4d} / {total} ({correct_ans / total * 100:.2f}%)\n")
-
-
-def main():
-    ensure_model_loaded()
-
-    if os.path.exists(TRAIN_FILE) and os.path.exists(TEST_FILE):
-        ma_train_data = load_train_data(TRAIN_FILE, gsm8k_train_path=None)
-        test_data = load_test_data(TEST_FILE)
-        evaluate_dataset(_GLOBAL_MODEL, ma_train_data, "ビームサーチ+HalfKP型NNUE - 学習データ(MAWPS/ASDiv)")
-        evaluate_dataset(_GLOBAL_MODEL, test_data,     "ビームサーチ+HalfKP型NNUE - SVAMPテストデータ")
-
-    sample_math = (
-        "Each pack of dvds costs 76 dollars. "
-        "If there is a discount of 25 dollars on each pack, "
-        "how much do you have to pay to buy 5 packs?"
-    )
-    sample_quiz = (
-        "is an online knowledge engine developed by Research , released in 2009 . [ 1 ] It is offered as an online service that answers queries by computing answers from externally sourced data . [ 2 ][ 3 ]"
-    )
-    sample_math3 = (
-        "For Halloween Debby and her sister combined the candy they received. "
-        "Debby had 32 pieces of candy while her sister had 42. "
-        "If they ate 35 pieces the first night, how many pieces do they have left?"
-    )
-    sample_math5 = (
-        "Janet’s ducks lay 16 eggs per day. "
-        "She eats three for breakfast every morning and bakes muffins for her friends every day with four. "
-        "She sells the remainder at the farmers' market daily for $2 per fresh duck egg. "
-        "How much in dollars does she make every day at the farmers' market?"
-    )
-
-    print("=== solve(question_text) ＆ クイズ判定テスト ===")
-    masked_q1, vals1 = mask_numbers_in_question(sample_math)
-    pred_eq1, pred_score1, _ = _GLOBAL_MODEL.predict(masked_q1, vals1)
-    print(f"問題1: {sample_math}")
-    print(f"  -> 算数判定: {is_math_word_problem(sample_math)}")
-    print(f"  -> 選択された数式: {pred_eq1} (score: {pred_score1:.2f})")
-    print(f"  -> solve() の返り値: {solve(sample_math)}\n")
-
-    print(f"問題2: {sample_quiz}")
-    print(f"  -> 算数判定: {is_math_word_problem(sample_quiz)}")
-    print(f"  -> solve(check_is_math=True) の返り値: {solve(sample_quiz, check_is_math=True)}\n")
-
-    masked_q3, vals3 = mask_numbers_in_question(sample_math3)
-    pred_eq3, pred_score3, _ = _GLOBAL_MODEL.predict(masked_q3, vals3)
-    print(f"問題3: {sample_math3}")
-    print(f"  -> 算数判定: {is_math_word_problem(sample_math3)}")
-    print(f"  -> 選択された数式: {pred_eq3} (score: {pred_score3:.2f})")
-    print(f"  -> solve() の返り値: {solve(sample_math3)} (正解数値: 39)\n")
-
-    masked_q5, vals5 = mask_numbers_in_question(sample_math5)
-    pred_eq5, pred_score5, _ = _GLOBAL_MODEL.predict(masked_q5, vals5)
-    print(f"問題5 (GSM8K デバッグ対象): {sample_math5}")
-    print(f"  -> 算数判定: {is_math_word_problem(sample_math5)}")
-    print(f"  -> 選択された数式: {pred_eq5} (score: {pred_score5:.2f})")
-    print(f"  -> solve() の返り値: {solve(sample_math5)} (正解数値: 18)\n")
-
-    # MultiArith と GSM8K の両方をテストデータとして使って正解率と誤答例を表示
-    extra_datasets = download_and_load_extra_problems()
-    prob_idx = 6
-    for ds_name in ("MultiArith", "GSM8K"):
-        problems = extra_datasets.get(ds_name, [])
-        if not problems:
-            continue
-        wrong_examples = []
-        extra_correct = 0
-        eval_count = 0
-        for q_text, true_eq, true_ans, _ds in problems:
-            pred_val = solve(q_text)
-            eval_count += 1
-            if pred_val is not None and math.isclose(float(pred_val), true_ans, abs_tol=1e-4):
-                extra_correct += 1
-            elif len(wrong_examples) < 3:
-                mq, vals = mask_numbers_in_question(q_text)
-                p_eq, p_sc, _ = _GLOBAL_MODEL.predict(mq, vals) if vals else (None, 0.0, None)
-                wrong_examples.append((q_text, true_eq, true_ans, pred_val, p_eq, p_sc))
-
-        print(f"[{ds_name} 外部問題集テスト: {extra_correct} / {eval_count} ({extra_correct / max(eval_count, 1) * 100:.2f}%)]")
-        if wrong_examples:
-            w_text, w_true_eq, w_true_ans, w_pred_ans, w_pred_eq, w_score = wrong_examples[0]
-            ans_disp = int(round(w_true_ans)) if math.isclose(w_true_ans, round(w_true_ans), abs_tol=1e-6) else w_true_ans
-            print(f"問題{prob_idx} ({ds_name} より誤答例): {w_text}")
-            print(f"  -> 算数判定: {is_math_word_problem(w_text)}")
-            print(f"  -> 予測された数式: {w_pred_eq} (score: {w_score:.2f})")
-            print(f"  -> solve() の返り値 (誤答): {w_pred_ans}")
-            print(f"  -> 本来の正解数値: {ans_disp} (正解式/解法: {w_true_eq})\n")
-            prob_idx += 1
+    print("=== ベンチマーク評価 ===")
+    if mawps_data:
+        evaluate_accuracy("MAWPS/ASDiv", [(q, g) for q, _, g in mawps_data])
+    if svamp_data:
+        evaluate_accuracy("SVAMP", svamp_data)
+    if gsm8k_test:
+        evaluate_accuracy("GSM8K (Test)", [(q, g) for q, _, g in gsm8k_test])
 
 
 if __name__ == "__main__":
